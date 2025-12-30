@@ -1,0 +1,88 @@
+// AUTO-GENERATED SCL - 2025-12-30 21:41:09
+
+HARDWARE
+    SalleServeur1 := CONNECT('192.168.68.57', 502, 1);
+END_HARDWARE
+
+VAR
+    SystemOn : BOOL;
+    ErrorDisjoncteurVoieA : SalleServeur1.INPUT.0;
+    ErrorDisjoncteurVoieB : SalleServeur1.INPUT.1;
+    Error : SalleServeur1.OUTPUT.0;
+    Warning : SalleServeur1.OUTPUT.1;
+    Success : SalleServeur1.OUTPUT.2;
+    AU_VoieA : SalleServeur1.INPUT.2;
+    AU_VoieB : SalleServeur1.INPUT.3;
+    LockSuccess : BOOL;
+    VentilationIn : SalleServeur1.OUTPUT.3;
+    VentilationOut : SalleServeur1.OUTPUT.4;
+END_VAR
+
+DB
+    SystemOn := TRUE;
+    LockSuccess := FALSE;
+END_DB
+
+BLOCK CheckSafety
+IF AU_VoieA = TRUE THEN
+    LOG('Safety Stop Voie A !');
+    Error := TRUE;
+    Warning := TRUE;
+    LockSuccess := TRUE;
+    Success := FALSE;
+ELSE IF AU_VoieB = TRUE THEN
+    LOG('Safety Stop Voie B !');
+    Error := TRUE;
+    Warning := TRUE;
+    Success := FALSE;
+    LockSuccess := TRUE;
+ELSE
+    LockSuccess := FALSE;
+END_IF;
+END_BLOCK
+
+BLOCK DisjonctionSalleServeur
+IF ErrorDisjoncteurVoieA = TRUE AND ErrorDisjoncteurVoieB = TRUE THEN
+    Error := TRUE;
+    Success := FALSE;
+    Warning := FALSE; 
+ELSE IF ErrorDisjoncteurVoieA = TRUE OR ErrorDisjoncteurVoieB = TRUE THEN 
+    Error := FALSE; 
+    Success := FALSE;
+    Warning := TRUE; 
+ELSE IF ErrorDisjoncteurVoieA = FALSE AND ErrorDisjoncteurVoieB = FALSE AND LockSuccess = FALSE THEN
+    Warning := FALSE;
+    Error := FALSE;
+    Success := TRUE;
+END_IF;
+END_BLOCK
+
+BLOCK VentilationSalleServeur
+IF Error = FALSE THEN
+    VentilationIn := TRUE;
+    VentilationOut := TRUE;
+ELSE
+    VentilationIn := FALSE;
+    VentilationOut := FALSE;
+END_IF;
+END_BLOCK
+
+BLOCK CheckSafetyGE
+
+END_BLOCK
+
+BLOCK GroupeElectrogene
+(* Logic for GroupeElectrogene *)
+END_BLOCK
+
+FC
+WHILE SystemOn = TRUE DO
+	// Call Other Networks
+	CheckSafety();
+	DisjonctionSalleServeur();
+	VentilationSalleServeur();
+	WAIT(100);
+END_WHILE;
+DISCONNECT_ALL();
+
+END_FC
