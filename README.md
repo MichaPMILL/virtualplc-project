@@ -26,6 +26,14 @@ Simply clone the repo or copy the `SCLCore.php` file into your project.
 git clone https://github.com/yourusername/php-scl-core.git](https://github.com/MichaPMILL/virtualplc-project
 
 ```
+Then with your favorite webserver, exploit the index.php. 
+
+### 2. Launch
+
+Simply use the following command :
+```bash
+php daemon.php
+```
 
 ## Control Flow
 
