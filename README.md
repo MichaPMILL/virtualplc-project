@@ -76,4 +76,4 @@ You can hook the interpreter to real-world I/O (like a Modbus Server) using the 
 Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
 
 ## 📄 License
-GPLv3 License
+BSD3 License
