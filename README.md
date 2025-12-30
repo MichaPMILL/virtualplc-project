@@ -23,7 +23,7 @@ This project demonstrates how to build a language core for industrial automation
 Simply clone the repo or copy the `SCLCore.php` file into your project.
 
 ```bash
-git clone https://github.com/yourusername/php-scl-core.git](https://github.com/MichaPMILL/virtualplc-project
+git clone https://github.com/MichaPMILL/virtualplc-project
 
 ```
 Then with your favorite webserver, exploit the index.php. 
