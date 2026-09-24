@@ -137,8 +137,8 @@ export interface Project {
 
 export const DEVICE_TYPES: Record<DeviceType, { label: string; description: string; maxProgram: number; gpio: boolean }> = {
   linux: { label: 'CPU VirtualPLC Linux', description: 'Linux PC, Raspberry Pi, industrial PC — Modbus TCP remote I/O, GPIO', maxProgram: 1 << 20, gpio: true },
-  esp32: { label: 'CPU VirtualPLC ESP32', description: 'ESP32 — Wi-Fi, GPIO, analog inputs', maxProgram: 64 << 10, gpio: true },
-  arduino: { label: 'CPU VirtualPLC Arduino', description: 'Arduino Mega / Due / Opta / Portenta — USB serial, GPIO', maxProgram: 16 << 10, gpio: true },
+  esp32: { label: 'CPU VirtualPLC ESP32', description: 'ESP32 — Wi-Fi or USB, GPIO, analog inputs and outputs (firmware/VirtualPLC)', maxProgram: 64 << 10, gpio: true },
+  arduino: { label: 'CPU VirtualPLC Arduino', description: 'Raspberry Pi Pico (W), Arduino Uno R4, Due, Portenta… — USB (or Wi-Fi), GPIO (firmware/VirtualPLC)', maxProgram: 7 << 10, gpio: true },
 };
 
 let idCounter = 0;
@@ -157,7 +157,7 @@ export function newDevice(type: DeviceType, name = 'PLC_1'): Device {
     name,
     type,
     cpu: { cycleMs: 10 },
-    connection: { host: type === 'arduino' ? 'serial' : '192.168.0.10', port: 20105 },
+    connection: type === 'arduino' ? { host: 'COM3', port: 115200 } : { host: '192.168.0.10', port: 20105 },
     io: [],
     tagTables: [{ id: newId('tt'), name: 'Table de variables standard', tags: [], constants: [] }],
     blocks: [

@@ -1,5 +1,5 @@
 // Device configuration ("Configuration des appareils") and online & diagnostics.
-import { DEVICE_TYPES, ioLinkTags, parseIodd, type Device, type IoLinkPort, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
+import { DEVICE_TYPES, ioLinkTags, isSerialPort, parseIodd, type Device, type IoLinkPort, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
 import { host } from '../host.ts';
 import { alertDialog } from '../ui/dialogs.ts';
 import * as A from '../actions.ts';
@@ -193,9 +193,11 @@ export function deviceEditor(device: Device): EditorView {
         field(t.name, textInput(device.name, (v) => { if (v) { device.name = v; touch(); store.emit('editors'); } })),
         field("Type d'appareil", h('input', { value: DEVICE_TYPES[device.type].label, disabled: true })),
         field(t.comment, (() => { const ta = h('textarea'); ta.value = device.comment ?? ''; ta.onchange = () => { device.comment = ta.value; store.touch(); }; return ta; })()),
-        h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, device.type === 'arduino' ? 'Interface USB' : 'Interface PROFINET / Ethernet'),
-        field(device.type === 'arduino' ? 'Port série' : t.ipAddress, textInput(device.connection.host, (v) => { device.connection.host = v; touch(); }), device.type === 'arduino' ? 'ex. COM3, /dev/ttyACM0' : 'ex. 192.168.0.10'),
-        field(t.port, numInput(device.connection.port, (v) => { device.connection.port = v; store.touch(); }, 1, 65535), 'Protocole VirtualPLC (par défaut 20105)'),
+        h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, isSerialPort(device.connection.host) ? 'Interface USB / série' : 'Interface Ethernet / Wi-Fi'),
+        field(isSerialPort(device.connection.host) ? 'Port série' : t.ipAddress, textInput(device.connection.host, (v) => { device.connection.host = v; touch(); renderProps(); }),
+          device.type === 'linux' ? 'ex. 192.168.0.10 — ou un port série (COM3, /dev/ttyUSB0) avec vplc-cpu --serial' : 'Adresse IP (Wi-Fi) ou port série USB : COM3, /dev/ttyUSB0, /dev/cu.usbserial…'),
+        field(isSerialPort(device.connection.host) ? 'Vitesse (bauds)' : t.port, numInput(device.connection.port, (v) => { device.connection.port = v; store.touch(); }, 1, 4000000),
+          isSerialPort(device.connection.host) ? 'Comme VPLC_SERIAL_BAUD du firmware (115200 par défaut)' : 'Protocole VirtualPLC (par défaut 20105)'),
         h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Cycle'),
         field('Temps de cycle (ms)', numInput(device.cpu.cycleMs, (v) => { device.cpu.cycleMs = v; store.touch(); }, 1, 60000), 'Période d\'exécution de l\'OB de cycle de programme'),
         ...servicesProps(device, touch),

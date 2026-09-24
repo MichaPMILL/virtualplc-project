@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "config.h"
+
 namespace vplc {
 
 struct Blob {
@@ -72,8 +74,8 @@ struct IoModuleInfo {
         uint16_t inLength = 0, inByte = 0, outLength = 0, outByte = 0;
         uint16_t recordOffset = 0;  // in recordPool: per record u16 index, u16 length, data
         uint8_t recordCount = 0;
-    } subs[64];
-    uint8_t recordPool[4096] = {0};
+    } subs[VPLC_PN_MAX_SUBMODULES > 0 ? VPLC_PN_MAX_SUBMODULES : 1];
+    uint8_t recordPool[VPLC_PN_RECORD_POOL > 0 ? VPLC_PN_RECORD_POOL : 1] = {0};
     uint16_t recordUsed = 0;
 };
 

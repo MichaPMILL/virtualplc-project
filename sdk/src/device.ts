@@ -1,6 +1,11 @@
-// Client of the VirtualPLC device protocol (docs/protocol.md) over TCP.
+// Client of the VirtualPLC device protocol (docs/protocol.md) over TCP, or over a serial
+// link (USB) for microcontroller CPUs: the host is then a serial port (COM3, /dev/ttyUSB0…)
+// and the port number the speed in bauds.
 import { Socket } from 'node:net';
 import { crc32 } from './crc32.ts';
+import { BAUD_RATES, DEFAULT_BAUD, isSerialPort } from './serial.ts';
+
+export { isSerialPort };
 import { Area, Command, PROTOCOL_PORT, Status } from './isa.ts';
 import type { SymbolNode } from './symbols.ts';
 import { decodeValue, encodeValue, type PlcValue } from './values.ts';
@@ -58,8 +63,15 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
+/** Byte stream to the device (TCP socket or serial port). */
+interface Link {
+  write(data: Buffer): void;
+  destroy(): void;
+}
+
 export class DeviceClient {
-  private socket: Socket | null = null;
+  private socket: Link | null = null;
+  private serial = false;
   private buffer = Buffer.alloc(0);
   private seq = 0;
   private queue: Promise<unknown> = Promise.resolve();
@@ -75,6 +87,56 @@ export class DeviceClient {
   }
 
   async connect(password?: string): Promise<DeviceInfo> {
+    let info: DeviceInfo;
+    if (isSerialPort(this.host)) {
+      info = await this.connectSerial();
+    } else {
+      await this.connectTcp();
+      info = await this.info();
+    }
+    this.maxPayload = Math.max(64, info.maxPayload);
+    if (info.auth) {
+      if (!password) throw new DeviceError('The device requires a password', Status.UNAUTHORIZED);
+      await this.request(Command.AUTH, Buffer.from(password, 'utf8'));
+    }
+    return info;
+  }
+
+  /** Serial link: opening the port may restart the board, so INFO is retried while it boots. */
+  private async connectSerial(): Promise<DeviceInfo> {
+    let SerialPort: typeof import('serialport').SerialPort;
+    try {
+      ({ SerialPort } = await import('serialport'));
+    } catch {
+      throw new Error('Serial links are not available in this installation (serialport module missing)');
+    }
+    const baudRate = BAUD_RATES.includes(this.port) ? this.port : DEFAULT_BAUD;
+    const port = new SerialPort({ path: this.host.trim(), baudRate, autoOpen: false, hupcl: false });
+    await new Promise<void>((resolve, reject) => port.open((e) => (e ? reject(new Error(`Cannot open ${this.host}: ${e.message}`)) : resolve())));
+    // ESP32 boards: DTR / RTS drive EN / IO0 — keep the board running normally
+    await new Promise<void>((resolve) => port.set({ dtr: false, rts: false }, () => resolve()));
+    port.on('data', (d: Buffer) => this.onData(d));
+    port.on('error', (e: Error) => this.fail(e));
+    port.on('close', () => this.fail(new Error('Serial link closed')));
+    this.serial = true;
+    this.socket = { write: (d) => port.write(d), destroy: () => { port.removeAllListeners('close'); if (port.isOpen) port.close(); } };
+    const saved = this.timeoutMs;
+    try {
+      for (let attempt = 0; ; attempt++) {
+        this.timeoutMs = 1000;
+        try {
+          return await this.info();
+        } catch (e) {
+          if (attempt >= 5 || !this.socket) throw new Error(`No answer from a VirtualPLC CPU on ${this.host} at ${baudRate} bauds`);
+          this.buffer = Buffer.alloc(0);
+        }
+      }
+    } finally {
+      this.timeoutMs = saved;
+    }
+  }
+
+  private async connectTcp(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const socket = new Socket();
       const timer = setTimeout(() => {
@@ -92,23 +154,16 @@ export class DeviceClient {
         socket.on('error', (e) => this.fail(e));
         socket.on('close', () => this.fail(new Error('Connection closed by the device')));
         socket.on('data', (d) => this.onData(d));
-        this.socket = socket;
+        this.socket = { write: (d) => socket.write(d), destroy: () => socket.destroy() };
         resolve();
       });
     });
-    const info = await this.info();
-    this.maxPayload = Math.max(64, info.maxPayload);
-    if (info.auth) {
-      if (!password) throw new DeviceError('The device requires a password', Status.UNAUTHORIZED);
-      await this.request(Command.AUTH, Buffer.from(password, 'utf8'));
-    }
-    return info;
   }
 
   close(): void {
-    this.socket?.removeAllListeners('close');
-    this.socket?.destroy();
+    const link = this.socket;
     this.socket = null;
+    link?.destroy();
   }
 
   get connected(): boolean {
@@ -265,7 +320,8 @@ export class DeviceClient {
         const timer = setTimeout(() => {
           this.pending = null;
           reject(new Error('The device did not answer in time'));
-          this.close();
+          // a serial link stays open (the board may still be starting); TCP reconnects
+          if (!this.serial) this.close();
         }, timeoutMs);
         this.pending = { seq, resolve, reject, timer };
         this.socket!.write(Buffer.concat([header, Buffer.from(payload), crc]));
@@ -285,17 +341,31 @@ export class DeviceClient {
     this.buffer = Buffer.concat([this.buffer, data]);
     while (this.buffer.length >= 13) {
       if (this.buffer[0] !== 0x56 || this.buffer[1] !== 0x52) {
+        if (this.serial) {
+          // boot messages or noise on a serial link: resynchronise on the next "VR"
+          const next = this.buffer.indexOf('VR', 1, 'latin1');
+          this.buffer = next < 0 ? this.buffer.subarray(this.buffer.length - 1) : this.buffer.subarray(next);
+          continue;
+        }
         this.fail(new Error('Invalid response from the device'));
         return;
       }
       const len = this.buffer.readUInt32LE(5);
+      if (this.serial && len > Math.max(this.maxPayload, 65536) + 16) {
+        this.buffer = this.buffer.subarray(1);  // noise that looked like a header
+        continue;
+      }
       if (this.buffer.length < 13 + len) return;
       const frame = this.buffer.subarray(0, 13 + len);
-      this.buffer = this.buffer.subarray(13 + len);
       if (crc32(frame.subarray(2, 9 + len)) !== frame.readUInt32LE(9 + len)) {
+        if (this.serial) {
+          this.buffer = this.buffer.subarray(1);  // false start: search again
+          continue;
+        }
         this.fail(new Error('Corrupted response from the device'));
         return;
       }
+      this.buffer = this.buffer.subarray(13 + len);
       const p = this.pending;
       if (p && frame[3] === p.seq) {
         clearTimeout(p.timer);
@@ -308,8 +378,9 @@ export class DeviceClient {
   private fail(e: Error): void {
     const p = this.pending;
     this.pending = null;
-    this.socket?.destroy();
+    const link = this.socket;
     this.socket = null;
+    link?.destroy();
     if (p) {
       clearTimeout(p.timer);
       p.reject(e);

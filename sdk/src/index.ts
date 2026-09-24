@@ -15,7 +15,7 @@ export * from './isa.ts';
 export { decodeValue, encodeValue, formatValue, formatTime } from './values.ts';
 export { formatTemporal, parseTemporal, parseDurationNs, TEMPORAL_PREFIXES, type TemporalType } from './literals.ts';
 export type { PlcValue } from './values.ts';
-export { DeviceClient, DeviceError } from './device.ts';
+export { DeviceClient, DeviceError, isSerialPort } from './device.ts';
 export type { DeviceInfo, DeviceState, LogEntry } from './device.ts';
 export * from './project.ts';
 export * from './projectFiles.ts';
@@ -29,3 +29,4 @@ export { fixIecInstances, flgNetToLadder, importSimaticMl, isSimaticMl, SimaticM
 export type { SimaticMlImport } from './simaticml.ts';
 export { generateGsdml, parseGsdml, pnModuleIdent, pnSubmodules, PN_MODULE_SIZES } from './gsdml.ts';
 export type { GsdDap, GsdDevice, GsdModule, GsdRecord, GsdSubmodule } from './gsdml.ts';
+export { BAUD_RATES, DEFAULT_BAUD } from './serial.ts';

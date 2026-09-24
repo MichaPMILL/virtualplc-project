@@ -1,5 +1,6 @@
 // Modal dialogs.
-import { DEVICE_TYPES, nextBlockNumber, type BlockType, type Device, type DeviceType } from '../../../../sdk/src/browser.ts';
+import { DEFAULT_BAUD, DEVICE_TYPES, isSerialPort, nextBlockNumber, PROTOCOL_PORT, type BlockType, type Device, type DeviceType } from '../../../../sdk/src/browser.ts';
+import { call } from '../host.ts';
 import { clear, h, svg } from '../dom.ts';
 import { icons } from '../icons.ts';
 import { t } from '../i18n.ts';
@@ -222,22 +223,51 @@ export function connectionDialog(device: Device, title: string, action: string):
   return new Promise((resolve) => {
     let result: ConnectionSpec | null = null;
     openDialog(title, (d) => {
-      const host = h('input', { value: device.connection.host });
+      const ports = h('datalist', { id: 'conn-serial-ports' });
+      const host = h('input', { value: device.connection.host, list: 'conn-serial-ports' });
       const port = h('input', { type: 'number', value: String(device.connection.port), style: 'width:100px' });
       const password = h('input', { type: 'password', placeholder: '(aucun)' });
+      const kind = h('select', null, h('option', { value: 'tcp' }, t.interfaceTcp), h('option', { value: 'serial' }, 'USB / liaison série'));
+      const hostLabel = h('label', null, t.ipAddress);
+      const portLabel = h('label', null, t.port);
+      const hostHint = h('span', { className: 'hint' });
+      const portHint = h('span', { className: 'hint' });
+      // the fields follow the kind of link: IP address + TCP port, or serial port + speed
+      const sync = () => {
+        const serial = isSerialPort(host.value);
+        kind.value = serial ? 'serial' : 'tcp';
+        hostLabel.textContent = serial ? 'Port série' : t.ipAddress;
+        portLabel.textContent = serial ? 'Vitesse (bauds)' : t.port;
+        hostHint.textContent = serial ? 'ex. COM3, /dev/ttyUSB0 (ports détectés : flèche du champ)' : 'ex. 192.168.0.10, plc.local';
+        portHint.textContent = serial ? 'comme VPLC_SERIAL_BAUD du firmware (115200 par défaut)' : `protocole VirtualPLC (${PROTOCOL_PORT} par défaut)`;
+        if (serial && Number(port.value) === PROTOCOL_PORT) port.value = String(DEFAULT_BAUD);
+        if (!serial && Number(port.value) === DEFAULT_BAUD) port.value = String(PROTOCOL_PORT);
+      };
+      host.addEventListener('input', sync);
+      kind.onchange = () => {
+        if (kind.value === 'serial' && !isSerialPort(host.value)) host.value = ports.querySelector('option')?.getAttribute('value') ?? 'COM3';
+        if (kind.value === 'tcp' && isSerialPort(host.value)) host.value = '192.168.0.10';
+        sync();
+      };
+      void call('serialPorts').then((list) => {
+        for (const p of list) ports.append(h('option', { value: p.path }, p.label || p.path));
+      }).catch(() => undefined);
+      sync();
       d.body.append(h('div', { style: 'width:560px' },
         h('div', { className: 'panel-subheader', style: 'margin:-2px 0 8px' }, 'Appareils dans le projet'),
         h('table', { className: 'grid', style: 'margin-bottom:12px' },
           h('tr', null, h('th', null, 'Appareil'), h('th', null, "Type d'appareil"), h('th', null, 'Emplacement'), h('th', null, 'Type'), h('th', null, 'Adresse')),
           h('tr', null, h('td', null, device.name), h('td', null, DEVICE_TYPES[device.type].label), h('td', null, '1'),
-            h('td', null, device.type === 'arduino' ? 'USB' : 'PN/IE'), h('td', null, `${device.connection.host}`))),
-        h('div', { className: 'field' }, h('label', null, t.interfaceType), h('select', null, h('option', null, t.interfaceTcp))),
-        h('div', { className: 'field' }, h('label', null, t.ipAddress), host, h('span', { className: 'hint' }, 'ex. 192.168.0.10, plc.local')),
-        h('div', { className: 'field' }, h('label', null, t.port), port),
+            h('td', null, isSerialPort(device.connection.host) ? 'USB' : 'PN/IE'), h('td', null, `${device.connection.host}`))),
+        h('div', { className: 'field' }, h('label', null, t.interfaceType), kind),
+        h('div', { className: 'field' }, hostLabel, host, hostHint),
+        h('div', { className: 'field' }, portLabel, port, portHint),
         h('div', { className: 'field' }, h('label', null, t.password), password, h('span', { className: 'hint' }, 'si la CPU est protégée')),
+        ports,
       ));
       const ok = () => {
-        result = { host: host.value.trim(), port: Number(port.value) || 20105, password: password.value };
+        const serial = isSerialPort(host.value);
+        result = { host: host.value.trim(), port: Number(port.value) || (serial ? DEFAULT_BAUD : PROTOCOL_PORT), password: password.value };
         d.close();
       };
       password.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });

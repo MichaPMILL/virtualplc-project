@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include <memory>
@@ -62,6 +63,8 @@ struct Options {
     int s7Port = -1;     // -1: from the project, 0: disabled
     int opcuaPort = -1;  // -1: from the project, 0: disabled
     std::string hmiUser, hmiPassword;
+    std::string serial;  // serial device for the device protocol (e.g. /dev/ttyGS0), with speed
+    int serialBaud = 115200;
 };
 
 void usage() {
@@ -81,7 +84,8 @@ void usage() {
         "  --s7-port N           S7 communication (HMI) port, 0 = disabled (default: project, 102)\n"
         "  --opcua-port N        OPC UA server port, 0 = disabled (default: project, 4840)\n"
         "  --hmi-user NAME       OPC UA user name (with --hmi-password-file)\n"
-        "  --hmi-password-file F OPC UA password (first line of F)\n",
+        "  --hmi-password-file F OPC UA password (first line of F)\n"
+        "  --serial DEV[:BAUD]   also serve the Studio on a serial link (e.g. /dev/ttyGS0:115200)\n",
         VPLC_FIRMWARE_VERSION, unsigned(PROTOCOL_PORT));
 }
 
@@ -105,6 +109,15 @@ bool parse(int argc, char** argv, Options& o) {
         else if (a == "--s7-port") o.s7Port = atoi(v);
         else if (a == "--opcua-port") o.opcuaPort = atoi(v);
         else if (a == "--hmi-user") o.hmiUser = v;
+        else if (a == "--serial") {
+            std::string d = v;
+            size_t colon = d.rfind(':');
+            if (colon != std::string::npos && colon > 5) {
+                o.serialBaud = atoi(d.c_str() + colon + 1);
+                d.resize(colon);
+            }
+            o.serial = d;
+        }
         else if (a == "--password-file" || a == "--hmi-password-file") {
             FILE* f = fopen(v, "r");
             char line[64] = {0};
@@ -118,6 +131,35 @@ bool parse(int argc, char** argv, Options& o) {
         }
     }
     return true;
+}
+
+speed_t baudConstant(int baud) {
+    switch (baud) {
+        case 9600: return B9600;
+        case 19200: return B19200;
+        case 38400: return B38400;
+        case 57600: return B57600;
+        case 230400: return B230400;
+        case 460800: return B460800;
+        case 921600: return B921600;
+        default: return B115200;
+    }
+}
+
+/** Opens a serial device in raw mode (non-blocking reads). */
+int openSerial(const std::string& path, int baud) {
+    int fd = open(path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return -1;
+    termios t{};
+    if (tcgetattr(fd, &t) == 0) {
+        cfmakeraw(&t);
+        cfsetispeed(&t, baudConstant(baud));
+        cfsetospeed(&t, baudConstant(baud));
+        t.c_cflag |= CLOCAL | CREAD;
+        t.c_cflag &= ~CRTSCTS;
+        tcsetattr(fd, TCSANOW, &t);
+    }
+    return fd;
 }
 
 int listenOn(const std::string& addr, int port) {
@@ -288,6 +330,17 @@ int main(int argc, char** argv) {
     };
 #endif
 
+    // serial link (optional): one session, framing errors resynchronise instead of closing
+    int serialFd = -1;
+    FrameParser serialParser;
+    Session serialSession;
+    if (!opt.serial.empty()) {
+        serialFd = openSerial(opt.serial, opt.serialBaud);
+        char msg[160];
+        snprintf(msg, sizeof msg, serialFd >= 0 ? "Serial link %s at %d bauds" : "Cannot open the serial link %s", opt.serial.c_str(), opt.serialBaud);
+        platform.log(msg);
+    }
+
     while (!stopRequested) {
         uint32_t wait = cpu.loop();
         reconcileS7();
@@ -302,8 +355,30 @@ int main(int argc, char** argv) {
         if (s7.fd >= 0) active.push_back(s7);
         for (const Listener& l : active) fds.push_back({l.fd, POLLIN, 0});
         for (const Client& c : clients) fds.push_back({c.fd, POLLIN, 0});
+        if (serialFd >= 0) fds.push_back({serialFd, POLLIN, 0});
         int ready = poll(fds.data(), fds.size(), int(wait > 50 ? 50 : wait));
         if (ready <= 0) continue;
+        if (serialFd >= 0 && (fds.back().revents & POLLIN)) {
+            uint8_t sbuf[512];
+            ssize_t n;
+            while ((n = read(serialFd, sbuf, sizeof sbuf)) > 0) {
+                for (ssize_t b = 0; b < n; b++) {
+                    FrameParser::Result r = serialParser.feed(sbuf[b]);
+                    if (r == FrameParser::ERROR) {
+                        serialParser.reset();
+                    } else if (r == FrameParser::FRAME) {
+                        size_t len = cpu.handle(serialSession, serialParser.command(), serialParser.sequence(), serialParser.payload(),
+                                                serialParser.length(), response);
+                        for (size_t off = 0; off < len;) {
+                            ssize_t w = write(serialFd, response + off, len - off);
+                            if (w > 0) off += size_t(w);
+                            else if (errno == EAGAIN) poll(&fds.back(), 0, 5);
+                            else break;
+                        }
+                    }
+                }
+            }
+        }
 
         size_t base = active.size();
         std::vector<Client> accepted;
@@ -322,7 +397,7 @@ int main(int argc, char** argv) {
         }
 
         std::vector<int> closed;
-        for (size_t k = base; k < fds.size(); k++) {
+        for (size_t k = base; k < base + clients.size(); k++) {
             if (!(fds[k].revents & (POLLIN | POLLHUP | POLLERR))) continue;
             Client& c = clients[k - base];
             uint8_t buf[4096];

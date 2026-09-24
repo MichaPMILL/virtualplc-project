@@ -20,6 +20,16 @@ export function createApi(backend = new Backend()) {
     write: (deviceId: string, path: string, text: string) => backend.write(deviceId, path, text),
     force: (deviceId: string, path: string, value: boolean | null) => backend.force(deviceId, path, value),
     unforceAll: (deviceId: string) => backend.unforceAll(deviceId),
+    /** Serial ports of this computer (USB CPUs: ESP32, Arduino…) */
+    serialPorts: async (): Promise<Array<{ path: string; label: string }>> => {
+      try {
+        const { SerialPort } = await import('serialport');
+        const ports = await SerialPort.list();
+        return ports.map((p) => ({ path: p.path, label: [p.manufacturer, p.vendorId && p.productId ? `${p.vendorId}:${p.productId}` : ''].filter(Boolean).join(' ') }));
+      } catch {
+        return [];
+      }
+    },
 
     // Project files
     projectOpen: (path: string) => openProjectPath(path),
