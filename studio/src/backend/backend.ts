@@ -3,6 +3,7 @@
 import {
   compileDevice, DeviceClient, findSymbol, formatTemporal, formatValue, loadProject, parseAddress, parseTemporal, TEMPORAL_PREFIXES,
   type DeviceInfo, type DeviceState, type LogEntry, type Project, type ProjectDiagnostic, type SymbolNode, type PlcValue,
+  type DataLogStatus, type TraceCertificate,
 } from '../../../sdk/src/index.ts';
 
 export interface CompileSummary {
@@ -131,6 +132,23 @@ export class Backend {
 
   async unforceAll(deviceId: string): Promise<void> {
     await this.session(deviceId).client.unforceAll();
+  }
+
+  // Traceability (data logs)
+  async dataLogRead(deviceId: string, log: number, count: number, before = 0): Promise<DataLogStatus> {
+    return this.session(deviceId).client.dataLogRead(log, count, before);
+  }
+
+  async dataLogTest(deviceId: string, log: number): Promise<DataLogStatus> {
+    return this.session(deviceId).client.dataLogTest(log);
+  }
+
+  async setSecret(deviceId: string, key: string, value: string): Promise<void> {
+    await this.session(deviceId).client.setSecret(key, value);
+  }
+
+  async traceCertificate(deviceId: string, log: number, max: number): Promise<TraceCertificate> {
+    return this.session(deviceId).client.traceCertificate(log, max);
   }
 
   private resolve(c: Compiled | undefined, path: string): SymbolNode | null {

@@ -451,3 +451,13 @@ body.simulation .toolbar .brand::after { content: 'SIMULATION'; margin-left: 10p
 .net-state { color: var(--online-dark); font-weight: 600; }
 .net-peers { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .net-card.peer { min-width: 150px; border-top: 3px solid #b8932e; font-size: 12px; }
+
+/* Traceability */
+.dl-form { padding: 0 0 8px; }
+.dl-form .field { padding: 2px 10px; }
+.dl-columns { height: 220px; display: flex; min-height: 0; margin: 6px 10px; border: 1px solid var(--border-light); }
+.dl-online { border-top: 1px solid var(--border); }
+.dl-warning { margin: 4px 10px; padding: 4px 8px; background: #fff5dc; border: 1px solid #f0cf7a; color: #7a5200; }
+.ok-text { color: var(--ok); font-weight: 600; }
+.err-text { color: #c42b1c; font-weight: 600; }
+.ifc-method.error { color: #c42b1c; }

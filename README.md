@@ -141,6 +141,18 @@ push button, values for words) and shows the outputs `%Q` as lamps. No hardware 
 network are needed — try it with the examples below. `runtime/wasm/build.sh` rebuilds
 `sdk/wasm/vplc-sim.wasm` (clang with the wasm32 target and wasi-libc).
 
+### Traceability (SQL)
+
+*Traçabilité (journaux SQL)* in the project tree: a data log records tags (its columns) on
+`DATALOG_WRITE('Name')`, on the rising edge of a Bool or periodically. The Linux CPU writes
+the records to its local SQLite database (nothing is lost while the network is down), then
+copies them **exactly once** to **PostgreSQL** or **MySQL / MariaDB** — clients written in-house,
+TLS with certificate check by default, parameterized statements, password stored on the CPU
+only. Every record is **chained (SHA-256) and signed (Ed25519)** by the CPU: *Certificat de
+traçabilité…* gives a customer a file they verify offline (`tools/trace-verifier/index.html`
+or `vplc verify`), which detects any record altered, removed or forged. Details:
+[docs/traceability.md](docs/traceability.md).
+
 ### Examples
 
 - [`examples/carton-closer`](examples/carton-closer) — carton closing machine with pneumatic

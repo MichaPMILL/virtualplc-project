@@ -25,6 +25,10 @@ export function createApi(backend = new Backend()) {
     write: (deviceId: string, path: string, text: string) => backend.write(deviceId, path, text),
     force: (deviceId: string, path: string, value: boolean | null) => backend.force(deviceId, path, value),
     unforceAll: (deviceId: string) => backend.unforceAll(deviceId),
+    dataLogRead: (deviceId: string, log: number, count: number, before?: number) => backend.dataLogRead(deviceId, log, count, before),
+    dataLogTest: (deviceId: string, log: number) => backend.dataLogTest(deviceId, log),
+    setSecret: (deviceId: string, key: string, value: string) => backend.setSecret(deviceId, key, value),
+    traceCertificate: (deviceId: string, log: number, max: number) => backend.traceCertificate(deviceId, log, max),
     /** Serial ports of this computer (USB CPUs: ESP32, Arduino…) */
     serialPorts: async (): Promise<Array<{ path: string; label: string }>> => {
       try {

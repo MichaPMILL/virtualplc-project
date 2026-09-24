@@ -134,6 +134,11 @@ function deviceNodes(d: Device): NodeSpec[] {
       ],
     },
     {
+      key: `trace:${d.id}`, label: `Traçabilité (journaux SQL)${d.dataLogs?.length ? ` [${d.dataLogs.length}]` : ''}`, icon: 'trace', depth: 2,
+      open: { kind: 'datalogs', deviceId: d.id },
+      className: store.compile.get(d.id)?.diagnostics.some((x) => x.location === 'datalog' && x.severity === 'error') ? 'error' : undefined,
+    },
+    {
       key: `ifcs:${d.id}`, label: 'Interfaces', icon: 'folder', depth: 2,
       menu: [{ label: 'Ajouter nouvelle interface', icon: 'iface', run: () => void A.addInterfaceCmd(d) }],
       children: () => [

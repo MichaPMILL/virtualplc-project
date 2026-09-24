@@ -50,3 +50,24 @@ test('simulated CPU: download, run in real time, simulated inputs, monitoring', 
   assert.equal((await again.state()).programId, r.programId);
   again.close();
 });
+
+test('simulated CPU: data logs kept in memory', { skip }, async () => {
+  const text = `VAR_GLOBAL n : DInt; t : Real; s : String[10] := 'abc'; END_VAR
+    ORGANIZATION_BLOCK "Main" BEGIN n := n + 1; t := DINT_TO_REAL(n) / 2.0; IF n MOD 5 = 0 THEN DATALOG_WRITE('Lot'); END_IF; END_ORGANIZATION_BLOCK`;
+  const r = compile({ sources: [{ file: 'a.scl', text }], cycleMs: 10, dataLogs: [{ id: '1', name: 'Lot', trigger: { kind: 'program' }, columns: [{ name: 'n', tag: 'n' }, { name: 't', tag: 't' }, { name: 's', tag: 's' }] }] });
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  const client = new DeviceClient('simulation');
+  await client.connect();
+  await client.download(r.image!);
+  await client.start(true);
+  await sleep(600);
+  const st = await client.dataLogRead(0, 5);
+  client.close();
+  assert.deepEqual(st.columns, ['n', 't', 's']);
+  assert.deepEqual(st.kinds, ['int', 'real', 'text']);
+  assert.ok(st.records! >= 5, `records ${st.records}`);
+  const row = st.rows![0];
+  assert.equal(Number(row[2]) % 5, 0);
+  assert.equal(row[3], Number(row[2]) / 2);
+  assert.equal(row[4], 'abc');
+});

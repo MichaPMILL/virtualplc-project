@@ -94,6 +94,7 @@ u32 crc32         CRC-32 (IEEE) of every preceding byte
 | `IOCONF`  | u16 count, then I/O modules (see below)                                                   |
 | `SYMS`    | u32 count, then variables visible to HMIs: u8 area, u32 offset, u8 bit (0xFF = none), u8 type (VM type, 0x20 STRING, 0x21 TIME), u16 size, u8 flags (bit0 writable), u8 segment count, segments (u8+bytes) — optional |
 | `DBS`     | u16 count, then numbered data blocks: u16 number, u32 offset in `D`, u32 size, u8+bytes name — optional |
+| `DATALOGS`| u16 count, then per data log: u8+bytes name, u8 trigger (0 program, 1 edge: u8 area, u32 offset, u8 bit; 2 period: u32 ms), u16 retention days, u8 column count, columns (u8+bytes name, u8 area, u32 offset, u8 bit (0xFF = none), u8 type (as `SYMS`), u16 size), u8 database (0 none, 1 PostgreSQL, 2 MySQL), then u8+bytes host, u16 port, u8+bytes database, u8+bytes table, u8+bytes user, u8 TLS (0 disable, 1 require, 2 verify) — optional, see [traceability.md](traceability.md) |
 | `SERVICES`| u16 OPC UA port, u8 flags (bit0 enabled, bit1 write, bit2 anonymous), u16 S7 port, u8 flags (bit0 enabled, bit1 write) — optional |
 
 The **program id** is the CRC-32 of the image; the device reports it so that the

@@ -20,6 +20,9 @@
 #include "../core/cpu.h"
 #include "../core/isa.h"
 #include "../core/protocol.h"
+#include "../core/bytes.h"
+
+#include <time.h>
 
 #define WASM_IMPORT(name) __attribute__((import_module("env"), import_name(#name)))
 #define WASM_EXPORT(name) extern "C" __attribute__((export_name(#name)))
@@ -83,6 +86,49 @@ public:
     }
     void readInputs(uint8_t*, uint32_t) override {}
     void writeOutputs(const uint8_t*, uint32_t) override {}
+
+    // Data logs: the latest records stay in memory (no database, no signature in simulation)
+    static constexpr uint16_t LOG_RECORDS = 200;
+    struct SimLog {
+        const Program* program = nullptr;
+        uint16_t index = 0;
+        uint32_t recordSize = 0;
+        uint8_t* ring = nullptr;      // LOG_RECORDS * (8 + recordSize)
+        uint32_t count = 0;           // records written (ids 1..count)
+    };
+    SimLog logs[VPLC_MAX_DATALOGS];
+    uint16_t logCount = 0;
+    const Program* program = nullptr;
+
+    bool configureDataLogs(const Program& p) override {
+        for (uint16_t k = 0; k < logCount; k++) free(logs[k].ring);
+        logCount = 0;
+        program = &p;
+        DataLogReader reader(p.datalogs);
+        DataLogInfo info;
+        while (logCount < VPLC_MAX_DATALOGS && reader.next(info)) {
+            SimLog& l = logs[logCount];
+            l = SimLog();
+            l.index = logCount;
+            l.recordSize = info.recordSize();
+            l.ring = static_cast<uint8_t*>(malloc(size_t(LOG_RECORDS) * (8 + l.recordSize)));
+            if (!l.ring) return false;
+            logCount++;
+        }
+        return true;
+    }
+
+    bool dataLog(uint16_t log, int64_t timeNs, const uint8_t* values, uint32_t length) override {
+        if (log >= logCount || length != logs[log].recordSize) return false;
+        SimLog& l = logs[log];
+        uint8_t* slot = l.ring + size_t(l.count % LOG_RECORDS) * (8 + l.recordSize);
+        memcpy(slot, &timeNs, 8);
+        memcpy(slot + 8, values, length);
+        l.count++;
+        return true;
+    }
+
+    size_t dataLogRead(uint16_t log, uint16_t count, uint64_t before, bool full, char* out, size_t cap) override;
 };
 
 WasmPlatform platform;
@@ -135,3 +181,109 @@ WASM_EXPORT(vplc_feed) void vplc_feed(uint32_t length) {
 }
 
 WASM_EXPORT(vplc_loop) uint32_t vplc_loop() { return cpu ? cpu->loop() : 100; }
+
+// ---------------------------------------------------------------------------
+// Data logs of the simulated CPU (JSON as the Linux CPU, see DataLogger::read)
+// ---------------------------------------------------------------------------
+
+namespace {
+const char* kindOf(const DataLogColumn& c) {
+    if (c.bit != 0xFF || c.type == uint8_t(VmType::T_BOOL)) return "bool";
+    if (c.type == 0x20) return "text";
+    if (c.type == uint8_t(VmType::T_F32) || c.type == uint8_t(VmType::T_F64)) return "real";
+    return "int";
+}
+
+void jsonValue(JsonWriter& j, const DataLogColumn& c, const uint8_t* b) {
+    char num[40];
+    if (c.bit != 0xFF || c.type == uint8_t(VmType::T_BOOL)) { j.raw(b[0] ? "true" : "false"); return; }
+    if (c.type == 0x20) {
+        char text[256];
+        uint8_t len = c.size >= 2 ? b[1] : 0;
+        if (len > c.size - 2) len = uint8_t(c.size - 2);
+        memcpy(text, b + 2, len);
+        text[len] = 0;
+        j.str(text);
+        return;
+    }
+    switch (VmType(c.type)) {
+        case VmType::T_F32: { uint32_t bits = uint32_t(rdbe(b, 4)); float f; memcpy(&f, &bits, 4); snprintf(num, sizeof num, "%.9g", double(f)); j.raw(num); return; }
+        case VmType::T_F64: { uint64_t bits = rdbe(b, 8); double d; memcpy(&d, &bits, 8); snprintf(num, sizeof num, "%.17g", d); j.raw(num); return; }
+        case VmType::T_U8: j.num(b[0]); return;
+        case VmType::T_I8: j.num(int8_t(b[0])); return;
+        case VmType::T_U16: j.num(uint16_t(rdbe(b, 2))); return;
+        case VmType::T_I16: j.num(int16_t(uint16_t(rdbe(b, 2)))); return;
+        case VmType::T_U32: j.num(uint32_t(rdbe(b, 4))); return;
+        default:
+            if (c.type == 0x21 || c.type == uint8_t(VmType::T_I32)) j.num(int32_t(uint32_t(rdbe(b, 4))));
+            else j.num(int64_t(rdbe(b, 8)));
+    }
+}
+}  // namespace
+
+size_t WasmPlatform::dataLogRead(uint16_t log, uint16_t count, uint64_t before, bool full, char* out, size_t cap) {
+    JsonWriter j(out, cap);
+    if (!program || log >= logCount) {
+        j.open('{').key("error").str("unknown data log").close('}');
+        return j.length();
+    }
+    DataLogReader reader(program->datalogs);
+    DataLogInfo info;
+    for (uint16_t k = 0; k <= log; k++) reader.next(info);
+    SimLog& l = logs[log];
+    j.open('{');
+    j.key("name").str(info.name);
+    j.key("plc").str("PLCSIM");
+    j.key("epoch").num(0);
+    j.key("records").num(l.count);
+    j.key("pending").num(0);
+    j.key("simulation").raw("true");
+    if (info.dbKind != DataLogInfo::NONE) j.key("destination").str("simulation: records are not sent to the database");
+    j.key("columns").open('[');
+    uint8_t pos = 0;
+    const uint8_t* cursor = nullptr;
+    DataLogColumn c;
+    while (info.column(pos, cursor, c)) j.str(c.name);
+    j.close(']');
+    j.key("kinds").open('[');
+    pos = 0;
+    while (info.column(pos, cursor, c)) j.str(kindOf(c));
+    j.close(']');
+    j.key("rows").open('[');
+    uint64_t last = before && before <= l.count ? before - 1 : l.count;
+    uint64_t oldest = l.count > LOG_RECORDS ? l.count - LOG_RECORDS + 1 : 1;
+    for (uint64_t id = last; id >= oldest && id > 0 && count > 0; id--, count--) {
+        if (j.length() + 8 * size_t(l.recordSize) + 128 > cap) break;  // keep the JSON complete
+        const uint8_t* slot = l.ring + size_t((id - 1) % LOG_RECORDS) * (8 + l.recordSize);
+        int64_t ns;
+        memcpy(&ns, slot, 8);
+        j.open('[');
+        j.num(int64_t(id));
+        if (full) {
+            char t[24];
+            snprintf(t, sizeof t, "%lld", static_cast<long long>(ns));
+            j.str(t);
+        } else {
+            // ISO date, UTC
+            time_t secs = time_t(ns / 1000000000LL);
+            struct tm tm;
+            gmtime_r(&secs, &tm);
+            char t[40];
+            snprintf(t, sizeof t, "%04d-%02d-%02d %02d:%02d:%02d.%03dZ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+                     int((ns / 1000000) % 1000));
+            j.str(t);
+        }
+        const uint8_t* v = slot + 8;
+        pos = 0;
+        while (info.column(pos, cursor, c)) {
+            jsonValue(j, c, v);
+            v += c.bit != 0xFF ? 1 : c.size;
+        }
+        j.str("");
+        j.raw("true");
+        j.close(']');
+    }
+    j.close(']');
+    j.close('}');
+    return j.length();
+}

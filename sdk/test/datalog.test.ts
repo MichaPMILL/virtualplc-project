@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -126,6 +126,21 @@ test('traceability: local records, triggers, hash chain', { skip }, async () => 
     assert.equal(partial.records.length, 3);
     assert.ok(partial.previous);
     assert.equal((await verifyTraceCertificate(partial, fp)).ok, true);
+
+    // the offline verifier page (tools/trace-verifier) gives the same results
+    const html = readFileSync(new URL('../../tools/trace-verifier/index.html', import.meta.url), 'utf8');
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)![1];
+    const vplcVerify = new Function(`${script}; return vplcVerify;`)() as (c: unknown, f?: string) => Promise<{ ok: boolean }>;
+    assert.equal((await vplcVerify(cert, fp)).ok, true);
+    assert.equal((await vplcVerify(forged, fp)).ok, false);
+    assert.equal((await vplcVerify(cert, '1111 2222')).ok, false);
+    // and the command line: vplc verify certificate.json --fingerprint "..."
+    const file = join(mkdtempSync(join(tmpdir(), 'vplc-cert-')), 'certificate.json');
+    writeFileSync(file, JSON.stringify(cert));
+    const cli = new URL('../src/cli.ts', import.meta.url).pathname;
+    assert.match(execFileSync(process.execPath, [cli, 'verify', file, '--fingerprint', fp]).toString(), /^OK: /m);
+    writeFileSync(file, JSON.stringify(forged));
+    assert.throws(() => execFileSync(process.execPath, [cli, 'verify', file], { stdio: 'pipe' }));
   });
 });
 

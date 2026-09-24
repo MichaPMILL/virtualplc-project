@@ -16,6 +16,7 @@ export type EditorRef =
   | { kind: 'interface'; deviceId: string; interfaceId: string }
   | { kind: 'simulation'; deviceId: string }
   | { kind: 'network' }
+  | { kind: 'datalogs'; deviceId: string }
   | { kind: 'history' }
   | { kind: 'branches' };
 

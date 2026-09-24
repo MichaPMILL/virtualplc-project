@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vérification de traçabilité — VirtualPLC</title>
+<style>
+  :root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { margin: 0; background: #eef1f4; color: #1c2833; }
+  main { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .card { background: #fff; border: 1px solid #c3cad2; border-radius: 4px; padding: 14px 16px; margin: 12px 0; }
+  .drop { border: 2px dashed #7fb2dd; border-radius: 6px; padding: 28px; text-align: center; color: #3d5a73; cursor: pointer; }
+  .drop.over { background: #e5f1fb; }
+  label { display: block; font-weight: 600; margin: 8px 0 4px; }
+  input[type=text] { width: 100%; box-sizing: border-box; font: 14px ui-monospace, monospace; padding: 6px; border: 1px solid #c3cad2; border-radius: 3px; }
+  .result { font-size: 16px; font-weight: 600; padding: 10px 12px; border-radius: 4px; }
+  .ok { background: #e3f5eb; color: #13703f; border: 1px solid #9ad3b4; }
+  .bad { background: #fde8e6; color: #9e1c0f; border: 1px solid #f0a59b; }
+  .warn { background: #fff5dc; color: #7a5200; border: 1px solid #f0cf7a; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid #dfe4e9; padding: 3px 6px; text-align: left; }
+  th { background: #f4f6f8; }
+  tr.broken td { background: #fde8e6; }
+  .muted { color: #5f6b77; font-size: 13px; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Vérification d'un certificat de traçabilité</h1>
+  <div class="muted">Cette page fonctionne hors ligne : le certificat ne quitte pas votre ordinateur. Elle vérifie que les
+    enregistrements ont été écrits par l'automate identifié et qu'aucun n'a été modifié, supprimé ou inséré depuis.</div>
+
+  <div class="card">
+    <div id="drop" class="drop">Déposez ici le certificat (<code>.json</code>) ou cliquez pour le choisir</div>
+    <input id="file" type="file" accept=".json,application/json" hidden>
+    <label for="fp">Empreinte de la clé de l'automate (communiquée par le fabricant)</label>
+    <input id="fp" type="text" placeholder="ex. 3f9a 12c0 7b41 …">
+  </div>
+  <div id="out"></div>
+</main>
+<script>
+// Same algorithm as the VirtualPLC SDK (sdk/src/datalog.ts) and CPU (docs/traceability.md)
+async function sha256Hex(text) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function hexBytes(hex) {
+  const c = hex.trim().toLowerCase();
+  const out = new Uint8Array(c.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(c.substr(2 * i, 2), 16);
+  return out;
+}
+function canonical(r, kinds) {
+  let s = `${BigInt(r.recordId)}|${BigInt(r.tsNs)}`;
+  r.values.forEach((v, i) => {
+    s += '|';
+    if (v === null || v === undefined) { s += 'N'; return; }
+    switch (kinds[i]) {
+      case 'bool': s += v === true || v === 1 || v === '1' || v === 't' || v === 'true' ? 'B1' : 'B0'; break;
+      case 'int': s += `I${BigInt(typeof v === 'boolean' ? Number(v) : v)}`; break;
+      case 'real': { const dv = new DataView(new ArrayBuffer(8)); dv.setFloat64(0, Number(v)); s += `R${dv.getBigUint64(0).toString(16).padStart(16, '0')}`; break; }
+      default: { const t = String(v); s += `T${new TextEncoder().encode(t).length}:${t}`; }
+    }
+  });
+  return s;
+}
+async function fingerprintOf(pub) {
+  return (await sha256Hex(pub.trim().toLowerCase())).slice(0, 32).match(/..../g).join(' ');
+}
+async function vplcVerify(cert, fingerprint) {
+  if (!cert || cert.format !== 'virtualplc-trace' || cert.version !== 1) return { ok: false, verified: 0, reason: "ce fichier n'est pas un certificat de traçabilité VirtualPLC" };
+  if (!cert.publicKey) return { ok: false, verified: 0, reason: "le certificat ne contient pas la clé de l'automate" };
+  const fp = await fingerprintOf(cert.publicKey);
+  if (fingerprint && fp.replace(/\s/g, '') !== fingerprint.replace(/\s/g, '').toLowerCase()) {
+    return { ok: false, verified: 0, fingerprint: fp, reason: "la clé n'est pas celle de l'automate annoncé (empreinte différente)" };
+  }
+  let key;
+  try {
+    key = await crypto.subtle.importKey('raw', hexBytes(cert.publicKey), { name: 'Ed25519' }, false, ['verify']);
+  } catch {
+    return { ok: false, verified: 0, fingerprint: fp, reason: 'ce navigateur ne gère pas les signatures Ed25519 (utilisez un navigateur récent ou « vplc verify »)' };
+  }
+  let previous = cert.previous ?? await sha256Hex(`VirtualPLC data log|${cert.plc}|${cert.log}|${BigInt(cert.epoch)}`);
+  let expected = cert.previous === undefined ? 1n : null;
+  let verified = 0;
+  for (const r of cert.records) {
+    const id = BigInt(r.recordId);
+    if (expected !== null && id !== expected) return { ok: false, verified, fingerprint: fp, brokenAt: String(expected), reason: `l'enregistrement ${expected} a été supprimé` };
+    const c = await sha256Hex(`${previous}|${canonical(r, cert.kinds)}`);
+    if (c !== String(r.chain).trim().toLowerCase()) return { ok: false, verified, fingerprint: fp, brokenAt: String(id), reason: `l'enregistrement ${id} a été modifié (ou un enregistrement précédent)` };
+    const sig = String(r.sig ?? '').trim();
+    if (sig.length !== 128 || !await crypto.subtle.verify({ name: 'Ed25519' }, key, hexBytes(sig), new TextEncoder().encode(c))) {
+      return { ok: false, verified, fingerprint: fp, brokenAt: String(id), reason: `l'enregistrement ${id} n'est pas signé par cet automate` };
+    }
+    previous = c;
+    expected = id + 1n;
+    verified++;
+  }
+  return { ok: true, verified, fingerprint: fp };
+}
+
+if (typeof document !== 'undefined') {
+  const $ = (id) => document.getElementById(id);
+  let cert = null;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const show = async () => {
+    if (!cert) return;
+    const r = await vplcVerify(cert, $('fp').value.trim());
+    const time = (ns) => new Date(Number(BigInt(ns) / 1000000n)).toISOString().replace('T', ' ').replace('Z', ' UTC');
+    const rows = (cert.records || []).map((x) => `<tr class="${r.brokenAt === String(x.recordId) ? 'broken' : ''}"><td>${esc(x.recordId)}</td><td>${esc(time(x.tsNs))}</td>${x.values.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('');
+    const verdict = r.ok
+      ? ($('fp').value.trim()
+        ? `<div class="result ok">✔ Certificat valide : ${r.verified} enregistrement(s) signés par l'automate, aucun modifié ni supprimé.</div>`
+        : `<div class="result warn">✔ Chaîne et signatures valides (${r.verified} enregistrements). Vérifiez l'empreinte de la clé auprès du fabricant : <code>${esc(r.fingerprint)}</code></div>`)
+      : `<div class="result bad">✘ Certificat invalide : ${esc(r.reason)}</div>`;
+    $('out').innerHTML = `<div class="card">${verdict}
+      <p class="muted">Automate <b>${esc(cert.plc)}</b> — journal <b>${esc(cert.log)}</b> — empreinte de la clé <code>${esc(r.fingerprint ?? '?')}</code> — certificat créé le ${esc(cert.created)}</p>
+      <table><tr><th>N°</th><th>Date (UTC)</th>${(cert.columns || []).map((c) => `<th>${esc(c)}</th>`).join('')}</tr>${rows}</table></div>`;
+  };
+  const load = (f) => f.text().then((t) => { cert = JSON.parse(t); return show(); }).catch((e) => { $('out').innerHTML = `<div class="card"><div class="result bad">Fichier illisible : ${esc(e.message)}</div></div>`; });
+  $('drop').onclick = () => $('file').click();
+  $('file').onchange = () => $('file').files[0] && load($('file').files[0]);
+  $('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('over'); };
+  $('drop').ondragleave = () => $('drop').classList.remove('over');
+  $('drop').ondrop = (e) => { e.preventDefault(); $('drop').classList.remove('over'); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); };
+  $('fp').oninput = () => show();
+}
+</script>
+</body>
+</html>

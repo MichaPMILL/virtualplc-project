@@ -551,12 +551,14 @@ export async function compileCmd(device = currentDevice(), quiet = false): Promi
     const path = tagTable ? `${device.name} > ${t.plcTags} > ${tagTable.name}`
       : dataType ? `${device.name} > ${t.dataTypes} > ${dataType.name}`
         : ifc ? `${device.name} > Interfaces > ${ifc.name}`
+          : d.location === 'datalog' ? `${device.name} > Traçabilité`
           : `${blockPath(device, d.blockId)}${method ? ` > ${method.name}` : ''}`;
     const where = d.location === 'interface' ? ' (interface)' : d.network !== undefined ? '' : d.codeLine ? ` (ligne ${d.codeLine})` : '';
     store.messages.push({
       severity: d.severity, text: `${d.message}${where}`, path, time: new Date().toLocaleTimeString(),
       goto: d.blockId && method ? { kind: 'method', deviceId: device.id, blockId: d.blockId, methodId: method.id, line: d.codeLine }
         : ifc ? { kind: 'interface', deviceId: device.id, interfaceId: ifc.id }
+        : d.location === 'datalog' ? { kind: 'datalogs', deviceId: device.id }
         : d.blockId ? { kind: 'block', deviceId: device.id, blockId: d.blockId, line: d.codeLine, network: d.network, element: d.element }
         : tagTable ? { kind: 'tagTable', deviceId: device.id, tableId: tagTable.id }
           : dataType ? { kind: 'dataType', deviceId: device.id, typeId: dataType.id } : undefined,

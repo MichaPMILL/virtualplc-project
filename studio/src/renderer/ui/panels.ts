@@ -224,6 +224,7 @@ const INSTRUCTIONS: Array<[string, IconName, Instruction[]]> = [
   ['Chaînes de caractères', 'string', [
     { name: 'CONCAT', desc: 'Concaténer', snippet: 'CONCAT(IN1 := , IN2 := )' }, { name: 'LEN', desc: 'Longueur', snippet: 'LEN()' },
     { name: 'LOG', desc: 'Écrire dans le tampon de diagnostic', snippet: "LOG('');" },
+    { name: 'DATALOG_WRITE', desc: 'Enregistrer un journal de traçabilité', snippet: "DATALOG_WRITE('Journal_1');" },
   ]],
 ];
 
