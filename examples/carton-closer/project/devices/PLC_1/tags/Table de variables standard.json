@@ -5,137 +5,164 @@
     {
       "name": "Stopper",
       "dataType": "Cylinder",
-      "address": ""
+      "address": "",
+      "comment": "butée : deux capteurs"
     },
     {
       "name": "SideFlaps",
       "dataType": "Cylinder",
-      "address": ""
+      "address": "",
+      "comment": "rabats latéraux : deux capteurs"
     },
     {
       "name": "FrontFlaps",
       "dataType": "CylinderOneSensor",
-      "address": ""
+      "address": "",
+      "comment": "rabats avant/arrière : un seul capteur"
     },
     {
       "name": "Press",
       "dataType": "BistableCylinder",
-      "address": ""
+      "address": "",
+      "comment": "presse : distributeur bistable"
     },
     {
       "name": "BP_Start",
       "dataType": "Bool",
-      "address": "%I0.0"
+      "address": "%I0.0",
+      "comment": "bouton marche (NO)"
     },
     {
       "name": "BP_Stop",
       "dataType": "Bool",
-      "address": "%I0.1"
+      "address": "%I0.1",
+      "comment": "bouton arrêt NF : mettre à 1 pour pouvoir démarrer"
     },
     {
       "name": "AU_Ok",
       "dataType": "Bool",
-      "address": "%I0.2"
+      "address": "%I0.2",
+      "comment": "arrêt d’urgence NF : mettre à 1 (sinon défaut)"
     },
     {
       "name": "BP_Reset",
       "dataType": "Bool",
-      "address": "%I0.3"
+      "address": "%I0.3",
+      "comment": "acquittement des défauts"
     },
     {
       "name": "B_BoxAtStation",
       "dataType": "Bool",
-      "address": "%I0.4"
+      "address": "%I0.4",
+      "comment": "carton en position de fermeture"
     },
     {
       "name": "B_BoxOut",
       "dataType": "Bool",
-      "address": "%I0.5"
+      "address": "%I0.5",
+      "comment": "carton en sortie de machine"
     },
     {
       "name": "B_Stopper_Out",
       "dataType": "Bool",
-      "address": "%I1.0"
+      "address": "%I1.0",
+      "comment": "butée sortie (carton bloqué)"
     },
     {
       "name": "B_Stopper_In",
       "dataType": "Bool",
-      "address": "%I1.1"
+      "address": "%I1.1",
+      "comment": "butée rentrée"
     },
     {
       "name": "B_SideFlaps_Out",
       "dataType": "Bool",
-      "address": "%I1.2"
+      "address": "%I1.2",
+      "comment": "plieur de rabats latéraux sorti"
     },
     {
       "name": "B_SideFlaps_In",
       "dataType": "Bool",
-      "address": "%I1.3"
+      "address": "%I1.3",
+      "comment": "plieur de rabats latéraux rentré"
     },
     {
       "name": "B_FrontFlaps_Out",
       "dataType": "Bool",
-      "address": "%I1.4"
+      "address": "%I1.4",
+      "comment": "plieur de rabats avant/arrière sorti (un seul capteur)"
     },
     {
       "name": "B_Press_Out",
       "dataType": "Bool",
-      "address": "%I1.5"
+      "address": "%I1.5",
+      "comment": "presse descendue"
     },
     {
       "name": "B_Press_In",
       "dataType": "Bool",
-      "address": "%I1.6"
+      "address": "%I1.6",
+      "comment": "presse remontée"
     },
     {
       "name": "M_ConveyorIn",
       "dataType": "Bool",
-      "address": "%Q0.0"
+      "address": "%Q0.0",
+      "comment": "convoyeur d'entrée"
     },
     {
       "name": "M_ConveyorOut",
       "dataType": "Bool",
-      "address": "%Q0.1"
+      "address": "%Q0.1",
+      "comment": "convoyeur de sortie"
     },
     {
       "name": "H_Running",
       "dataType": "Bool",
-      "address": "%Q0.2"
+      "address": "%Q0.2",
+      "comment": "voyant marche (vert)"
     },
     {
       "name": "H_Fault",
       "dataType": "Bool",
-      "address": "%Q0.3"
+      "address": "%Q0.3",
+      "comment": "voyant défaut (rouge, clignotant)"
     },
     {
       "name": "YV_Stopper",
       "dataType": "Bool",
-      "address": "%Q1.0"
+      "address": "%Q1.0",
+      "comment": "butée (monostable, rappel ressort)"
     },
     {
       "name": "YV_SideFlaps",
       "dataType": "Bool",
-      "address": "%Q1.1"
+      "address": "%Q1.1",
+      "comment": "rabats latéraux (monostable)"
     },
     {
       "name": "YV_FrontFlaps",
       "dataType": "Bool",
-      "address": "%Q1.2"
+      "address": "%Q1.2",
+      "comment": "rabats avant/arrière (monostable)"
     },
     {
       "name": "YV_PressDown",
       "dataType": "Bool",
-      "address": "%Q1.3"
+      "address": "%Q1.3",
+      "comment": "presse : bobine descente (bistable)"
     },
     {
       "name": "YV_PressUp",
       "dataType": "Bool",
-      "address": "%Q1.4"
+      "address": "%Q1.4",
+      "comment": "presse : bobine montée (bistable)"
     },
     {
       "name": "YV_Glue",
       "dataType": "Bool",
-      "address": "%Q1.5"
+      "address": "%Q1.5",
+      "comment": "pistolet à colle"
     },
     {
       "name": "BoxCount",

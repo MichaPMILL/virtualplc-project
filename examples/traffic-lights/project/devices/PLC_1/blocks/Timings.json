@@ -15,12 +15,14 @@
     {
       "name": "MainGreenMin",
       "dataType": "Time",
-      "defaultValue": "T#20000MS"
+      "defaultValue": "T#20000MS",
+      "comment": "vert minimal de la rue principale"
     },
     {
       "name": "SideAlways",
       "dataType": "Bool",
-      "defaultValue": "FALSE"
+      "defaultValue": "FALSE",
+      "comment": "TRUE : la rue secondaire passe au vert à chaque cycle"
     },
     {
       "name": "Amber",
@@ -30,7 +32,8 @@
     {
       "name": "AllRed",
       "dataType": "Time",
-      "defaultValue": "T#2000MS"
+      "defaultValue": "T#2000MS",
+      "comment": "dégagement (tout rouge)"
     },
     {
       "name": "SideGreen",
@@ -40,12 +43,14 @@
     {
       "name": "PedGreen",
       "dataType": "Time",
-      "defaultValue": "T#7000MS"
+      "defaultValue": "T#7000MS",
+      "comment": "vert piétons (pendant le vert secondaire)"
     },
     {
       "name": "StartupFlash",
       "dataType": "Time",
-      "defaultValue": "T#5000MS"
+      "defaultValue": "T#5000MS",
+      "comment": "orange clignotant à la mise en service"
     }
   ]
 }

@@ -5,22 +5,26 @@
     {
       "name": "S_On",
       "dataType": "Bool",
-      "address": "%I0.0"
+      "address": "%I0.0",
+      "comment": "commutateur marche : 1 = feux en service, 0 = orange clignotant"
     },
     {
       "name": "S_Night",
       "dataType": "Bool",
-      "address": "%I0.1"
+      "address": "%I0.1",
+      "comment": "mode nuit : 1 = orange clignotant"
     },
     {
       "name": "BP_Pedestrian",
       "dataType": "Bool",
-      "address": "%I0.2"
+      "address": "%I0.2",
+      "comment": "bouton d'appel piétons (traversée de la rue principale)"
     },
     {
       "name": "B_SideVehicle",
       "dataType": "Bool",
-      "address": "%I0.3"
+      "address": "%I0.3",
+      "comment": "boucle de détection des véhicules de la rue secondaire"
     },
     {
       "name": "H_Main_Red",
@@ -65,17 +69,20 @@
     {
       "name": "H_Ped_Wait",
       "dataType": "Bool",
-      "address": "%Q1.0"
+      "address": "%Q1.0",
+      "comment": "voyant « attendez » du bouton d'appel"
     },
     {
       "name": "Phase",
       "dataType": "Int",
-      "address": "%MW20"
+      "address": "%MW20",
+      "comment": "phase en cours"
     },
     {
       "name": "Cycles",
       "dataType": "DInt",
-      "address": "%MD22"
+      "address": "%MD22",
+      "comment": "cycles complets"
     }
   ],
   "constants": []

@@ -9,7 +9,8 @@
     "output": [
       {
         "name": "ValveIn",
-        "dataType": "Bool"
+        "dataType": "Bool",
+        "comment": "bobine de rentrée"
       }
     ],
     "inout": [],

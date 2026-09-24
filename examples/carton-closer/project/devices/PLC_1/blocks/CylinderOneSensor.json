@@ -9,7 +9,8 @@
       {
         "name": "RetractTime",
         "dataType": "Time",
-        "defaultValue": "T#500MS"
+        "defaultValue": "T#500MS",
+        "comment": "durée de rentrée (pas de capteur)"
       }
     ],
     "output": [],

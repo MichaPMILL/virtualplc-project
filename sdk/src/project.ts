@@ -623,9 +623,13 @@ function exprText(e: Expr | null): string | undefined {
   }
 }
 
-function toMember(v: { name: string; type: TypeRef; initial: Expr | null }): Member {
+type CommentOf = (line: number) => string | undefined;
+
+function toMember(v: VarDecl, commentOf?: CommentOf): Member {
   const m: Member = { name: v.name, dataType: typeText(v.type), defaultValue: exprText(v.initial) };
-  if (v.type.name === 'STRUCT') m.members = (v.type.fields ?? []).map(toMember);
+  const comment = commentOf?.(v.line);
+  if (comment) m.comment = comment;
+  if (v.type.name === 'STRUCT') m.members = (v.type.fields ?? []).map((f) => toMember(f, commentOf));
   return m;
 }
 
@@ -634,6 +638,8 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
   const program = parse(text, file);
   const blocks: Block[] = [];
   const srcLines = text.split(/\r?\n/);
+  // end-of-line comment of a declaration ("Speed : Int;   // tr/min")
+  const commentOf: CommentOf = (line) => /;\s*\/\/\s*(.*?)\s*$/.exec(srcLines[line - 1] ?? '')?.[1] || undefined;
   const bodyOf = (r: TextRange | undefined): string => {
     if (!r) return '';
     const out: string[] = [];
@@ -648,7 +654,7 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
     return lines.map((l) => l.slice(Number.isFinite(indent) ? indent : 0)).join('\n');
   };
   const members = (vars: VarDecl[], section: string): Member[] =>
-    vars.filter((v) => v.section === section).map(toMember);
+    vars.filter((v) => v.section === section).map((v) => toMember(v, commentOf));
   const methodOf = (m: Method, prototype: boolean): BlockMethod => ({
     id: newId('mth'), name: m.name, returnType: m.returnType ? typeText(m.returnType) : 'Void',
     ...(!prototype && m.accessGiven && m.access !== 'PUBLIC' ? { access: m.access } : {}),
@@ -690,13 +696,14 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
     blocks.push({
       id: newId('blk'), name: db.name, type: 'DB', number: 0, interface: emptyInterface(), code: '',
       instanceOf: db.instanceOf ?? undefined,
-      members: db.instanceOf ? undefined : db.fields.map(toMember),
+      members: db.instanceOf ? undefined : db.fields.map((f) => toMember(f, commentOf)),
     });
   }
   const tags: Tag[] = program.vars.filter((v) => v.section === 'global').map((v) => ({
     name: v.name,
     dataType: typeText(v.type).replace(/^"([^"]*)"$/, '$1'),
     address: v.address ? `%${v.address.area}${v.address.size === 'X' ? `${v.address.byte}.${v.address.bit}` : `${v.address.size}${v.address.byte}`}` : '',
+    ...(commentOf(v.line) ? { comment: commentOf(v.line) } : {}),
   }));
   const numbered: Block[] = [...device.blocks];
   const free = (type: BlockType, wanted: number) => !numbered.some((x) => x.type === type && x.number === wanted);
@@ -705,7 +712,7 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
     b.number = preferred && free(b.type, preferred) ? preferred : nextBlockNumber({ ...device, blocks: numbered }, b.type);
     numbered.push(b);
   }
-  const types: DataTypeDef[] = program.types.map((ut) => ({ id: newId('udt'), name: ut.name, members: ut.fields.map(toMember) }));
+  const types: DataTypeDef[] = program.types.map((ut) => ({ id: newId('udt'), name: ut.name, members: ut.fields.map((f) => toMember(f, commentOf)) }));
   const interfaces: InterfaceDef[] = program.interfaces.map((d) => ({
     id: newId('ifc'), name: d.name, ...(d.extends.length ? { extends: d.extends } : {}), methods: d.methods.map((m) => methodOf(m, true)),
   }));

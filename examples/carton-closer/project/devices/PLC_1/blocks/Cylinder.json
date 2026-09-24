@@ -10,33 +10,39 @@
     "input": [
       {
         "name": "SensorOut",
-        "dataType": "Bool"
+        "dataType": "Bool",
+        "comment": "capteur de position sortie"
       },
       {
         "name": "SensorIn",
-        "dataType": "Bool"
+        "dataType": "Bool",
+        "comment": "capteur de position rentrée"
       },
       {
         "name": "Timeout",
         "dataType": "Time",
-        "defaultValue": "T#2000MS"
+        "defaultValue": "T#2000MS",
+        "comment": "temps maximal de mouvement"
       }
     ],
     "output": [
       {
         "name": "Valve",
-        "dataType": "Bool"
+        "dataType": "Bool",
+        "comment": "bobine du distributeur (TRUE = sortie)"
       },
       {
         "name": "Fault",
-        "dataType": "Bool"
+        "dataType": "Bool",
+        "comment": "mouvement non terminé dans le temps imparti"
       }
     ],
     "inout": [],
     "static": [
       {
         "name": "Cmd",
-        "dataType": "Bool"
+        "dataType": "Bool",
+        "comment": "position demandée (TRUE = sortie)"
       },
       {
         "name": "Watchdog",

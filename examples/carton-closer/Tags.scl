@@ -2,8 +2,8 @@
 VAR_GLOBAL
     // Pupitre
     "BP_Start" AT %I0.0 : Bool;          // bouton marche (NO)
-    "BP_Stop" AT %I0.1 : Bool;           // bouton arrêt (NF : TRUE = pas d'arrêt demandé)
-    "AU_Ok" AT %I0.2 : Bool;             // chaîne d'arrêt d'urgence (NF : TRUE = pas d'arrêt d'urgence)
+    "BP_Stop" AT %I0.1 : Bool;           // bouton arrêt NF : mettre à 1 pour pouvoir démarrer
+    "AU_Ok" AT %I0.2 : Bool;             // arrêt d’urgence NF : mettre à 1 (sinon défaut)
     "BP_Reset" AT %I0.3 : Bool;          // acquittement des défauts
     // Détection carton
     "B_BoxAtStation" AT %I0.4 : Bool;    // carton en position de fermeture
