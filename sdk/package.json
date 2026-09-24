@@ -1,0 +1,23 @@
+{
+  "name": "@virtualplc/sdk",
+  "version": "0.1.0",
+  "description": "VirtualPLC SDK: SCL (IEC 61131-3) compiler, device protocol client and project model",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "vplc": "src/cli.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

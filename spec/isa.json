@@ -1,0 +1,826 @@
+{
+  "$comment": "Single source of truth for the VirtualPLC VM. Generate code with: node tools/gen-isa.mjs",
+  "version": 1,
+  "areas": {
+    "D": 0,
+    "N": 1,
+    "I": 2,
+    "Q": 3,
+    "M": 4,
+    "C": 5
+  },
+  "types": {
+    "BOOL": {
+      "code": 0,
+      "size": 1
+    },
+    "U8": {
+      "code": 1,
+      "size": 1
+    },
+    "I8": {
+      "code": 2,
+      "size": 1
+    },
+    "U16": {
+      "code": 3,
+      "size": 2
+    },
+    "I16": {
+      "code": 4,
+      "size": 2
+    },
+    "U32": {
+      "code": 5,
+      "size": 4
+    },
+    "I32": {
+      "code": 6,
+      "size": 4
+    },
+    "I64": {
+      "code": 7,
+      "size": 8
+    },
+    "F32": {
+      "code": 8,
+      "size": 4
+    },
+    "F64": {
+      "code": 9,
+      "size": 8
+    },
+    "PTR": {
+      "code": 10,
+      "size": 8
+    }
+  },
+  "opcodes": {
+    "NOP": {
+      "code": 0,
+      "operands": [],
+      "doc": "No operation"
+    },
+    "PUSH_I32": {
+      "code": 1,
+      "operands": [
+        "i32"
+      ],
+      "doc": "Push a 32-bit signed constant (as integer cell)"
+    },
+    "PUSH_I64": {
+      "code": 2,
+      "operands": [
+        "i64"
+      ],
+      "doc": "Push a 64-bit signed constant"
+    },
+    "PUSH_F64": {
+      "code": 3,
+      "operands": [
+        "f64"
+      ],
+      "doc": "Push a double constant"
+    },
+    "PUSH_ADDR": {
+      "code": 4,
+      "operands": [
+        "u8:area",
+        "u32:offset"
+      ],
+      "doc": "Push an absolute pointer; area N is resolved against the instance base"
+    },
+    "POP": {
+      "code": 5,
+      "operands": [],
+      "doc": "Drop the top cell"
+    },
+    "DUP": {
+      "code": 6,
+      "operands": [],
+      "doc": "Duplicate the top cell"
+    },
+    "SWAP": {
+      "code": 7,
+      "operands": [],
+      "doc": "Swap the two top cells"
+    },
+    "LOAD": {
+      "code": 16,
+      "operands": [
+        "u8:type",
+        "u8:area",
+        "u32:offset"
+      ],
+      "doc": "Push a value read from memory"
+    },
+    "STORE": {
+      "code": 17,
+      "operands": [
+        "u8:type",
+        "u8:area",
+        "u32:offset"
+      ],
+      "doc": "Pop a value and write it to memory (integers are truncated to the type width)"
+    },
+    "LOAD_BIT": {
+      "code": 18,
+      "operands": [
+        "u8:area",
+        "u32:byte",
+        "u8:bit"
+      ],
+      "doc": "Push a bit of the process image (0/1)"
+    },
+    "STORE_BIT": {
+      "code": 19,
+      "operands": [
+        "u8:area",
+        "u32:byte",
+        "u8:bit"
+      ],
+      "doc": "Pop a value and write it as a bit (non-zero = 1)"
+    },
+    "LOAD_IND": {
+      "code": 20,
+      "operands": [
+        "u8:type"
+      ],
+      "doc": "Pop a pointer, push the value it points to"
+    },
+    "STORE_IND": {
+      "code": 21,
+      "operands": [
+        "u8:type"
+      ],
+      "doc": "Pop a value then a pointer, write the value"
+    },
+    "INDEX": {
+      "code": 22,
+      "operands": [
+        "u32:elementSize",
+        "i32:low",
+        "i32:high"
+      ],
+      "doc": "Pop an index then a pointer; trap if out of [low, high]; push pointer + (index-low)*elementSize"
+    },
+    "COPY": {
+      "code": 23,
+      "operands": [
+        "u32:size"
+      ],
+      "doc": "Pop source then destination pointer, copy size bytes"
+    },
+    "OFFSET": {
+      "code": 24,
+      "operands": [
+        "u32:offset"
+      ],
+      "doc": "Add a constant byte offset to the pointer on top of the stack"
+    },
+    "ADD": {
+      "code": 32,
+      "operands": [],
+      "doc": "Integer a + b"
+    },
+    "SUB": {
+      "code": 33,
+      "operands": [],
+      "doc": "Integer a - b"
+    },
+    "MUL": {
+      "code": 34,
+      "operands": [],
+      "doc": "Integer a * b"
+    },
+    "DIV": {
+      "code": 35,
+      "operands": [],
+      "doc": "Integer a / b, truncated; traps on division by zero"
+    },
+    "MOD": {
+      "code": 36,
+      "operands": [],
+      "doc": "Integer a MOD b (sign of a); traps on division by zero"
+    },
+    "NEG": {
+      "code": 37,
+      "operands": [],
+      "doc": "Integer -a"
+    },
+    "AND": {
+      "code": 38,
+      "operands": [],
+      "doc": "Bitwise AND (also logical AND on 0/1)"
+    },
+    "OR": {
+      "code": 39,
+      "operands": [],
+      "doc": "Bitwise OR"
+    },
+    "XOR": {
+      "code": 40,
+      "operands": [],
+      "doc": "Bitwise XOR"
+    },
+    "NOT": {
+      "code": 41,
+      "operands": [],
+      "doc": "Bitwise NOT (~a)"
+    },
+    "LNOT": {
+      "code": 42,
+      "operands": [],
+      "doc": "Logical NOT (a == 0)"
+    },
+    "SHL": {
+      "code": 43,
+      "operands": [],
+      "doc": "a << b"
+    },
+    "SHR": {
+      "code": 44,
+      "operands": [],
+      "doc": "a >> b (logical, a treated as unsigned 64-bit)"
+    },
+    "ABS": {
+      "code": 45,
+      "operands": [],
+      "doc": "Integer |a|"
+    },
+    "WRAP": {
+      "code": 46,
+      "operands": [
+        "u8:type"
+      ],
+      "doc": "Wrap the integer on top of the stack to the range of an integer type"
+    },
+    "BOOL": {
+      "code": 47,
+      "operands": [],
+      "doc": "Normalise an integer to 0/1 (a != 0)"
+    },
+    "FADD": {
+      "code": 48,
+      "operands": [],
+      "doc": "Float a + b"
+    },
+    "FSUB": {
+      "code": 49,
+      "operands": [],
+      "doc": "Float a - b"
+    },
+    "FMUL": {
+      "code": 50,
+      "operands": [],
+      "doc": "Float a * b"
+    },
+    "FDIV": {
+      "code": 51,
+      "operands": [],
+      "doc": "Float a / b; traps on division by zero"
+    },
+    "FNEG": {
+      "code": 52,
+      "operands": [],
+      "doc": "Float -a"
+    },
+    "FPOW": {
+      "code": 53,
+      "operands": [],
+      "doc": "Float a ** b"
+    },
+    "FABS": {
+      "code": 54,
+      "operands": [],
+      "doc": "Float |a|"
+    },
+    "FMATH": {
+      "code": 55,
+      "operands": [
+        "u8:function"
+      ],
+      "doc": "Float unary math function, see mathFunctions"
+    },
+    "I2F": {
+      "code": 56,
+      "operands": [],
+      "doc": "Integer to float"
+    },
+    "F2I_ROUND": {
+      "code": 57,
+      "operands": [],
+      "doc": "Float to integer, round half to even"
+    },
+    "F2I_TRUNC": {
+      "code": 58,
+      "operands": [],
+      "doc": "Float to integer, truncate toward zero"
+    },
+    "F32": {
+      "code": 59,
+      "operands": [],
+      "doc": "Round a double to single precision (REAL)"
+    },
+    "EQ": {
+      "code": 64,
+      "operands": [],
+      "doc": "Integer a = b"
+    },
+    "NE": {
+      "code": 65,
+      "operands": [],
+      "doc": "Integer a <> b"
+    },
+    "LT": {
+      "code": 66,
+      "operands": [],
+      "doc": "Integer a < b"
+    },
+    "LE": {
+      "code": 67,
+      "operands": [],
+      "doc": "Integer a <= b"
+    },
+    "GT": {
+      "code": 68,
+      "operands": [],
+      "doc": "Integer a > b"
+    },
+    "GE": {
+      "code": 69,
+      "operands": [],
+      "doc": "Integer a >= b"
+    },
+    "FEQ": {
+      "code": 70,
+      "operands": [],
+      "doc": "Float a = b"
+    },
+    "FNE": {
+      "code": 71,
+      "operands": [],
+      "doc": "Float a <> b"
+    },
+    "FLT": {
+      "code": 72,
+      "operands": [],
+      "doc": "Float a < b"
+    },
+    "FLE": {
+      "code": 73,
+      "operands": [],
+      "doc": "Float a <= b"
+    },
+    "FGT": {
+      "code": 74,
+      "operands": [],
+      "doc": "Float a > b"
+    },
+    "FGE": {
+      "code": 75,
+      "operands": [],
+      "doc": "Float a >= b"
+    },
+    "SCMP": {
+      "code": 76,
+      "operands": [],
+      "doc": "Pop two STRING pointers, push strcmp-like result (-1, 0, 1)"
+    },
+    "JMP": {
+      "code": 80,
+      "operands": [
+        "i32:rel"
+      ],
+      "doc": "Jump relative to the next instruction; backward jumps check the watchdog"
+    },
+    "JZ": {
+      "code": 81,
+      "operands": [
+        "i32:rel"
+      ],
+      "doc": "Pop; jump if zero"
+    },
+    "JNZ": {
+      "code": 82,
+      "operands": [
+        "i32:rel"
+      ],
+      "doc": "Pop; jump if not zero"
+    },
+    "CALL": {
+      "code": 83,
+      "operands": [
+        "u16:function"
+      ],
+      "doc": "Call a FUNCTION (static frame, parameters already stored)"
+    },
+    "CALL_FB": {
+      "code": 84,
+      "operands": [
+        "u16:function"
+      ],
+      "doc": "Pop an instance pointer and call a FUNCTION_BLOCK with it as instance base"
+    },
+    "RET": {
+      "code": 85,
+      "operands": [],
+      "doc": "Return from the current function"
+    },
+    "CALL_LIB": {
+      "code": 86,
+      "operands": [
+        "u8:block"
+      ],
+      "doc": "Pop an instance pointer and run a library function block, see libraryBlocks"
+    },
+    "CALL_STD": {
+      "code": 87,
+      "operands": [
+        "u8:function",
+        "u8:argc"
+      ],
+      "doc": "Standard function on cells, see stdFunctions"
+    },
+    "SYS": {
+      "code": 88,
+      "operands": [
+        "u8:function",
+        "u8:argc"
+      ],
+      "doc": "System function, see sysFunctions"
+    },
+    "TRAP": {
+      "code": 89,
+      "operands": [
+        "u8:code"
+      ],
+      "doc": "Raise a runtime error, see trapCodes"
+    },
+    "HALT": {
+      "code": 90,
+      "operands": [],
+      "doc": "End of an organization block"
+    }
+  },
+  "mathFunctions": {
+    "SQRT": 0,
+    "EXP": 1,
+    "LN": 2,
+    "SIN": 3,
+    "COS": 4,
+    "TAN": 5,
+    "ASIN": 6,
+    "ACOS": 7,
+    "ATAN": 8,
+    "CEIL": 9,
+    "FLOOR": 10,
+    "FRAC": 11,
+    "ROUND": 12,
+    "TRUNC": 13
+  },
+  "stdFunctions": {
+    "MIN": 0,
+    "MAX": 1,
+    "LIMIT": 2,
+    "FMIN": 3,
+    "FMAX": 4,
+    "FLIMIT": 5,
+    "SEL": 6,
+    "MUX": 7,
+    "CONCAT": 8,
+    "LEN": 9,
+    "I2S": 10,
+    "F2S": 11,
+    "B2S": 12,
+    "S2I": 13,
+    "S2F": 14,
+    "SASSIGN": 15,
+    "NORM_X": 16,
+    "SCALE_X": 17
+  },
+  "sysFunctions": {
+    "LOG": 0,
+    "WAIT": 1,
+    "MILLIS": 2,
+    "DEVICE_OK": 3
+  },
+  "libraryBlocks": {
+    "TON": {
+      "code": 0,
+      "size": 15,
+      "members": {
+        "IN": [
+          "BOOL",
+          0
+        ],
+        "Q": [
+          "BOOL",
+          1
+        ],
+        "PT": [
+          "I32",
+          2
+        ],
+        "ET": [
+          "I32",
+          6
+        ]
+      },
+      "hidden": {
+        "start": [
+          "U32",
+          10
+        ],
+        "flags": [
+          "U8",
+          14
+        ]
+      }
+    },
+    "TOF": {
+      "code": 1,
+      "size": 15,
+      "members": {
+        "IN": [
+          "BOOL",
+          0
+        ],
+        "Q": [
+          "BOOL",
+          1
+        ],
+        "PT": [
+          "I32",
+          2
+        ],
+        "ET": [
+          "I32",
+          6
+        ]
+      },
+      "hidden": {
+        "start": [
+          "U32",
+          10
+        ],
+        "flags": [
+          "U8",
+          14
+        ]
+      }
+    },
+    "TP": {
+      "code": 2,
+      "size": 15,
+      "members": {
+        "IN": [
+          "BOOL",
+          0
+        ],
+        "Q": [
+          "BOOL",
+          1
+        ],
+        "PT": [
+          "I32",
+          2
+        ],
+        "ET": [
+          "I32",
+          6
+        ]
+      },
+      "hidden": {
+        "start": [
+          "U32",
+          10
+        ],
+        "flags": [
+          "U8",
+          14
+        ]
+      }
+    },
+    "R_TRIG": {
+      "code": 3,
+      "size": 3,
+      "members": {
+        "CLK": [
+          "BOOL",
+          0
+        ],
+        "Q": [
+          "BOOL",
+          1
+        ]
+      },
+      "hidden": {
+        "mem": [
+          "U8",
+          2
+        ]
+      }
+    },
+    "F_TRIG": {
+      "code": 4,
+      "size": 3,
+      "members": {
+        "CLK": [
+          "BOOL",
+          0
+        ],
+        "Q": [
+          "BOOL",
+          1
+        ]
+      },
+      "hidden": {
+        "mem": [
+          "U8",
+          2
+        ]
+      },
+      "init": {
+        "2": 1
+      }
+    },
+    "CTU": {
+      "code": 5,
+      "size": 8,
+      "members": {
+        "CU": [
+          "BOOL",
+          0
+        ],
+        "R": [
+          "BOOL",
+          1
+        ],
+        "Q": [
+          "BOOL",
+          2
+        ],
+        "PV": [
+          "I16",
+          3
+        ],
+        "CV": [
+          "I16",
+          5
+        ]
+      },
+      "hidden": {
+        "last": [
+          "U8",
+          7
+        ]
+      }
+    },
+    "CTD": {
+      "code": 6,
+      "size": 8,
+      "members": {
+        "CD": [
+          "BOOL",
+          0
+        ],
+        "LD": [
+          "BOOL",
+          1
+        ],
+        "Q": [
+          "BOOL",
+          2
+        ],
+        "PV": [
+          "I16",
+          3
+        ],
+        "CV": [
+          "I16",
+          5
+        ]
+      },
+      "hidden": {
+        "last": [
+          "U8",
+          7
+        ]
+      }
+    },
+    "CTUD": {
+      "code": 7,
+      "size": 12,
+      "members": {
+        "CU": [
+          "BOOL",
+          0
+        ],
+        "CD": [
+          "BOOL",
+          1
+        ],
+        "R": [
+          "BOOL",
+          2
+        ],
+        "LD": [
+          "BOOL",
+          3
+        ],
+        "QU": [
+          "BOOL",
+          4
+        ],
+        "QD": [
+          "BOOL",
+          5
+        ],
+        "PV": [
+          "I16",
+          6
+        ],
+        "CV": [
+          "I16",
+          8
+        ]
+      },
+      "hidden": {
+        "lastU": [
+          "U8",
+          10
+        ],
+        "lastD": [
+          "U8",
+          11
+        ]
+      }
+    }
+  },
+  "trapCodes": {
+    "NONE": 0,
+    "DIV_ZERO": 1,
+    "BOUNDS": 2,
+    "STACK_OVERFLOW": 3,
+    "STACK_UNDERFLOW": 4,
+    "CALL_DEPTH": 5,
+    "WATCHDOG": 6,
+    "BAD_OPCODE": 7,
+    "BAD_ADDRESS": 8,
+    "MATH": 9,
+    "BAD_PROGRAM": 10
+  },
+  "sections": {
+    "META": 1,
+    "LIMITS": 2,
+    "CODE": 3,
+    "CONST": 4,
+    "INIT": 5,
+    "FUNCS": 6,
+    "ENTRIES": 7,
+    "LINES": 8,
+    "IOCONF": 9
+  },
+  "ioModules": {
+    "MODBUS_TCP": 1,
+    "GPIO_DI": 2,
+    "GPIO_DO": 3,
+    "GPIO_AI": 4,
+    "GPIO_AO": 5
+  },
+  "protocol": {
+    "port": 20105,
+    "commands": {
+      "INFO": 1,
+      "STATE": 2,
+      "STOP": 3,
+      "START": 4,
+      "DOWNLOAD_BEGIN": 5,
+      "DOWNLOAD_CHUNK": 6,
+      "DOWNLOAD_END": 7,
+      "READ": 8,
+      "WRITE": 9,
+      "FORCE": 10,
+      "UNFORCE_ALL": 11,
+      "LOGS": 12,
+      "UPLOAD": 13,
+      "AUTH": 14
+    },
+    "status": {
+      "OK": 0,
+      "ERROR": 1,
+      "BAD_REQUEST": 2,
+      "BAD_STATE": 3,
+      "BAD_CHECKSUM": 4,
+      "TOO_LARGE": 5,
+      "UNAUTHORIZED": 6
+    },
+    "states": {
+      "NO_PROGRAM": 0,
+      "STOP": 1,
+      "RUN": 2,
+      "FAULT": 3
+    }
+  }
+}
