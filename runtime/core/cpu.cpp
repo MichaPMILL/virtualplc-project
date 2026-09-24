@@ -219,6 +219,12 @@ size_t Cpu::stateJson(char* out, size_t cap) {
         j.open('{');
         j.key("module").num(m);
         j.key("ok").raw(platform_.moduleOk(m) ? "true" : "false");
+        char diag[256];
+        size_t n = platform_.moduleDiagnostics(m, diag, sizeof diag);
+        if (n) {
+            diag[n < sizeof diag ? n : sizeof diag - 1] = 0;
+            j.key("diag").str(diag);
+        }
         j.close('}');
     }
     j.close(']');

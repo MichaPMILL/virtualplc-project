@@ -14,6 +14,8 @@
 #include <stdint.h>
 
 #include <atomic>
+#include <deque>
+#include <set>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -22,6 +24,7 @@
 
 #include "pn_net.h"
 #include "pn_proto.h"
+#include "pn_stack.h"
 
 namespace vplc {
 namespace pn {
@@ -48,13 +51,13 @@ constexpr uint32_t PORT_SUBMODULE_IDENT = 0x00000003;
 /** Expected data lengths of a module ident; false if unknown */
 bool catalogModule(uint16_t slot, uint16_t subslot, uint32_t moduleIdent, uint32_t submoduleIdent, uint16_t& inLength, uint16_t& outLength);
 
-class Device {
+class Device : public Role {
 public:
     explicit Device(DeviceConfig config);
-    ~Device();
-    bool start(std::string& error);
-    void stop();
-    bool running() const { return thread_.joinable(); }
+    ~Device() override;
+    /** Serves the device on the stack of its interface (before the stack starts). */
+    void attach(Stack& stack);
+    bool running() const { return stack_ && stack_->running(); }
     const DeviceConfig& config() const { return config_; }
 
     /** Controller outputs → process image inputs (called before each scan) */
@@ -63,6 +66,14 @@ public:
     void writeOutputs(const uint8_t* image, uint32_t size, bool run);
 
     bool connected() const { return state_.load() == AR_RUN; }
+    /**
+     * Alarm to the controller (PN_ALARM of the program): kind 1 = diagnosis appears
+     * (code = channel error type), 12 = diagnosis disappears, 2 = process alarm (code =
+     * 32-bit value). False when not exchanging data, slot unknown or queue full.
+     */
+    bool alarm(uint16_t slot, uint16_t kind, uint32_t code);
+    /** Active diagnoses sent by this device */
+    bool diagnosisActive();
     std::string stationName();
     std::string status();
 
@@ -75,18 +86,27 @@ private:
         int32_t imageOut = -1;         // %Q offset of the input data
         uint16_t inOffset = 0, inIops = 0, outOffset = 0, outIops = 0;
         bool hasIn = false, hasOut = false;
+        uint32_t moduleIdent = 0, submoduleIdent = 0;
     };
+    struct PendingAlarm {
+        AlarmInfo info;
+    };
+    void alarmTick(uint64_t now);
+    void sendAlarm();
+    void sendRtaAck(uint16_t ackSeq, bool high);
 
-    void loop();
+    void onFrame(const uint8_t* p, size_t n) override;
+    bool onRpc(const uint8_t* p, size_t n, const sockaddr_in& from) override;
+    uint64_t tick(uint64_t now) override;
     void log(const std::string& text);
-    void onFrame(const uint8_t* p, size_t n);
+    RawSocket& raw() { return stack_->raw(); }
+    UdpSocket& rpc() { return stack_->rpc(); }
     void onDcp(const EthFrame& eth, const DcpMessage& m);
     void onDcpGet(const EthFrame& eth, const DcpMessage& m, const uint8_t* data, size_t n);
     void onDcpSet(const EthFrame& eth, const DcpMessage& m);
     void addIdentityBlocks(DcpBuilder& b, bool all, const uint8_t* wanted, size_t n);
     void onCyclic(uint16_t frameId, const uint8_t* p, size_t n);
     void onAlarm(const EthFrame& eth, const uint8_t* p, size_t n);
-    void onRpc(const uint8_t* p, size_t n, const sockaddr_in& from);
     void rpcRequest(const RpcHeader& h, const uint8_t* body, size_t n, const sockaddr_in& from);
     uint32_t connect(const std::vector<Block>& blocks, const sockaddr_in& from, Writer& w);
     uint32_t control(const std::vector<Block>& blocks, Writer& w);
@@ -100,11 +120,7 @@ private:
     void saveSettings();
 
     DeviceConfig config_;
-    RawSocket raw_;
-    UdpSocket rpc_;
-    std::thread thread_;
-    std::atomic<bool> stop_{false};
-    int wake_ = -1;
+    Stack* stack_ = nullptr;
 
     std::mutex nameMutex_;
     std::string name_;
@@ -116,6 +132,16 @@ private:
     ArInfo ar_;
     IocrInfo in_, out_;  // input CR (we send), output CR (we receive)
     uint16_t alarmRemoteRef_ = 0, alarmLocalRef_ = 1;
+    // alarm transmission (one outstanding alarm, RTA window size 1)
+    std::mutex alarmMutex_;
+    std::deque<AlarmInfo> alarmQueue_;
+    std::set<uint32_t> diagnoses_;  // (slot << 16 | error type) of the active diagnoses
+    bool alarmBusy_ = false, alarmTransportAcked_ = false;
+    AlarmInfo alarmCurrent_;
+    uint16_t rtaSendSeq_ = 0xFFFF, rtaRecvSeq_ = 0xFFFE, alarmSeqNo_ = 0;
+    uint64_t alarmSentAt_ = 0;
+    int alarmTries_ = 0;
+    uint16_t rtaTimeoutMs_ = 100, rtaRetries_ = 3;
     sockaddr_in controller_{};
     std::vector<Mapped> mapped_;
     uint64_t nextSend_ = 0, lastRx_ = 0, connectedAt_ = 0, appReadySent_ = 0;

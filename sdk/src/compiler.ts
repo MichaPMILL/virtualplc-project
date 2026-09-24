@@ -111,7 +111,7 @@ const STD_PARAMS: Record<string, string[] | null> = {
   ASIN: ['IN'], ACOS: ['IN'], ATAN: ['IN'], TRUNC: ['IN'], ROUND: ['IN'], CEIL: ['IN'], FLOOR: ['IN'], FRAC: ['IN'],
   EXPT: ['IN1', 'IN2'], MIN: null, MAX: null, LIMIT: ['MN', 'IN', 'MX'], SEL: ['G', 'IN0', 'IN1'], MUX: null,
   NORM_X: ['MIN', 'VALUE', 'MAX'], SCALE_X: ['MIN', 'VALUE', 'MAX'], SHL: ['IN', 'N'], SHR: ['IN', 'N'],
-  CONCAT: null, LEN: ['IN'], LOG: null, WAIT: ['MS'], MILLIS: [], DEVICE_OK: ['MODULE'],
+  CONCAT: null, LEN: ['IN'], LOG: null, WAIT: ['MS'], MILLIS: [], DEVICE_OK: ['MODULE'], DEVICE_DIAG: ['MODULE'], PN_ALARM: ['MODULE', 'SLOT', 'KIND', 'CODE'],
   RD_SYS_T: null, RD_LOC_T: null,
 };
 const NS_PER_DAY = 86_400_000_000_000n;
@@ -1596,6 +1596,8 @@ class Compiler {
       case 'MILLIS':
         return T.elem('UDINT');
       case 'DEVICE_OK':
+      case 'DEVICE_DIAG':
+      case 'PN_ALARM':
         return T.BOOL;
       default:
         return T.VOID; // LOG, WAIT
@@ -1872,13 +1874,26 @@ class Compiler {
       case 'MILLIS':
         this.emit(Op.SYS, SysFn.MILLIS, 0);
         return;
-      case 'DEVICE_OK': {
+      case 'DEVICE_OK':
+      case 'DEVICE_DIAG':
+      case 'PN_ALARM': {
         const a = args[0];
         const name = a.kind === 'var' ? a.name : a.kind === 'string' ? a.value : null;
         const index = name === null ? undefined : this.modules.get(name.toUpperCase());
-        if (index === undefined) throw this.err(`DEVICE_OK: unknown I/O module${name ? ` '${name}'` : ''} (see the device configuration)`, e.line);
+        if (index === undefined) throw this.err(`${key}: unknown I/O module${name ? ` '${name}'` : ''} (see the device configuration)`, e.line);
         this.pushInt(index);
-        this.emit(Op.SYS, SysFn.DEVICE_OK, 1);
+        if (key === 'PN_ALARM') {
+          const kind = (this.options.hardware ?? [])[index]?.kind;
+          if (kind !== 'profinet-device') throw this.err(`PN_ALARM: '${name}' is not a PROFINET IO-Device module of this CPU`, e.line);
+          if (args.length !== 4) throw this.err('PN_ALARM expects MODULE, SLOT, KIND (1 diagnosis, 12 diagnosis gone, 2 process) and CODE', e.line);
+          for (const x of args.slice(1)) {
+            if (!isInt(this.typeOf(x))) throw this.err('PN_ALARM: SLOT, KIND and CODE are integers', e.line);
+            this.expr(x, T.LINT);
+          }
+          this.emit(Op.SYS, SysFn.PN_ALARM, 4);
+          return;
+        }
+        this.emit(Op.SYS, SysFn[key], 1);
         return;
       }
       default:

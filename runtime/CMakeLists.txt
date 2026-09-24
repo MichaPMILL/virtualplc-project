@@ -88,6 +88,7 @@ if(UNIX)
     platform/linux/modbus.cpp
     platform/linux/profinet/pn_proto.cpp
     platform/linux/profinet/pn_net.cpp
+    platform/linux/profinet/pn_stack.cpp
     platform/linux/profinet/pn_device.cpp
     platform/linux/profinet/pn_controller.cpp)
   target_include_directories(vplc-cpu PRIVATE platform/linux)

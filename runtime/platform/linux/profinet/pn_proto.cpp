@@ -687,6 +687,108 @@ void writeRecordRes(Writer& w, const RecordHeader& h, uint32_t status) {
     w.endBlock(at);
 }
 
+bool parseRta(const uint8_t* p, size_t n, RtaHeader& h) {
+    Reader r(p, n);
+    h.dst = r.u16();
+    h.src = r.u16();
+    uint8_t pdu = r.u8();
+    h.type = pdu & 0x0F;
+    h.flags = r.u8();
+    h.sendSeq = r.u16();
+    h.ackSeq = r.u16();
+    uint16_t len = r.u16();
+    if (!r.ok() || len > r.remaining()) return false;
+    h.sdu = r.here();
+    h.length = len;
+    return true;
+}
+
+void writeRtaFrame(std::vector<uint8_t>& out, const Mac& dst, const Mac& src, bool high, const RtaHeader& h, const uint8_t* sdu, size_t n) {
+    out.clear();
+    Writer w(out);
+    writeEthPn(w, dst, src, high ? VLAN_ALARM_HIGH : VLAN_ALARM_LOW);
+    w.u16(high ? FRAME_ALARM_HIGH : FRAME_ALARM_LOW).u16(h.dst).u16(h.src).u8(uint8_t(0x10 | h.type)).u8(h.flags);
+    w.u16(h.sendSeq).u16(h.ackSeq).u16(uint16_t(n)).bytes(sdu, n);
+    while (out.size() < 60) out.push_back(0);
+}
+
+bool parseAlarm(const uint8_t* p, size_t n, AlarmInfo& a) {
+    std::vector<Block> blocks;
+    if (!parseBlocks(p, n, blocks) || blocks.empty()) return false;
+    const Block& b = blocks[0];
+    Reader r(b.data, b.length);
+    a.blockType = b.type;
+    a.type = r.u16();
+    a.api = r.u32();
+    a.slot = r.u16();
+    a.subslot = r.u16();
+    if (b.type == BT_ALARM_ACK_HIGH || b.type == BT_ALARM_ACK_LOW) {
+        a.specifier = r.u16();
+        a.status = r.u32();
+        return r.ok();
+    }
+    a.moduleIdent = r.u32();
+    a.submoduleIdent = r.u32();
+    a.specifier = r.u16();
+    if (r.remaining() >= 2) {
+        a.usi = r.u16();
+        size_t left = r.remaining();
+        const uint8_t* d = r.take(left);
+        if (d) a.data.assign(d, d + left);
+    }
+    return r.ok();
+}
+
+void writeAlarmNotification(Writer& w, const AlarmInfo& a) {
+    size_t at = w.beginBlock(a.blockType);
+    w.u16(a.type).u32(a.api).u16(a.slot).u16(a.subslot).u32(a.moduleIdent).u32(a.submoduleIdent).u16(a.specifier);
+    if (a.usi) w.u16(a.usi).bytes(a.data.data(), a.data.size());
+    w.endBlock(at);
+}
+
+void writeAlarmAck(Writer& w, const AlarmInfo& a) {
+    size_t at = w.beginBlock(a.blockType == BT_ALARM_HIGH ? BT_ALARM_ACK_HIGH : BT_ALARM_ACK_LOW);
+    w.u16(a.type).u32(a.api).u16(a.slot).u16(a.subslot).u16(a.specifier).u32(a.status);
+    w.endBlock(at);
+}
+
+std::vector<ChannelDiag> channelDiagnoses(const AlarmInfo& a) {
+    std::vector<ChannelDiag> out;
+    if (a.usi != USI_CHANNEL_DIAGNOSIS) return out;
+    for (size_t i = 0; i + 6 <= a.data.size(); i += 6) {
+        ChannelDiag c;
+        c.channel = uint16_t((a.data[i] << 8) | a.data[i + 1]);
+        c.properties = uint16_t((a.data[i + 2] << 8) | a.data[i + 3]);
+        c.errorType = uint16_t((a.data[i + 4] << 8) | a.data[i + 5]);
+        out.push_back(c);
+    }
+    return out;
+}
+
+const char* channelErrorText(uint16_t e) {
+    switch (e) {
+        case 0x0001: return "short circuit";
+        case 0x0002: return "undervoltage";
+        case 0x0003: return "overvoltage";
+        case 0x0004: return "overload";
+        case 0x0005: return "overtemperature";
+        case 0x0006: return "wire break";
+        case 0x0007: return "upper limit exceeded";
+        case 0x0008: return "lower limit exceeded";
+        case 0x0009: return "error";
+        case 0x0010: return "parametrization fault";
+        case 0x0011: return "power supply fault";
+        case 0x0012: return "fuse blown";
+        case 0x0014: return "ground fault";
+        case 0x0015: return "reference point lost";
+        case 0x0016: return "process event lost";
+        case 0x0017: return "threshold warning";
+        case 0x0018: return "output disabled";
+        case 0x001A: return "external fault";
+        default: return e >= 0x0100 && e <= 0x7FFF ? "manufacturer specific error" : "error";
+    }
+}
+
 void writeRtFrame(std::vector<uint8_t>& out, const Mac& dst, const Mac& src, uint16_t vlan, uint16_t frameId, const uint8_t* csdu, size_t length,
                   uint16_t cycleCounter, uint8_t dataStatus) {
     out.clear();

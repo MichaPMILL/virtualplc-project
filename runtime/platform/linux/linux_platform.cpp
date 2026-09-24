@@ -257,31 +257,75 @@ void LinuxPlatform::configureProfinet() {
             ctl.devices.push_back(r);
         }
     }
-    if (haveDevice && !ctl.devices.empty() && dev.ifname == ctl.ifname) {
-        log("PROFINET: IO-Device and IO-Controller on the same interface are not supported yet (IO-Controller disabled)");
-        ctl.devices.clear();
-        controllerKey.clear();
-    }
-    if (deviceKey != pnDeviceKey_) {
-        pnDevice_.reset();
-        pnDeviceKey_ = deviceKey;
-        if (haveDevice) {
+    if (deviceKey == pnDeviceKey_ && controllerKey == pnControllerKey_) return;  // unchanged: keep the connections
+    // (re)build: stacks first (their threads use the roles), then the roles
+    pnStacks_.clear();
+    pnDevice_.reset();
+    pnController_.reset();
+    pnDeviceKey_ = deviceKey;
+    pnControllerKey_ = controllerKey;
+    auto stackFor = [&](const std::string& ifname) -> pn::Stack* {
+        for (auto& s : pnStacks_)
+            if (s->ifname() == ifname) return s.get();
+        auto s = std::make_unique<pn::Stack>(ifname, logger);
+        std::string err;
+        if (!s->open(err)) {
+            log(("PROFINET on " + ifname + ": " + err).c_str());
+            return nullptr;
+        }
+        pnStacks_.push_back(std::move(s));
+        return pnStacks_.back().get();
+    };
+    if (haveDevice) {
+        if (pn::Stack* s = stackFor(dev.ifname)) {
             pnDevice_ = std::make_unique<pn::Device>(dev);
-            std::string err;
-            if (!pnDevice_->start(err)) log(("PROFINET IO-Device: " + err).c_str());
+            pnDevice_->attach(*s);
         }
     }
-    if (controllerKey != pnControllerKey_) {
-        pnController_.reset();
-        pnControllerKey_ = controllerKey;
-        if (!ctl.devices.empty()) {
-            ctl.stationName = "virtualplc";
+    if (!ctl.devices.empty()) {
+        if (pn::Stack* s = stackFor(ctl.ifname)) {
+            ctl.stationName = haveDevice && pnDevice_ ? pnDevice_->stationName() : "virtualplc";
+            if (ctl.stationName.empty()) ctl.stationName = "virtualplc";
             ctl.log = logger;
             pnController_ = std::make_unique<pn::Controller>(ctl);
-            std::string err;
-            if (!pnController_->start(err)) log(("PROFINET IO-Controller: " + err).c_str());
+            pnController_->attach(*s);
         }
     }
+    for (auto& s : pnStacks_) s->start();
+}
+
+bool LinuxPlatform::moduleDiag(uint16_t index) {
+    if (index >= modules_.size()) return false;
+    switch (IoModule(modules_[index].info.kind)) {
+        case IoModule::IO_PROFINET_DEVICE:
+            return pnDevice_ && pnDevice_->diagnosisActive();
+        case IoModule::IO_PROFINET_REMOTE:
+            return pnController_ && index < pnRemoteIndex_.size() && pnController_->deviceDiag(pnRemoteIndex_[index]);
+        default:
+            return false;
+    }
+}
+
+size_t LinuxPlatform::moduleDiagnostics(uint16_t index, char* out, size_t cap) {
+    if (index >= modules_.size() || !cap) return 0;
+    std::string text;
+    if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFINET_REMOTE && pnController_ && index < pnRemoteIndex_.size()) {
+        const size_t k = pnRemoteIndex_[index];
+        text = pnController_->diagnostics(k);
+        if (!pnController_->deviceOk(k)) text = pnController_->status(k) + (text.empty() ? "" : "\n" + text);
+    } else if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFINET_DEVICE) {
+        if (pnDevice_) text = pnDevice_->status();
+        else text = "PROFINET not started (see the diagnostic buffer)";
+    }
+    size_t n = text.size() < cap - 1 ? text.size() : cap - 1;
+    memcpy(out, text.data(), n);
+    out[n] = 0;
+    return n;
+}
+
+bool LinuxPlatform::alarm(uint16_t module, uint16_t slot, uint16_t kind, uint32_t code) {
+    if (module >= modules_.size() || IoModule(modules_[module].info.kind) != IoModule::IO_PROFINET_DEVICE || !pnDevice_) return false;
+    return pnDevice_->alarm(slot, kind, code);
 }
 
 void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {

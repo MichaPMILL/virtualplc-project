@@ -54,40 +54,18 @@ Device::Device(DeviceConfig config) : config_(std::move(config)) {
     toController_.assign(config_.outLength, 0);
 }
 
-Device::~Device() { stop(); }
+Device::~Device() = default;
 
 void Device::log(const std::string& text) {
     if (config_.log) config_.log("PROFINET: " + text);
 }
 
-bool Device::start(std::string& error) {
-    stop();
-    if (!raw_.open(config_.ifname, error)) return false;
-    if (!rpc_.open(RPC_PORT, error)) {
-        raw_.close();
-        return false;
-    }
-    wake_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+void Device::attach(Stack& stack) {
+    stack_ = &stack;
     serverBoot_ = uint32_t(time(nullptr));
     loadSettings();
-    stop_ = false;
-    thread_ = std::thread([this] { loop(); });
-    log("IO-Device \"" + stationName() + "\" on " + config_.ifname + " (" + macText(raw_.mac()) + ", " + ipText(ip_.ip) + ")");
-    return true;
-}
-
-void Device::stop() {
-    if (thread_.joinable()) {
-        stop_ = true;
-        uint64_t one = 1;
-        if (::write(wake_, &one, sizeof(one)) < 0) log("stop: cannot wake the PROFINET thread");
-        thread_.join();
-    }
-    if (wake_ >= 0) close(wake_);
-    wake_ = -1;
-    raw_.close();
-    rpc_.close();
-    state_ = AR_NONE;
+    stack.add(this);
+    log("IO-Device \"" + stationName() + "\" on " + config_.ifname + " (" + macText(raw().mac()) + ", " + ipText(ip_.ip) + ")");
 }
 
 std::string Device::stationName() {
@@ -165,58 +143,33 @@ void Device::writeOutputs(const uint8_t* image, uint32_t size, bool run) {
 // Event loop
 // ---------------------------------------------------------------------------
 
-void Device::loop() {
-    std::vector<uint8_t> buf(2048);
-    while (!stop_) {
-        uint64_t now = nowUs();
-        int64_t wait = 50000;
-        if (state_ != AR_NONE && nextSend_) wait = std::min<int64_t>(wait, int64_t(nextSend_) - int64_t(now));
-        if (wait < 0) wait = 0;
-        pollfd fds[3] = {{raw_.fd(), POLLIN, 0}, {rpc_.fd(), POLLIN, 0}, {wake_, POLLIN, 0}};
-        timespec ts{time_t(wait / 1000000), long(wait % 1000000) * 1000};
-        int ready = ppoll(fds, 3, &ts, nullptr);
-        if (stop_) break;
-        if (ready > 0) {
-            if (fds[0].revents & POLLIN)
-                for (int i = 0; i < 64; i++) {
-                    size_t n = raw_.receive(buf.data(), buf.size());
-                    if (!n) break;
-                    onFrame(buf.data(), n);
-                }
-            if (fds[1].revents & POLLIN)
-                for (int i = 0; i < 16; i++) {
-                    sockaddr_in from{};
-                    size_t n = rpc_.receive(buf.data(), buf.size(), from);
-                    if (!n) break;
-                    onRpc(buf.data(), n, from);
-                }
-        }
-        now = nowUs();
-        if (state_ == AR_NONE) continue;
-        if (nextSend_ && now >= nextSend_) {
-            sendCyclic();
-            uint32_t cycle = in_.cycleUs();
-            nextSend_ += cycle ? cycle : 1000;
-            if (nextSend_ < now) nextSend_ = now + cycle;  // late: do not burst
-        }
-        // watchdog of the output CR, parametrization timeout, ApplicationReady retries
-        uint64_t watchdog = uint64_t(out_.cycleUs()) * (out_.watchdogFactor ? out_.watchdogFactor : 3);
-        uint64_t activity = uint64_t(ar_.activityTimeout ? ar_.activityTimeout : 100) * 100000u;
-        if (lastRx_ && now - lastRx_ > watchdog && state_ == AR_RUN) {
-            abort("watchdog: no data from the controller");
-        } else if (state_ != AR_RUN && now - connectedAt_ > activity) {
-            abort("parametrization timeout");
-        } else if (state_ == AR_WAIT_APPREADY_RES && now - appReadySent_ > 1000000) {
-            if (++appReadyTries_ > 10) abort("no answer to ApplicationReady");
-            else sendAppReady();
-        }
+uint64_t Device::tick(uint64_t now) {
+    if (state_ == AR_NONE) return now + 50000;
+    if (nextSend_ && now >= nextSend_) {
+        sendCyclic();
+        uint32_t cycle = in_.cycleUs();
+        nextSend_ += cycle ? cycle : 1000;
+        if (nextSend_ < now) nextSend_ = now + cycle;  // late: do not burst
     }
+    // watchdog of the output CR, parametrization timeout, ApplicationReady retries
+    uint64_t watchdog = uint64_t(out_.cycleUs()) * (out_.watchdogFactor ? out_.watchdogFactor : 3);
+    uint64_t activity = uint64_t(ar_.activityTimeout ? ar_.activityTimeout : 100) * 100000u;
+    if (lastRx_ && now - lastRx_ > watchdog && state_ == AR_RUN) {
+        abort("watchdog: no data from the controller");
+    } else if (state_ != AR_RUN && now - connectedAt_ > activity) {
+        abort("parametrization timeout");
+    } else if (state_ == AR_WAIT_APPREADY_RES && now - appReadySent_ > 1000000) {
+        if (++appReadyTries_ > 10) abort("no answer to ApplicationReady");
+        else sendAppReady();
+    }
+    alarmTick(now);
+    return state_ == AR_NONE ? now + 50000 : std::min<uint64_t>(nextSend_ ? nextSend_ : now + 1000, now + 10000);
 }
 
 void Device::onFrame(const uint8_t* p, size_t n) {
     EthFrame eth;
     if (!parseEth(p, n, eth) || eth.type != ETHERTYPE_PN || eth.length < 2) return;
-    const bool forUs = eth.dst == raw_.mac();
+    const bool forUs = eth.dst == raw().mac();
     uint16_t frameId = uint16_t((eth.payload[0] << 8) | eth.payload[1]);
     if (frameId == FRAME_DCP_IDENT_REQ || frameId == FRAME_DCP_GETSET) {
         if (!forUs && !(frameId == FRAME_DCP_IDENT_REQ && eth.dst == DCP_IDENTIFY_MULTICAST)) return;
@@ -282,7 +235,7 @@ void Device::addIdentityBlocks(DcpBuilder& b, bool all, const uint8_t* wanted, s
             for (int k = 0; k < 4; k++) ip[i * 4 + k] = uint8_t(v[i] >> (24 - 8 * k));
         b.block(DCP_OPT_IP, DCP_IP_PARAM, ip_.ip ? 0x0001 : 0x0000, ip, 12);
     }
-    if (!all && want(DCP_OPT_IP, DCP_IP_MAC)) b.block(DCP_OPT_IP, DCP_IP_MAC, 0, raw_.mac().data(), 6);
+    if (!all && want(DCP_OPT_IP, DCP_IP_MAC)) b.block(DCP_OPT_IP, DCP_IP_MAC, 0, raw().mac().data(), 6);
 }
 
 void Device::onDcp(const EthFrame& eth, const DcpMessage& m) {
@@ -304,24 +257,24 @@ void Device::onDcp(const EthFrame& eth, const DcpMessage& m) {
                 return;  // filter we do not support: not us
             }
         }
-        DcpBuilder b(frame_, eth.src, raw_.mac(), FRAME_DCP_IDENT_RES, DCP_IDENTIFY, DCP_RESPONSE_OK, m.xid);
+        DcpBuilder b(frame_, eth.src, raw().mac(), FRAME_DCP_IDENT_RES, DCP_IDENTIFY, DCP_RESPONSE_OK, m.xid);
         addIdentityBlocks(b, true, nullptr, 0);
         b.finish();
-        raw_.send(frame_);
+        raw().send(frame_);
     } else if (m.frameId == FRAME_DCP_GETSET && m.service == DCP_SET) {
         onDcpSet(eth, m);
     }
 }
 
 void Device::onDcpGet(const EthFrame& eth, const DcpMessage& m, const uint8_t* data, size_t n) {
-    DcpBuilder b(frame_, eth.src, raw_.mac(), FRAME_DCP_GETSET, DCP_GET, DCP_RESPONSE_OK, m.xid);
+    DcpBuilder b(frame_, eth.src, raw().mac(), FRAME_DCP_GETSET, DCP_GET, DCP_RESPONSE_OK, m.xid);
     addIdentityBlocks(b, false, data, n);
     b.finish();
-    raw_.send(frame_);
+    raw().send(frame_);
 }
 
 void Device::onDcpSet(const EthFrame& eth, const DcpMessage& m) {
-    DcpBuilder b(frame_, eth.src, raw_.mac(), FRAME_DCP_GETSET, DCP_SET, DCP_RESPONSE_OK, m.xid);
+    DcpBuilder b(frame_, eth.src, raw().mac(), FRAME_DCP_GETSET, DCP_SET, DCP_RESPONSE_OK, m.xid);
     auto result = [&](const DcpBlock& blk, uint8_t error) {
         uint8_t r[3] = {blk.option, blk.suboption, error};
         b.raw(DCP_OPT_CONTROL, DCP_CTL_RESPONSE, r, 3);
@@ -391,7 +344,7 @@ void Device::onDcpSet(const EthFrame& eth, const DcpMessage& m) {
         }
     }
     b.finish();
-    raw_.send(frame_);
+    raw().send(frame_);
     if (changed) saveSettings();
 }
 
@@ -416,8 +369,8 @@ void Device::sendCyclic() {
     for (const IoDataObject& o : in_.iocs)
         if (o.frameOffset < length) csdu[o.frameOffset] = IOXS_GOOD;
     cycleCounter_ = uint16_t(cycleCounter_ + in_.sendClockFactor * in_.reductionRatio);
-    writeRtFrame(frame_, ar_.initiatorMac, raw_.mac(), in_.tagHeader, in_.frameId, csdu, length, cycleCounter_, run ? DATA_STATUS_RUN : DATA_STATUS_STOP);
-    raw_.send(frame_);
+    writeRtFrame(frame_, ar_.initiatorMac, raw().mac(), in_.tagHeader, in_.frameId, csdu, length, cycleCounter_, run ? DATA_STATUS_RUN : DATA_STATUS_STOP);
+    raw().send(frame_);
 }
 
 void Device::onCyclic(uint16_t frameId, const uint8_t* p, size_t n) {
@@ -436,25 +389,139 @@ void Device::onCyclic(uint16_t frameId, const uint8_t* p, size_t n) {
 }
 
 void Device::onAlarm(const EthFrame& eth, const uint8_t* p, size_t n) {
-    // RTA-PDU: dst endpoint, src endpoint, PDU type, add flags, send / ack sequence, var part length
-    if (state_ == AR_NONE || n < 12) return;
-    Reader r(p, n);
-    uint16_t dst = r.u16(), src = r.u16();
-    uint8_t type = r.u8() & 0x0F;
-    r.u8();
-    uint16_t sendSeq = r.u16();
-    r.u16();
-    if (dst != alarmLocalRef_) return;
-    if (type == 4) {  // ERR: the controller aborts the AR
-        abort("aborted by the controller");
-    } else if (type == 1) {  // DATA (alarm from the controller): acknowledge
-        std::vector<uint8_t> f;
-        Writer w(f);
-        writeEthPn(w, eth.src, raw_.mac(), 0xA000);
-        w.u16(FRAME_ALARM_LOW).u16(src).u16(dst).u8(0x13).u8(0x00).u16(0xFFFF).u16(sendSeq).u16(0);
-        while (f.size() < 60) f.push_back(0);
-        raw_.send(f);
+    RtaHeader h;
+    if (state_ == AR_NONE || !parseRta(p, n, h) || h.dst != alarmLocalRef_) return;
+    const bool high = eth.payload[0] == (FRAME_ALARM_HIGH >> 8);
+    switch (h.type) {
+        case RTA_ERR:
+            abort("aborted by the controller");
+            break;
+        case RTA_NACK:
+            if (alarmBusy_ && !alarmTransportAcked_) sendAlarm();
+            break;
+        case RTA_ACK:
+            if (alarmBusy_ && h.ackSeq == rtaSendSeq_) alarmTransportAcked_ = true;
+            break;
+        case RTA_DATA: {
+            const bool repeated = h.sendSeq == rtaRecvSeq_;
+            rtaRecvSeq_ = h.sendSeq;
+            sendRtaAck(h.sendSeq, high);
+            if (alarmBusy_ && h.ackSeq == rtaSendSeq_) alarmTransportAcked_ = true;
+            AlarmInfo a;
+            if (!repeated && parseAlarm(h.sdu, h.length, a) && (a.blockType == BT_ALARM_ACK_HIGH || a.blockType == BT_ALARM_ACK_LOW)) {
+                if (a.status != PNIO_OK) log("alarm not accepted by the controller");
+                alarmBusy_ = false;  // acknowledged by the application of the controller
+            }
+            break;
+        }
+        default:
+            break;
     }
+}
+
+void Device::sendRtaAck(uint16_t ackSeq, bool high) {
+    RtaHeader h;
+    h.dst = alarmRemoteRef_;
+    h.src = alarmLocalRef_;
+    h.type = RTA_ACK;
+    h.flags = 0x01;
+    h.sendSeq = rtaSendSeq_;
+    h.ackSeq = ackSeq;
+    std::vector<uint8_t> f;
+    writeRtaFrame(f, ar_.initiatorMac, raw().mac(), high, h, nullptr, 0);
+    raw().send(f);
+}
+
+bool Device::alarm(uint16_t slot, uint16_t kind, uint32_t code) {
+    if (state_ != AR_RUN) return false;
+    AlarmInfo a;
+    {
+        std::lock_guard<std::mutex> lock(ioMutex_);
+        const Mapped* m = nullptr;
+        for (const Mapped& x : mapped_)
+            if (x.slot == slot && (!m || x.subslot == 1)) m = &x;
+        if (!m) return false;
+        a.slot = m->slot;
+        a.subslot = m->subslot;
+        a.moduleIdent = m->moduleIdent;
+        a.submoduleIdent = m->submoduleIdent;
+    }
+    std::lock_guard<std::mutex> lock(alarmMutex_);
+    if (alarmQueue_.size() >= 16) return false;
+    if (kind == ALARM_PROCESS) {
+        a.blockType = BT_ALARM_HIGH;
+        a.type = ALARM_PROCESS;
+        a.usi = 0x0001;
+        a.data = {uint8_t(code >> 24), uint8_t(code >> 16), uint8_t(code >> 8), uint8_t(code)};
+    } else if (kind == ALARM_DIAGNOSIS || kind == ALARM_DIAGNOSIS_DISAPPEARS) {
+        const bool appears = kind == ALARM_DIAGNOSIS;
+        const uint32_t key = (uint32_t(slot) << 16) | (code & 0xFFFF);
+        if (appears ? diagnoses_.count(key) : !diagnoses_.count(key)) return true;  // no change
+        if (appears) diagnoses_.insert(key);
+        else diagnoses_.erase(key);
+        a.blockType = BT_ALARM_LOW;
+        a.type = appears ? ALARM_DIAGNOSIS : ALARM_DIAGNOSIS_DISAPPEARS;
+        a.usi = USI_CHANNEL_DIAGNOSIS;
+        const uint16_t properties = appears ? 0x0800 : 0x1000;
+        a.data = {0x80, 0x00, uint8_t(properties >> 8), uint8_t(properties), uint8_t(code >> 8), uint8_t(code)};
+        bool slotDiag = false;
+        for (uint32_t k : diagnoses_) slotDiag = slotDiag || (k >> 16) == slot;
+        a.specifier = uint16_t((1u << 11) | (slotDiag ? 1u << 13 : 0) | (diagnoses_.empty() ? 0 : 1u << 15));
+    } else {
+        return false;
+    }
+    alarmQueue_.push_back(a);
+    return true;
+}
+
+bool Device::diagnosisActive() {
+    std::lock_guard<std::mutex> lock(alarmMutex_);
+    return !diagnoses_.empty();
+}
+
+void Device::sendAlarm() {
+    std::vector<uint8_t> sdu;
+    Writer w(sdu);
+    writeAlarmNotification(w, alarmCurrent_);
+    RtaHeader h;
+    h.dst = alarmRemoteRef_;
+    h.src = alarmLocalRef_;
+    h.type = RTA_DATA;
+    h.flags = 0x11;
+    h.sendSeq = rtaSendSeq_;
+    h.ackSeq = rtaRecvSeq_;
+    std::vector<uint8_t> f;
+    writeRtaFrame(f, ar_.initiatorMac, raw().mac(), alarmCurrent_.blockType == BT_ALARM_HIGH, h, sdu.data(), sdu.size());
+    raw().send(f);
+    alarmSentAt_ = nowUs();
+}
+
+void Device::alarmTick(uint64_t now) {
+    if (state_ != AR_RUN) return;
+    if (alarmBusy_) {
+        if (!alarmTransportAcked_ && now - alarmSentAt_ > uint64_t(rtaTimeoutMs_) * 1000u) {
+            if (++alarmTries_ > rtaRetries_) {
+                abort("alarm not acknowledged by the controller");
+                return;
+            }
+            sendAlarm();
+        } else if (alarmTransportAcked_ && now - alarmSentAt_ > 5000000) {
+            log("no application acknowledgement of the alarm");
+            alarmBusy_ = false;
+        }
+        return;
+    }
+    std::lock_guard<std::mutex> lock(alarmMutex_);
+    if (alarmQueue_.empty()) return;
+    alarmCurrent_ = alarmQueue_.front();
+    alarmQueue_.pop_front();
+    alarmCurrent_.specifier = uint16_t((alarmCurrent_.specifier & ~0x07FF) | (alarmSeqNo_ & 0x07FF));
+    alarmSeqNo_ = uint16_t((alarmSeqNo_ + 1) & 0x07FF);
+    rtaSendSeq_ = uint16_t((rtaSendSeq_ + 1) & 0x7FFF);
+    alarmBusy_ = true;
+    alarmTransportAcked_ = false;
+    alarmTries_ = 0;
+    sendAlarm();
 }
 
 void Device::abort(const std::string& why) {
@@ -462,6 +529,12 @@ void Device::abort(const std::string& why) {
     log("connection with " + ar_.stationName + " ended: " + why);
     state_ = AR_NONE;
     nextSend_ = lastRx_ = 0;
+    alarmBusy_ = false;
+    {
+        std::lock_guard<std::mutex> alarms(alarmMutex_);
+        alarmQueue_.clear();
+        diagnoses_.clear();
+    }
     std::lock_guard<std::mutex> lock(ioMutex_);
     std::fill(fromController_.begin(), fromController_.end(), 0);
     mapped_.clear();
@@ -471,33 +544,37 @@ void Device::abort(const std::string& why) {
 // RPC
 // ---------------------------------------------------------------------------
 
-void Device::onRpc(const uint8_t* p, size_t n, const sockaddr_in& from) {
+bool Device::onRpc(const uint8_t* p, size_t n, const sockaddr_in& from) {
     RpcHeader h;
-    if (!parseRpc(p, n, h)) return;
+    if (!parseRpc(p, n, h)) return false;
     const uint8_t* body = p + RPC_HEADER_SIZE;
     if (h.type == RPC_REQUEST) {
+        if (h.interface != UUID_IO_DEVICE_INTERFACE) return false;  // for the IO-Controller role
         if ((h.flags1 & RPC_FLAG_FRAG) && !(h.flags1 & RPC_FLAG_LASTFRAG)) {
             log("fragmented RPC request not supported");
-            return;
+            return true;
         }
         if (h.activity == lastActivity_ && h.sequence == lastSequence_ && !lastResponse_.empty()) {
-            rpc_.sendTo(lastResponse_, from);  // retransmission
-            return;
+            rpc().sendTo(lastResponse_, from);  // retransmission
+            return true;
         }
         rpcRequest(h, body, h.bodyLength, from);
+        return true;
     } else if (h.type == RPC_RESPONSE && h.activity == appReadyActivity_ && state_ == AR_WAIT_APPREADY_RES) {
         NdrHeader ndr;
         const uint8_t* blocks;
         size_t length;
         std::vector<Block> list;
-        if (!parseNdr(body, h.bodyLength, h.le, true, ndr, blocks, length) || !parseBlocks(blocks, length, list)) return;
+        if (!parseNdr(body, h.bodyLength, h.le, true, ndr, blocks, length) || !parseBlocks(blocks, length, list)) return true;
         if (ndr.status != PNIO_OK) {
             abort("ApplicationReady refused by the controller");
-            return;
+            return true;
         }
         state_ = AR_RUN;
         log("data exchange with " + ar_.stationName + " started");
+        return true;
     }
+    return false;
 }
 
 void Device::rpcRequest(const RpcHeader& h, const uint8_t* body, size_t n, const sockaddr_in& from) {
@@ -537,7 +614,7 @@ void Device::rpcRequest(const RpcHeader& h, const uint8_t* body, size_t n, const
     w.put32(ndrAt, status);
     finishNdr(w, ndrAt, h.le);
     finishRpc(packet);
-    rpc_.sendTo(packet, from);
+    rpc().sendTo(packet, from);
     lastActivity_ = h.activity;
     lastSequence_ = h.sequence;
     lastResponse_ = packet;
@@ -577,7 +654,7 @@ uint32_t Device::connect(const std::vector<Block>& blocks, const sockaddr_in& fr
     res.arType = req.ar.type;
     res.arUuid = req.ar.uuid;
     res.sessionKey = req.ar.sessionKey;
-    res.responderMac = raw_.mac();
+    res.responderMac = raw().mac();
     // submodules: check against the catalogue and map them to the process image
     std::vector<ExpectedSubmodule> subs = req.submodules;
     std::sort(subs.begin(), subs.end(), [](const ExpectedSubmodule& a, const ExpectedSubmodule& b) {
@@ -603,6 +680,8 @@ uint32_t Device::connect(const std::vector<Block>& blocks, const sockaddr_in& fr
         m.subslot = e.subslot;
         m.inLength = inLen;
         m.outLength = outLen;
+        m.moduleIdent = e.moduleIdent;
+        m.submoduleIdent = e.submoduleIdent;
         if (outLen) {
             if (outPos + outLen <= config_.inLength) m.imageIn = int32_t(outPos);
             else log("slot " + std::to_string(e.slot) + ": outside of the %I area of the device");
@@ -637,6 +716,11 @@ uint32_t Device::connect(const std::vector<Block>& blocks, const sockaddr_in& fr
     // the receiver of a CR chooses its frame ID: keep the controller's proposal when valid
     if (out_.frameId < FRAME_RT1_FIRST || out_.frameId > FRAME_RT1_LAST) out_.frameId = uint16_t(0xC000 + (ar_.sessionKey & 0x0FFF));
     alarmRemoteRef_ = req.alarm.localReference;
+    rtaSendSeq_ = 0xFFFF;
+    rtaRecvSeq_ = 0xFFFE;
+    alarmSeqNo_ = 0;
+    rtaTimeoutMs_ = uint16_t(100 * (req.alarm.rtaTimeoutFactor ? req.alarm.rtaTimeoutFactor : 1));
+    rtaRetries_ = req.alarm.rtaRetries ? req.alarm.rtaRetries : 3;
     res.iocrs.push_back({in_.type, in_.reference, in_.frameId});
     res.iocrs.push_back({out_.type, out_.reference, out_.frameId});
     res.alarmType = req.alarm.type;
@@ -701,7 +785,7 @@ void Device::sendAppReady() {
     writeControl(w, c);
     finishNdr(w, ndrAt, h.le);
     finishRpc(packet);
-    rpc_.sendTo(packet, controller_);
+    rpc().sendTo(packet, controller_);
     appReadySent_ = nowUs();
 }
 

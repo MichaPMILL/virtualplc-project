@@ -16,6 +16,7 @@
 
 #include "pn_net.h"
 #include "pn_proto.h"
+#include "pn_stack.h"
 
 namespace vplc {
 namespace pn {
@@ -47,13 +48,13 @@ struct ControllerConfig {
     std::function<void(const std::string&)> log;
 };
 
-class Controller {
+class Controller : public Role {
 public:
     explicit Controller(ControllerConfig config);
-    ~Controller();
-    bool start(std::string& error);
-    void stop();
-    bool running() const { return thread_.joinable(); }
+    ~Controller() override;
+    /** Serves the controller on the stack of its interface (before the stack starts). */
+    void attach(Stack& stack);
+    bool running() const { return stack_ && stack_->running(); }
 
     /** Device inputs → process image (called before each scan) */
     void readInputs(uint8_t* image, uint32_t size);
@@ -62,6 +63,10 @@ public:
     /** True when the device (index in the configuration) exchanges data */
     bool deviceOk(size_t index) const;
     std::string status(size_t index) const;
+    /** True when the device reported a diagnosis that has not disappeared */
+    bool deviceDiag(size_t index) const;
+    /** Active diagnoses of the device, one per line */
+    std::string diagnostics(size_t index) const;
 
 private:
     enum State { S_IDENTIFY, S_WAIT_IDENTIFY, S_WAIT_SET_IP, S_WAIT_CONNECT, S_WAIT_WRITE, S_WAIT_PRMEND, S_WAIT_APPREADY, S_RUN, S_PAUSE };
@@ -84,10 +89,25 @@ private:
         std::vector<Layout> layout;    // per submodule
         std::vector<uint8_t> inputs;   // latest input data, per submodule concatenated (inLength)
         std::string status = "starting";
+        // alarms
+        uint16_t alarmLocalRef = 1, alarmRemoteRef = 0;
+        uint16_t rtaSendSeq = 0xFFFF, rtaRecvSeq = 0xFFFE;
+        bool ackPending = false;
+        std::vector<uint8_t> ackFrame;  // last AlarmAck sent (retransmission)
+        uint64_t ackSentAt = 0;
+        int ackTries = 0;
+        struct Diag { uint16_t slot, subslot, channel, errorType; };
+        std::vector<Diag> diags;
     };
 
-    void loop();
+    void onFrame(const uint8_t* p, size_t n) override;
+    bool onRpc(const uint8_t* p, size_t n, const sockaddr_in& from) override;
+    uint64_t tick(uint64_t now) override;
+    void onStop() override;
+    void onAlarm(Dev& d, const EthFrame& eth);
     void log(const std::string& text);
+    RawSocket& raw() { return stack_->raw(); }
+    UdpSocket& rpc() { return stack_->rpc(); }
     void step(Dev& d, uint64_t now);
     void identify(Dev& d);
     void setIp(Dev& d);
@@ -96,17 +116,11 @@ private:
     void sendRequest(Dev& d, uint16_t opnum);
     void sendCyclic(Dev& d);
     void lost(Dev& d, const std::string& why, bool pause = true);
-    void onFrame(const uint8_t* p, size_t n);
-    void onRpc(const uint8_t* p, size_t n, const sockaddr_in& from);
     void onRpcResponse(Dev& d, const RpcHeader& h, const uint8_t* body);
     void onAppReady(const RpcHeader& h, const uint8_t* body, const sockaddr_in& from);
 
     ControllerConfig config_;
-    RawSocket raw_;
-    UdpSocket rpc_;
-    std::thread thread_;
-    std::atomic<bool> stop_{false};
-    int wake_ = -1;
+    Stack* stack_ = nullptr;
     Uuid object_;
     uint16_t sessionKey_ = 0;
     std::vector<std::unique_ptr<Dev>> devs_;

@@ -155,6 +155,8 @@ enum class SysFn : uint8_t {
     SYS_MILLIS = 2,
     SYS_DEVICE_OK = 3,
     SYS_CLOCK = 4,
+    SYS_DEVICE_DIAG = 5,
+    SYS_PN_ALARM = 6,
 };
 
 enum class Trap : uint8_t {

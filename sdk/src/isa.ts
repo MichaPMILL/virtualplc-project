@@ -308,6 +308,8 @@ export const SysFn = {
   MILLIS: 2,
   DEVICE_OK: 3,
   CLOCK: 4,
+  DEVICE_DIAG: 5,
+  PN_ALARM: 6,
 } as const;
 
 export const Trap = {

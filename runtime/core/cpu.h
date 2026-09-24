@@ -58,6 +58,8 @@ private:
         uint32_t watchdogMillis() override { return cpu->platform_.watchdogMillis(); }
         void log(const char* message) override { cpu->log(message); }
         bool moduleOk(uint16_t index) override { return cpu->platform_.moduleOk(index); }
+        bool moduleDiag(uint16_t index) override { return cpu->platform_.moduleDiag(index); }
+        bool alarm(uint16_t module, uint16_t slot, uint16_t kind, uint32_t code) override { return cpu->platform_.alarm(module, slot, kind, code); }
         bool clock(bool local, int64_t& ns) override { return cpu->platform_.clock(local, ns); }
     };
 

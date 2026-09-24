@@ -875,6 +875,17 @@ bool Vm::sys(uint8_t fn, uint8_t argc, bool& suspend) {
             a[0].i = host_ ? host_->moduleOk(uint16_t(a[0].i)) : 0;
             return true;
         }
+        case SysFn::SYS_DEVICE_DIAG: {
+            if (argc != 1) return false;
+            a[0].i = host_ ? host_->moduleDiag(uint16_t(a[0].i)) : 0;
+            return true;
+        }
+        case SysFn::SYS_PN_ALARM: {  // (module, slot, kind, code) -> accepted
+            if (argc != 4) return false;
+            a[0].i = host_ ? host_->alarm(uint16_t(a[0].i), uint16_t(a[1].i), uint16_t(a[2].i), uint32_t(a[3].i)) : 0;
+            sp_ = uint16_t(sp_ - 3);
+            return true;
+        }
         default:
             return false;
     }

@@ -27,6 +27,8 @@ public:
     virtual void readInputs(uint8_t* image, uint32_t size) = 0;
     // Called at the end of each scan (and with an all-zero image in STOP/FAULT).
     virtual void writeOutputs(const uint8_t* image, uint32_t size) = 0;
+    // Diagnostic text of a module for the Studio (active diagnoses, one per line); 0 = none
+    virtual size_t moduleDiagnostics(uint16_t index, char* out, size_t cap) { (void)index; (void)out; (void)cap; return 0; }
 };
 
 }  // namespace vplc

@@ -9,6 +9,7 @@
 #include "modbus.h"
 #include "profinet/pn_controller.h"
 #include "profinet/pn_device.h"
+#include "profinet/pn_stack.h"
 
 namespace vplc {
 
@@ -22,6 +23,9 @@ public:
     uint32_t micros() override;
     void log(const char* message) override;
     bool moduleOk(uint16_t index) override;
+    bool moduleDiag(uint16_t index) override;
+    size_t moduleDiagnostics(uint16_t index, char* out, size_t cap) override;
+    bool alarm(uint16_t module, uint16_t slot, uint16_t kind, uint32_t code) override;
     bool clock(bool local, int64_t& ns) override;
     bool storeProgram(const uint8_t* image, size_t length) override;
     size_t loadProgram(uint8_t* buf, size_t capacity) override;
@@ -57,6 +61,7 @@ private:
     std::unique_ptr<pn::Device> pnDevice_;
     std::unique_ptr<pn::Controller> pnController_;
     std::string pnDeviceKey_, pnControllerKey_;
+    std::vector<std::unique_ptr<pn::Stack>> pnStacks_;  // declared after the roles: destroyed first
     std::vector<uint16_t> pnRemoteIndex_;  // module index -> device index of the controller
 };
 

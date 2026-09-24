@@ -61,13 +61,26 @@ test('PROFINET: IO-Controller and IO-Device (DCP, connect, cyclic data, watchdog
     const ctlDir = mkdtempSync(join(tmpdir(), 'vplc-pnc-'));
     // device: its outputs to the controller = its inputs + 1000; no IP yet (the controller sets it)
     writeFileSync(join(devDir, 'program.vplc'), image(`
-      VAR_GLOBAL "InW" AT %IW0 : UInt; "OutW" AT %QW0 : UInt; END_VAR
-      ORGANIZATION_BLOCK "Main" BEGIN "OutW" := "InW" + 1000; END_ORGANIZATION_BLOCK`,
+      VAR_GLOBAL "InW" AT %IW0 : UInt; "OutW" AT %QW0 : UInt; "Step" AT %MW10 : Int; END_VAR
+      ORGANIZATION_BLOCK "Main" BEGIN
+        "OutW" := "InW" + 1000;
+        // alarms to the controller: diagnosis (short circuit), process alarm, diagnosis gone
+        IF "Step" = 0 AND "InW" > 200 THEN IF PN_ALARM(MODULE := PN, SLOT := 2, KIND := 1, CODE := 1) THEN "Step" := 1; END_IF; END_IF;
+        IF "Step" = 1 AND "InW" > 500 THEN IF PN_ALARM(MODULE := PN, SLOT := 2, KIND := 2, CODE := 42) THEN "Step" := 2; END_IF; END_IF;
+        IF "Step" = 2 AND "InW" > 800 THEN IF PN_ALARM(MODULE := PN, SLOT := 2, KIND := 12, CODE := 1) THEN "Step" := 3; END_IF; END_IF;
+      END_ORGANIZATION_BLOCK`,
     [{ kind: 'profinet-device', name: 'PN', interface: 'vpnd', stationName: 'test-device', deviceId: 1, inByte: 0, inLength: 4, outByte: 0, outLength: 4 }]));
     writeFileSync(join(ctlDir, 'program.vplc'), image(`
-      VAR_GLOBAL "Count" AT %QW0 : UInt; "Back" AT %IW0 : UInt; END_VAR
-      ORGANIZATION_BLOCK "Main" BEGIN "Count" := "Count" + 1; END_ORGANIZATION_BLOCK`,
-    [{
+      VAR_GLOBAL "Count" AT %QW0 : UInt; "Back" AT %IW0 : UInt; "DiagSeen" AT %M20.0 : Bool; "DiagNow" AT %M20.1 : Bool; END_VAR
+      ORGANIZATION_BLOCK "Main" BEGIN
+        "Count" := "Count" + 1;
+        "DiagNow" := DEVICE_DIAG('test-device');
+        IF "DiagNow" THEN "DiagSeen" := TRUE; END_IF;
+      END_ORGANIZATION_BLOCK`,
+    [
+      // the controller CPU is also an IO-Device on the same interface
+      { kind: 'profinet-device', name: 'Own', interface: 'vpnc', stationName: 'test-controller', deviceId: 1, inByte: 100, inLength: 4, outByte: 100, outLength: 4 },
+      {
       kind: 'profinet-remote', name: 'test-device', interface: 'vpnc', stationName: 'test-device', ip: '192.168.78.2', vendorId: 0, deviceId: 1, cycleMs: 4,
       submodules,
     }]));
@@ -84,6 +97,8 @@ test('PROFINET: IO-Controller and IO-Device (DCP, connect, cyclic data, watchdog
     await until(() => /data exchange started/.test(logs.ctl), 10000, () => `no data exchange:\n${logs.ctl}\n${logs.dev}`);
     assert.match(logs.dev, /IP address set to 192\.168\.78\.2/);
     assert.match(logs.dev, /end of parametrization \(2 parameter record\(s\)\)/);
+    assert.match(logs.ctl, /IO-Device "test-controller" on vpnc/);
+    assert.doesNotMatch(logs.ctl, /not supported/);
 
     // cyclic data both ways
     const ctl = new DeviceClient('127.0.0.1', 20187);
@@ -93,6 +108,13 @@ test('PROFINET: IO-Controller and IO-Device (DCP, connect, cyclic data, watchdog
       const back = i.readUInt16BE(0), count = q.readUInt16BE(0);
       return back > 1000 && count + 1000 - back >= 0 && count + 1000 - back < 50;
     }, 5000, 'the device does not echo the controller outputs');
+
+    // alarms: diagnosis appears (seen by DEVICE_DIAG), process alarm, diagnosis disappears
+    await until(() => /diagnosis gone: short circuit/.test(logs.ctl), 10000, () => `alarms not received:\n${logs.ctl}\n${logs.dev}`);
+    assert.match(logs.ctl, /test-device: slot 2\.1: diagnosis: short circuit \(0x0001\)/);
+    assert.match(logs.ctl, /test-device: slot 2\.1: process alarm \(value 0x0000002A\)/);
+    const [m] = await ctl.read([{ area: 'M', offset: 20, length: 1 }]);
+    assert.equal(m[0] & 3, 1, 'DEVICE_DIAG was TRUE while the diagnosis was active, FALSE after');
 
     // device lost: watchdog, then reconnection once it is back (name and IP were kept)
     dev.kill();

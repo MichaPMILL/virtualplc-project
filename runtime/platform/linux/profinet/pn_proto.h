@@ -359,6 +359,55 @@ void writeRecordReq(Writer& w, const RecordHeader& h);
 /** Read / write response header (additional values 0) */
 void writeRecordRes(Writer& w, const RecordHeader& h, uint32_t status);
 
+// ---------------------------------------------------------------------------
+// Alarms (acyclic real-time: RTA over the alarm CR)
+// ---------------------------------------------------------------------------
+
+enum RtaType : uint8_t { RTA_DATA = 1, RTA_NACK = 2, RTA_ACK = 3, RTA_ERR = 4 };
+enum AlarmType : uint16_t {
+    ALARM_DIAGNOSIS = 0x0001, ALARM_PROCESS = 0x0002, ALARM_PULL = 0x0003, ALARM_PLUG = 0x0004, ALARM_STATUS = 0x0005,
+    ALARM_UPDATE = 0x0006, ALARM_DIAGNOSIS_DISAPPEARS = 0x000C,
+};
+constexpr uint16_t BT_ALARM_HIGH = 0x0001, BT_ALARM_LOW = 0x0002, BT_ALARM_ACK_HIGH = 0x8001, BT_ALARM_ACK_LOW = 0x8002;
+constexpr uint16_t USI_CHANNEL_DIAGNOSIS = 0x8000;
+constexpr uint16_t VLAN_ALARM_HIGH = 0xC000, VLAN_ALARM_LOW = 0xA000;
+
+struct RtaHeader {
+    uint16_t dst = 0, src = 0;
+    uint8_t type = RTA_DATA, flags = 0x11;  // window size 1, acknowledge requested
+    uint16_t sendSeq = 0, ackSeq = 0;
+    const uint8_t* sdu = nullptr;
+    size_t length = 0;
+};
+/** Parses the RTA-PDU after the frame ID */
+bool parseRta(const uint8_t* p, size_t n, RtaHeader& out);
+/** Alarm frame (high or low priority) with an RTA-PDU */
+void writeRtaFrame(std::vector<uint8_t>& out, const Mac& dst, const Mac& src, bool high, const RtaHeader& h, const uint8_t* sdu, size_t n);
+
+/** AlarmNotification (block 0x0001 / 0x0002) or AlarmAck (0x8001 / 0x8002) */
+struct AlarmInfo {
+    uint16_t blockType = BT_ALARM_LOW;
+    uint16_t type = ALARM_DIAGNOSIS;
+    uint32_t api = 0;
+    uint16_t slot = 0, subslot = 0;
+    uint32_t moduleIdent = 0, submoduleIdent = 0;
+    uint16_t specifier = 0;
+    uint16_t usi = 0;             // user structure identifier (0 = none)
+    std::vector<uint8_t> data;    // after the USI
+    uint32_t status = 0;          // AlarmAck: PNIO status
+};
+bool parseAlarm(const uint8_t* p, size_t n, AlarmInfo& out);
+void writeAlarmNotification(Writer& w, const AlarmInfo& a);
+void writeAlarmAck(Writer& w, const AlarmInfo& a);
+
+/** One channel diagnosis entry (USI 0x8000: channel, properties, error type) */
+struct ChannelDiag {
+    uint16_t channel = 0x8000, properties = 0, errorType = 0;
+    bool disappears() const { return ((properties >> 11) & 3) == 2; }
+};
+std::vector<ChannelDiag> channelDiagnoses(const AlarmInfo& a);
+const char* channelErrorText(uint16_t errorType);
+
 /** Cyclic RT frame: builds the frame around a C_SDU. */
 void writeRtFrame(std::vector<uint8_t>& out, const Mac& dst, const Mac& src, uint16_t vlan, uint16_t frameId,
                   const uint8_t* csdu, size_t length, uint16_t cycleCounter, uint8_t dataStatus);
