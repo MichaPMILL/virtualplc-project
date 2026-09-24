@@ -14,6 +14,8 @@ export interface CompileSummary {
   functions: Array<{ name: string; kind: string; file?: string }>;
   /** Line of the generated source where the code of each block starts (block id -> line) */
   codeLines: Record<string, number>;
+  /** Numbered data blocks and their location in the data memory (absolute addresses) */
+  dbs: Array<{ number: number; name: string; offset: number; size: number }>;
   time: string;
 }
 
@@ -49,7 +51,7 @@ export class Backend {
     }
     return {
       ok: r.ok, diagnostics: r.diagnostics, programId: r.programId, stats: r.stats, symbols: r.symbols,
-      functions: r.functions, time: new Date().toISOString(),
+      functions: r.functions, time: new Date().toISOString(), dbs: r.dbs ?? [],
       codeLines: Object.fromEntries(r.sources.filter((x) => x.blockId).map((x) => [x.blockId!, x.codeLine])),
     };
   }

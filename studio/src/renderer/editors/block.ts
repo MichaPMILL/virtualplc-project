@@ -5,6 +5,7 @@ import { clear, h, svg } from '../dom.ts';
 import { icons, type IconName } from '../icons.ts';
 import { t } from '../i18n.ts';
 import { store } from '../store.ts';
+import { hmiColumns } from './tagTable.ts';
 import { DATA_TYPES, FB_TYPES, Grid, valueClass } from './grid.ts';
 import { button, openDialog } from '../ui/dialogs.ts';
 import { operandsOf, SclEditor, type CompletionSource } from './sclEditor.ts';
@@ -307,6 +308,21 @@ export function blockEditor(device: Device, block: Block): EditorView {
 // Data blocks
 // ---------------------------------------------------------------------------
 
+/** Absolute address of a DB member (after compilation), e.g. DB3.DBD4 — for HMIs using S7 communication. */
+function absoluteAddress(device: Device, block: Block, member: string): string {
+  const c = store.compile.get(device.id);
+  const db = c?.dbs.find((d) => d.name === block.name);
+  const sym = c ? findSymbol(c.symbols, `"${block.name}".${member}`) : null;
+  if (!db || !sym) return '';
+  const rel = sym.offset - db.offset;
+  const p = `DB${db.number}.`;
+  if (sym.kind === 'bool') return `${p}DBX${rel}.${sym.bit ?? 0}`;
+  if (!sym.children && sym.size === 1) return `${p}DBB${rel}`;
+  if (!sym.children && sym.size === 2) return `${p}DBW${rel}`;
+  if (!sym.children && sym.size === 4) return `${p}DBD${rel}`;
+  return `${p}DBB${rel} (${sym.size} o)`;
+}
+
 function dbEditor(device: Device, block: Block): EditorView {
   const instanceRows = (): Member[] => {
     const fb = device.blocks.find((b) => b.type === 'FB' && b.name === block.instanceOf);
@@ -328,8 +344,10 @@ function dbEditor(device: Device, block: Block): EditorView {
       { title: t.name, width: '26%', kind: isInstance ? 'readonly' : 'text', primary: !isInstance, get: (r) => r.name, set: (r, v) => { r.name = v.trim(); } },
       { title: t.dataType, width: '18%', kind: isInstance ? 'readonly' : 'text', get: (r) => r.dataType, set: (r, v) => { r.dataType = v.trim(); }, suggestions: () => typeSuggestions(device) },
       { title: t.startValue, width: '14%', kind: isInstance ? 'readonly' : 'text', mono: true, get: (r) => r.defaultValue ?? '', set: (r, v) => { r.defaultValue = v.trim() || undefined; } },
+      { title: 'Décalage', width: '11%', kind: 'readonly', mono: true, get: (r) => absoluteAddress(device, block, r.name) },
       { title: t.monitorValue, width: '14%', kind: 'monitor', get: () => '' },
       { title: t.comment, kind: isInstance ? 'readonly' : 'text', get: (r) => r.comment ?? '', set: (r, v) => { r.comment = v || undefined; } },
+      ...(isInstance ? [] : hmiColumns<Member>()),
     ],
     sections: () => [{ title: isInstance ? `${t.instanceDbOf} ${block.instanceOf}` : 'Static', icon: 'folder', rows: rows(), create: isInstance ? undefined : (name: string) => ({ name, dataType: 'Int' }), canAdd: !isInstance }],
     onChange: () => store.touch(),

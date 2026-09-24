@@ -1,5 +1,7 @@
 // Device configuration ("Configuration des appareils") and online & diagnostics.
-import { DEVICE_TYPES, type Device, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
+import { DEVICE_TYPES, ioLinkTags, parseIodd, type Device, type IoLinkPort, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
+import { host } from '../host.ts';
+import { alertDialog } from '../ui/dialogs.ts';
 import * as A from '../actions.ts';
 import { clear, h, svg } from '../dom.ts';
 import { icons } from '../icons.ts';
@@ -16,11 +18,12 @@ const MODULE_LABELS: Record<ModuleKind, string> = {
   'gpio-do': 'Sortie TOR (GPIO)',
   'gpio-ai': 'Entrée analogique (GPIO)',
   'gpio-ao': 'Sortie analogique (GPIO)',
+  'iolink-master': 'Maître IO-Link (Modbus TCP)',
 };
 
 function supportedModules(device: Device): ModuleKind[] {
   switch (device.type) {
-    case 'linux': return ['modbus-tcp', 'gpio-di', 'gpio-do'];
+    case 'linux': return ['modbus-tcp', 'iolink-master', 'gpio-di', 'gpio-do'];
     case 'esp32': return ['gpio-di', 'gpio-do', 'gpio-ai', 'gpio-ao'];
     default: return ['gpio-di', 'gpio-do', 'gpio-ai', 'gpio-ao'];
   }
@@ -33,8 +36,9 @@ function nextByte(device: Device, area: 'I' | 'Q'): number {
     const ranges: Array<[string, number, number]> = m.kind === 'modbus-tcp'
       ? [['I', m.di?.byte ?? 0, Math.ceil((m.di?.count ?? 0) / 8)], ['Q', m.coils?.byte ?? 0, Math.ceil((m.coils?.count ?? 0) / 8)],
         ['I', m.ir?.byte ?? 0, (m.ir?.count ?? 0) * 2], ['Q', m.hr?.byte ?? 0, (m.hr?.count ?? 0) * 2]]
-      : m.kind === 'gpio-di' ? [['I', m.byte, 1]] : m.kind === 'gpio-do' ? [['Q', m.byte, 1]]
-        : m.kind === 'gpio-ai' ? [['I', m.byte, 2]] : [['Q', m.byte, 2]];
+      : m.kind === 'iolink-master' ? m.ports.flatMap((p): Array<[string, number, number]> => [['I', p.inByte, p.inLength], ['Q', p.outByte, p.outLength]])
+        : m.kind === 'gpio-di' ? [['I', m.byte, 1]] : m.kind === 'gpio-do' ? [['Q', m.byte, 1]]
+          : m.kind === 'gpio-ai' ? [['I', m.byte, 2]] : [['Q', m.byte, 2]];
     for (const [a, byte, len] of ranges) if (a === area && len > 0) next = Math.max(next, byte + len);
   }
   return next;
@@ -55,6 +59,14 @@ function newModule(device: Device, kind: ModuleKind): IoModuleConfig {
     }
     case 'gpio-ai':
       return { kind, name: `AI_${n}`, pin: 0, byte: 200 + 2 * device.io.filter((m) => m.kind === 'gpio-ai').length };
+    case 'iolink-master': {
+      const inBase = nextByte(device, 'I');
+      const outBase = nextByte(device, 'Q');
+      return {
+        kind, name: `IOL_${n}`, host: '192.168.0.30', port: 502, unit: 1, inFunction: 3,
+        ports: [1, 2, 3, 4].map((p, i) => ({ port: p, inRegister: 0, inByte: inBase + i * 4, inLength: 4, outRegister: 0, outByte: outBase + i * 2, outLength: 0 })),
+      };
+    }
     default:
       return { kind: 'gpio-ao', name: `AQ_${n}`, pin: 0, byte: 200 + 2 * device.io.filter((m) => m.kind === 'gpio-ao').length };
   }
@@ -66,6 +78,9 @@ function addresses(m: IoModuleConfig): string[] {
     case 'modbus-tcp':
       return [range('I', m.di?.byte ?? 0, Math.ceil((m.di?.count ?? 0) / 8)), range('Q', m.coils?.byte ?? 0, Math.ceil((m.coils?.count ?? 0) / 8)),
         range('IW', m.ir?.byte ?? 0, (m.ir?.count ?? 0) * 2), range('QW', m.hr?.byte ?? 0, (m.hr?.count ?? 0) * 2)].filter((x): x is string => !!x);
+    case 'iolink-master':
+      return m.ports.flatMap((p) => [p.inLength ? `P${p.port} ${range('I', p.inByte, p.inLength)}` : null, p.outLength ? `P${p.port} ${range('Q', p.outByte, p.outLength)}` : null])
+        .filter((x): x is string => !!x);
     case 'gpio-di': return [`%I${m.byte}.${m.bit}`];
     case 'gpio-do': return [`%Q${m.byte}.${m.bit}`];
     case 'gpio-ai': return [`%IW${m.byte}`];
@@ -121,7 +136,7 @@ export function deviceEditor(device: Device): EditorView {
       },
       h('div', { className: 'm-head' }, m.name),
       h('div', { className: 'm-leds' }, led(ok === true, 'on-green'), led(ok === false, 'on-red')),
-      h('div', { className: 'm-body' }, MODULE_LABELS[m.kind], m.kind === 'modbus-tcp' ? h('div', null, `${m.host}:${m.port ?? 502}`) : h('div', null, `GPIO ${m.pin}`),
+      h('div', { className: 'm-body' }, MODULE_LABELS[m.kind], m.kind === 'modbus-tcp' || m.kind === 'iolink-master' ? h('div', null, `${m.host}:${m.port ?? 502}`) : h('div', null, `GPIO ${m.pin}`),
         ...addresses(m).map((a) => h('div', { className: 'mono' }, a))),
       h('div', { className: 'm-foot' }, `Emplacement ${i + 2}`)));
     });
@@ -153,6 +168,7 @@ export function deviceEditor(device: Device): EditorView {
         field(t.port, numInput(device.connection.port, (v) => { device.connection.port = v; store.touch(); }, 1, 65535), 'Protocole VirtualPLC (par défaut 20105)'),
         h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Cycle'),
         field('Temps de cycle (ms)', numInput(device.cpu.cycleMs, (v) => { device.cpu.cycleMs = v; store.touch(); }, 1, 60000), 'Période d\'exécution de l\'OB de cycle de programme'),
+        ...servicesProps(device, touch),
         h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Protection & sécurité'),
         h('p', { className: 'muted', style: 'margin:4px 0' }, 'Le mot de passe d\'accès est défini sur la CPU (option --password-file du service vplc-cpu). Il est demandé lors de la liaison en ligne.'),
       );
@@ -181,6 +197,8 @@ export function deviceEditor(device: Device): EditorView {
         range('Registres d\'entrée (FC4)', 'ir', 'IW', 'mots'),
         range('Registres de maintien (FC16)', 'hr', 'QW', 'mots'),
       );
+    } else if (m.kind === 'iolink-master') {
+      props.append(...ioLinkProps(device, m, touch, () => renderProps()));
     } else {
       props.append(field('Broche GPIO', numInput(m.pin, (v) => { m.pin = v; touch(); }, 0, 255), device.type === 'linux' ? 'Numéro de ligne GPIO (BCM sur Raspberry Pi)' : 'Numéro de broche de la carte'));
       if (m.kind === 'gpio-di' || m.kind === 'gpio-do') {
@@ -215,6 +233,115 @@ export function deviceEditor(device: Device): EditorView {
     refresh: () => { renderRack(); renderProps(); },
     destroy: unsubscribe,
   };
+}
+
+type IoLinkMaster = Extract<IoModuleConfig, { kind: 'iolink-master' }>;
+
+/** IO-Link master (Modbus TCP): connection, then one line per port with its process data mapping. */
+function ioLinkProps(device: Device, m: IoLinkMaster, touch: () => void, rerender: () => void): HTMLElement[] {
+  const num = (value: number, set: (v: number) => void, min = 0, max = 65535) => {
+    const i = numInput(value, (v) => { set(v); touch(); }, min, max);
+    i.style.width = '72px';
+    return i;
+  };
+  const table = h('table', { className: 'grid', style: 'margin-top:6px' },
+    h('tr', null, h('th', null, 'Port'), h('th', null, 'Appareil'), h('th', null, 'Registre PD in'), h('th', null, 'Octets in'), h('th', null, '→ %I'),
+      h('th', null, 'Registre PD out'), h('th', null, 'Octets out'), h('th', null, '→ %Q'), h('th')));
+  m.ports.forEach((p: IoLinkPort, i: number) => {
+    const deviceName = h('input', { value: p.device ?? '', placeholder: '(libre)', style: 'width:150px' });
+    deviceName.onchange = () => { p.device = deviceName.value.trim() || undefined; touch(); };
+    table.append(h('tr', null,
+      h('td', null, num(p.port, (v) => { p.port = v; }, 1, 16)),
+      h('td', null, deviceName),
+      h('td', null, num(p.inRegister, (v) => { p.inRegister = v; })),
+      h('td', null, num(p.inLength, (v) => { p.inLength = v; }, 0, 32)),
+      h('td', null, num(p.inByte, (v) => { p.inByte = v; })),
+      h('td', null, num(p.outRegister, (v) => { p.outRegister = v; })),
+      h('td', null, num(p.outLength, (v) => { p.outLength = v; }, 0, 32)),
+      h('td', null, num(p.outByte, (v) => { p.outByte = v; })),
+      h('td', { style: 'white-space:nowrap' },
+        h('button', { className: 'button', title: 'Importer la description IODD du capteur : longueurs et variables API', onclick: () => void importIodd(device, m, p, touch, rerender) }, 'IODD...'),
+        h('button', { className: 'button', style: 'margin-left:4px', title: 'Retirer le port', onclick: () => { m.ports.splice(i, 1); touch(); rerender(); } }, '×'))));
+  });
+  const fn = h('select', null, h('option', { value: '3' }, 'Registres de maintien (FC3)'), h('option', { value: '4' }, 'Registres d\'entrée (FC4)'));
+  fn.value = String(m.inFunction ?? 3);
+  fn.onchange = () => { m.inFunction = Number(fn.value) as 3 | 4; touch(); };
+  return [
+    field(t.ipAddress, textInput(m.host, (v) => { m.host = v; touch(); })),
+    field(t.port, numInput(m.port ?? 502, (v) => { m.port = v; touch(); }, 1, 65535)),
+    field('ID esclave (unit)', numInput(m.unit ?? 1, (v) => { m.unit = v; touch(); }, 0, 255)),
+    field('Période de scrutation (ms)', numInput(m.pollMs ?? 0, (v) => { m.pollMs = v; touch(); }, 0, 60000), '0 = à chaque cycle'),
+    field('Lecture des données process', fn, 'Selon le maître IO-Link (voir sa documentation Modbus)'),
+    h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Ports IO-Link'),
+    h('p', { className: 'muted', style: 'margin:4px 0;line-height:1.45' },
+      'Pour chaque port : registre Modbus des données process du maître (voir sa documentation), longueur en octets et adresse dans la mémoire image. '
+      + 'Le bouton IODD lit la description du capteur (fichier XML du fabricant) : longueurs, et variables API créées aux bonnes adresses.'),
+    table,
+    h('button', { className: 'button', style: 'margin-top:6px', onclick: () => {
+      const last = m.ports[m.ports.length - 1];
+      m.ports.push({ port: (last?.port ?? 0) + 1, inRegister: 0, inByte: last ? last.inByte + Math.max(last.inLength, 1) : 0, inLength: 2, outRegister: 0, outByte: last ? last.outByte + last.outLength : 0, outLength: 0 });
+      touch();
+      rerender();
+    } }, '+ Port'),
+  ];
+}
+
+async function importIodd(device: Device, m: IoLinkMaster, p: IoLinkPort, touch: () => void, rerender: () => void): Promise<void> {
+  const [file] = await host.openFiles('iodd');
+  if (!file) return;
+  try {
+    const d = parseIodd(new TextDecoder().decode(file.bytes));
+    p.device = `${d.vendor ? `${d.vendor} ` : ''}${d.device}`.trim();
+    p.inLength = d.inLength;
+    p.outLength = d.outLength;
+    const { tags, skipped } = ioLinkTags(d, `${m.name}_P${p.port}`, p.inByte, p.outByte);
+    let table = device.tagTables.find((x) => x.name === `IO-Link ${m.name}`);
+    if (!table) {
+      table = { id: `tt-${Date.now().toString(36)}`, name: `IO-Link ${m.name}`, tags: [], constants: [] };
+      device.tagTables.push(table);
+    }
+    for (const tag of tags) {
+      const i = table.tags.findIndex((x) => x.name === tag.name);
+      if (i >= 0) table.tags[i] = tag;
+      else table.tags.push(tag);
+    }
+    touch();
+    rerender();
+    store.addMessage({ severity: skipped.length ? 'warning' : 'ok', path: `${device.name} > ${m.name} > port ${p.port}`,
+      text: `IODD « ${file.name} » : ${d.device}, ${d.inLength} octet(s) en entrée, ${d.outLength} en sortie ; ${tags.length} variable(s) dans « ${table.name} »`
+        + (skipped.length ? ` (non mappées : ${skipped.join(', ')})` : '') });
+  } catch (e) {
+    await alertDialog('IODD', (e as Error).message, 'error');
+  }
+}
+
+/** CPU properties: OPC UA server and S7 communication (HMI / SCADA access). */
+function servicesProps(device: Device, touch: () => void): HTMLElement[] {
+  if (device.type !== 'linux') {
+    return [h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Accès IHM'),
+      h('p', { className: 'muted', style: 'margin:4px 0' }, 'Sur cette CPU, les IHM accèdent aux données par Modbus TCP. OPC UA et la communication S7 sont disponibles sur la CPU Linux / Raspberry Pi.')];
+  }
+  const sv = (device.services ??= {});
+  const check = (label: string, value: boolean, set: (v: boolean) => void, hint?: string) => {
+    const cb = h('input', { type: 'checkbox', checked: value, style: 'width:auto' });
+    cb.onchange = () => { set(cb.checked); touch(); };
+    return field(label, cb, hint);
+  };
+  const ua = (sv.opcua ??= { enabled: false, port: 4840, write: true, anonymous: true });
+  const s7 = (sv.s7 ??= { enabled: false, port: 102, write: true });
+  return [
+    h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Serveur OPC UA'),
+    check('Activer le serveur OPC UA', ua.enabled, (v) => { ua.enabled = v; }, 'Les variables « Accessibles depuis IHM/OPC UA » sont publiées (arborescence : tables de variables, DB).'),
+    field('Port', numInput(ua.port ?? 4840, (v) => { ua.port = v; touch(); }, 1, 65535), `Adresse du serveur : opc.tcp://${device.connection.host}:${ua.port ?? 4840}`),
+    check('Autoriser l\'écriture', ua.write !== false, (v) => { ua.write = v; }, 'Seules les variables « Inscriptibles depuis IHM/OPC UA » peuvent être écrites.'),
+    check('Accès anonyme', ua.anonymous !== false, (v) => { ua.anonymous = v; },
+      'Sinon : utilisateur / mot de passe définis sur la CPU (--hmi-user, --hmi-password-file). Politique de sécurité « None » : réseau de confiance ou VPN.'),
+    h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Communication S7 (PUT/GET)'),
+    check('Autoriser l\'accès via PUT/GET par un partenaire distant', s7.enabled, (v) => { s7.enabled = v; },
+      'Pour les IHM / SCADA configurées avec une liaison S7 (ISO-on-TCP) : accès absolu à %I, %Q, %M et aux DB numérotés (ex. DB1.DBW2).'),
+    field('Port', numInput(s7.port ?? 102, (v) => { s7.port = v; touch(); }, 1, 65535), 'Standard : 102 (le service a besoin de CAP_NET_BIND_SERVICE). Rack 0, emplacement 1 ou 2.'),
+    check('Autoriser l\'écriture', s7.write !== false, (v) => { s7.write = v; }, 'Les variables en lecture seule pour les IHM restent protégées.'),
+  ];
 }
 
 // ---------------------------------------------------------------------------

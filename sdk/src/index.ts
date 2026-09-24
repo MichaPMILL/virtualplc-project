@@ -18,5 +18,7 @@ export { DeviceClient, DeviceError } from './device.ts';
 export type { DeviceInfo, DeviceState, LogEntry } from './device.ts';
 export * from './project.ts';
 export * from './projectFiles.ts';
+export { ioLinkTags, parseIodd, parseXml } from './iodd.ts';
+export type { IoddDescription, ProcessDataItem } from './iodd.ts';
 export { importTagTableXlsx, readXlsx, unzip } from './xlsx.ts';
 export type { ImportedTagTable, Sheet } from './xlsx.ts';

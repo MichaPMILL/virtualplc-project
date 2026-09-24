@@ -78,6 +78,25 @@ workstation (menu *Projet*, toolbar, task card *Versions*):
 
 Authentication uses the workstation's Git credentials (Git Credential Manager, SSH keys).
 
+### HMI / SCADA access
+
+| Protocol | Configured in | Access |
+|----------|---------------|--------|
+| **OPC UA** (open62541) | CPU properties › *Serveur OPC UA* (port 4840) | variables marked *Accès IHM* (tag tables, DBs, structures as folders), read/write per *Écriture IHM*, subscriptions; anonymous or user/password (`--hmi-user`, `--hmi-password-file`); security policy None |
+| **S7 communication** (ISO-on-TCP, PUT/GET) | CPU properties › *Communication S7* (port 102) | absolute `%I`, `%Q`, `%M`, `DBn.DBX/DBB/DBW/DBD` (offsets shown in the DB editor, column *Décalage*); for panels configured with an S7-300/400 connection, rack 0 / slot 2 |
+| **Modbus TCP** | `--modbus-port` (5020) | coils = `%M` bits, discrete inputs = `%I`, input registers = `%IW`, holding registers = `%MW` |
+
+Ports below 1024 need `CAP_NET_BIND_SERVICE` (see `deploy/vplc-cpu.service`). OPC UA is
+built with open62541 (MPL-2.0), downloaded and checked at CMake time
+(`-DVPLC_OPEN62541_DIR=` for offline builds, `-DVPLC_OPCUA=OFF` to leave it out).
+
+### IO-Link
+
+An *IO-Link master (Modbus TCP)* module maps the process data of each port to `%I` / `%Q`
+(register and length per port, from the master's Modbus documentation). Importing the
+sensor's **IODD** on a port sets the lengths and creates the PLC tags at the right
+addresses.
+
 ### Importing from other engineering tools
 
 *Projet > Importer des fichiers* (or drag and drop on the window) reads the files that

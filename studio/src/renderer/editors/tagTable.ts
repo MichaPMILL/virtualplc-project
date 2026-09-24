@@ -5,7 +5,7 @@ import { clear, h, svg } from '../dom.ts';
 import { icons } from '../icons.ts';
 import { t } from '../i18n.ts';
 import * as A from '../actions.ts';
-import { DATA_TYPES, Grid, valueClass } from './grid.ts';
+import { DATA_TYPES, Grid, valueClass, type Column } from './grid.ts';
 import type { EditorView } from './types.ts';
 
 const ADDRESS_HELP = 'Adresse absolue : %I0.0 (entrée), %Q0.0 (sortie), %M0.0 (mémento), %IW2, %QW4, %MW10, %MD20';
@@ -26,6 +26,16 @@ export function suggestAddress(tags: Tag[], dataType: string): string {
   const bytes = Math.ceil(used / 8);
   const align = size === 'B' ? 1 : 2;
   return `%${area}${size}${Math.ceil(bytes / align) * align}`;
+}
+
+/** "Accessible / writable from HMI/OPC UA" check boxes (tags, DB members). */
+export function hmiColumns<T extends { hmiVisible?: boolean; hmiWritable?: boolean }>(): Column<T>[] {
+  return [
+    { title: 'Accès IHM', width: '70px', kind: 'check', get: (r) => String(r.hmiVisible !== false),
+      set: (r, v) => { if (v === 'true') delete r.hmiVisible; else r.hmiVisible = false; } },
+    { title: 'Écriture IHM', width: '80px', kind: 'check', get: (r) => String(r.hmiVisible !== false && r.hmiWritable !== false),
+      set: (r, v) => { if (v === 'true') { delete r.hmiWritable; delete r.hmiVisible; } else r.hmiWritable = false; } },
+  ];
 }
 
 export function validateAddress(value: string, dataType: string): string | null {
@@ -60,6 +70,7 @@ export function tagTableEditor(device: Device, table: TagTable | null): EditorVi
       { title: t.dataType, width: '13%', kind: 'text', get: (r) => r.dataType, set: (r, v) => { r.dataType = v.trim(); }, suggestions: () => DATA_TYPES.filter((x) => !x.startsWith('Array')) },
       { title: t.address, width: '11%', kind: 'text', mono: true, get: (r) => r.address, set: (r, v) => { r.address = v.trim().toUpperCase(); }, validate: (v, r) => validateAddress(v, r.dataType) },
       { title: t.comment, kind: 'text', get: (r) => r.comment ?? '', set: (r, v) => { r.comment = v; } },
+      ...hmiColumns<Tag>(),
       { title: t.monitorValue, width: '15%', kind: 'monitor', get: () => '' },
     ],
     sections: () => table

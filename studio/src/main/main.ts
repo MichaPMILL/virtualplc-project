@@ -12,6 +12,7 @@ const FILTERS = {
   project: [{ name: 'Projet VirtualPLC', extensions: ['vplcproj'] }, { name: 'Projet VirtualPLC 1.x (JSON)', extensions: ['json'] }],
   scl: [{ name: 'Fichiers exportés (sources SCL, DB, types, tables de variables)', extensions: ['scl', 'db', 'udt', 'xlsx', 'txt'] }],
   zip: [{ name: 'Archive ZIP', extensions: ['zip'] }],
+  iodd: [{ name: 'Description IO-Link (IODD)', extensions: ['xml'] }],
 };
 
 function createWindow(): void {
@@ -76,9 +77,9 @@ ipcMain.handle('api', async (_e, method: ApiMethod, args: unknown[]) => {
   return fn(...args);
 });
 
-ipcMain.handle('files.openMany', async () => {
+ipcMain.handle('files.openMany', async (_e, kind?: 'iodd') => {
   if (!win) return [];
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: FILTERS.scl });
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: kind === 'iodd' ? FILTERS.iodd : FILTERS.scl });
   if (r.canceled) return [];
   return Promise.all(r.filePaths.map(async (path) => ({ path, name: basename(path), bytes: new Uint8Array(await readFile(path)) })));
 });

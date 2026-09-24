@@ -85,6 +85,9 @@ u32 crc32         CRC-32 (IEEE) of every preceding byte
 | `ENTRIES` | u16 startup function (0xFFFF = none), u16 main function                                   |
 | `LINES`   | u32 count, then (u32 pc, u16 function, u16 line) sorted by pc — for error reporting       |
 | `IOCONF`  | u16 count, then I/O modules (see below)                                                   |
+| `SYMS`    | u32 count, then variables visible to HMIs: u8 area, u32 offset, u8 bit (0xFF = none), u8 type (VM type, 0x20 STRING, 0x21 TIME), u16 size, u8 flags (bit0 writable), u8 segment count, segments (u8+bytes) — optional |
+| `DBS`     | u16 count, then numbered data blocks: u16 number, u32 offset in `D`, u32 size, u8+bytes name — optional |
+| `SERVICES`| u16 OPC UA port, u8 flags (bit0 enabled, bit1 write, bit2 anonymous), u16 S7 port, u8 flags (bit0 enabled, bit1 write) — optional |
 
 The **program id** is the CRC-32 of the image; the device reports it so that the
 Studio can tell whether the program in the CPU matches the project.
@@ -100,6 +103,7 @@ Each module starts with `u8 kind`:
 | `GPIO_DO`    | u8 pin, u16 byte, u8 bit, u8 flags (bit0 invert)                                                         |
 | `GPIO_AI`    | u8 pin, u16 byte (word `%IW`)                                                                            |
 | `GPIO_AO`    | u8 pin, u16 byte (word `%QW`)                                                                            |
+| `IOLINK_MASTER` | u8+bytes host, u16 port, u8 unit, u16 poll period, u8 read function (3/4), u8 port count, then per port: u8 port, u16 PD in register, u16 `%I` byte, u8 PD in length, u16 PD out register, u16 `%Q` byte, u8 PD out length |
 
 A platform ignores (and reports) module kinds it does not support.
 

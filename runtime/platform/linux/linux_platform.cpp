@@ -143,6 +143,11 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
                          IoModule(info.kind) == IoModule::IO_GPIO_DO ? "output" : "input",
                          m.ok ? "" : " (not available on this system)");
                 break;
+            case IoModule::IO_IOLINK_MASTER:
+                m.modbus = std::make_unique<ModbusClient>(info.host, info.port, info.unit, 300);
+                snprintf(msg, sizeof msg, "I/O module %u: IO-Link master %s:%u (%u ports)", unsigned(modules_.size()), info.host,
+                         unsigned(info.port), unsigned(info.portCount));
+                break;
             default:
                 m.supported = false;
                 snprintf(msg, sizeof msg, "I/O module %u: analog GPIO is not supported on Linux", unsigned(modules_.size()));
@@ -171,11 +176,22 @@ void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
             bool ok = true;
             std::vector<bool> bits;
             std::vector<uint16_t> regs;
-            if (i.diCount) {
+            const bool iolink = IoModule(i.kind) == IoModule::IO_IOLINK_MASTER;
+            // IO-Link master: process data in of each port (registers, most significant byte first)
+            for (uint8_t p = 0; iolink && ok && p < i.portCount; p++) {
+                const IoModuleInfo::IoLinkPort& port = i.ports[p];
+                if (!port.inLength) continue;
+                ok = m.modbus->readRegisters(i.inFunction == 4 ? 4 : 3, port.inRegister, uint16_t((port.inLength + 1) / 2), regs);
+                for (uint8_t k = 0; ok && k < port.inLength; k++) {
+                    uint32_t at = port.inByte + k;
+                    if (at < size) image[at] = uint8_t(k % 2 ? regs[k / 2] : regs[k / 2] >> 8);
+                }
+            }
+            if (!iolink && i.diCount) {
                 ok = m.modbus->readBits(2, 0, i.diCount, bits);
                 if (ok) for (uint16_t k = 0; k < i.diCount; k++) setBit(image, size, i.diByte + k / 8u, k % 8u, bits[k]);
             }
-            if (ok && i.irCount) {
+            if (!iolink && ok && i.irCount) {
                 ok = m.modbus->readRegisters(4, 0, i.irCount, regs);
                 if (ok) {
                     for (uint16_t k = 0; k < i.irCount; k++) {
@@ -188,6 +204,8 @@ void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
                 // Substitute value 0 for the inputs of a failed module (as a real PLC does)
                 for (uint16_t k = 0; k < i.diCount; k++) setBit(image, size, i.diByte + k / 8u, k % 8u, false);
                 for (uint16_t k = 0; k < i.irCount * 2u; k++) if (i.irByte + k < size) image[i.irByte + k] = 0;
+                for (uint8_t p = 0; iolink && p < i.portCount; p++)
+                    for (uint8_t k = 0; k < i.ports[p].inLength; k++) if (i.ports[p].inByte + k < size) image[i.ports[p].inByte + k] = 0;
                 failed(m, m.modbus->error());
             } else if (!m.ok) {
                 m.ok = true;
@@ -211,7 +229,32 @@ void LinuxPlatform::writeOutputs(const uint8_t* image, uint32_t size) {
     uint32_t now = millis();
     for (Module& m : modules_) {
         const IoModuleInfo& i = m.info;
-        if (m.modbus) {
+        if (m.modbus && IoModule(i.kind) == IoModule::IO_IOLINK_MASTER) {
+            if (!m.ok) continue;
+            // process data out of each port, written on change (and every 5 s)
+            std::vector<uint16_t> all;
+            for (uint8_t p = 0; p < i.portCount; p++) {
+                const IoModuleInfo::IoLinkPort& port = i.ports[p];
+                for (uint8_t k = 0; k < port.outLength; k += 2) {
+                    uint8_t hi = port.outByte + k < size ? image[port.outByte + k] : 0;
+                    uint8_t lo = k + 1 < port.outLength && port.outByte + k + 1u < size ? image[port.outByte + k + 1] : 0;
+                    all.push_back(uint16_t(hi << 8 | lo));
+                }
+            }
+            if (all.empty() || (all == m.lastRegs && now - m.lastWrite <= 5000)) continue;
+            size_t at = 0;
+            bool ok = true;
+            for (uint8_t p = 0; ok && p < i.portCount; p++) {
+                const IoModuleInfo::IoLinkPort& port = i.ports[p];
+                size_t n = (port.outLength + 1u) / 2u;
+                if (!n) continue;
+                ok = m.modbus->writeRegisters(port.outRegister, std::vector<uint16_t>(all.begin() + long(at), all.begin() + long(at + n)));
+                at += n;
+            }
+            if (!ok) { failed(m, m.modbus->error()); continue; }
+            m.lastRegs = all;
+            m.lastWrite = now;
+        } else if (m.modbus) {
             if (!m.ok) continue;  // reconnection happens in readInputs
             if (i.coilCount) {
                 std::vector<uint8_t> raw(image + (i.coilByte < size ? i.coilByte : size),
