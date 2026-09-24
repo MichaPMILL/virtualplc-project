@@ -112,7 +112,7 @@ Each module starts with `u8 kind`:
 | `GPIO_AO`    | u8 pin, u16 byte (word `%QW`)                                                                            |
 | `IOLINK_MASTER` | u8+bytes host, u16 port, u8 unit, u16 poll period, u8 read function (3/4), u8 port count, then per port: u8 port, u16 PD in register, u16 `%I` byte, u8 PD in length, u16 PD out register, u16 `%Q` byte, u8 PD out length |
 | `PROFINET_DEVICE` | u8+bytes interface, u8+bytes name of station, u16 vendor ID, u16 device ID, u16 `%I` byte, u16 `%I` length, u16 `%Q` byte, u16 `%Q` length (areas exchanged with the external IO-Controller) |
-| `PROFINET_REMOTE` | u8+bytes interface, u8+bytes name of station, u8+bytes IP address, u16 vendor ID, u16 device ID, u16 update time (ms), u16 watchdog factor, u8 submodule count, then per submodule: u16 slot, u16 subslot, u32 module ident, u32 submodule ident, u16 input length, u16 `%I` byte, u16 output length, u16 `%Q` byte |
+| `PROFINET_REMOTE` | u8+bytes interface, u8+bytes name of station, u8+bytes IP address, u16 vendor ID, u16 device ID, u16 update time (ms), u16 watchdog factor, u8 submodule count, then per submodule: u16 slot, u16 subslot, u32 module ident, u32 submodule ident, u16 input length, u16 `%I` byte, u16 output length, u16 `%Q` byte, u8 record count, then per parameter record: u16 index, u16 length, data |
 
 A platform ignores (and reports) module kinds it does not support.
 

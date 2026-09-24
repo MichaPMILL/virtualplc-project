@@ -209,15 +209,31 @@ bool IoModuleReader::next(IoModuleInfo& m) {
             m.cycleMs = rd16le(p_ + 4); m.watchdog = rd16le(p_ + 6);
             uint8_t count = p_[8];
             p_ += 9;
-            if (!need(size_t(count) * 20)) return false;
             m.subCount = count < 64 ? count : 64;
-            for (uint8_t i = 0; i < count; i++, p_ += 20) {
-                if (i >= 64) continue;
-                IoModuleInfo::PnSub& x = m.subs[i];
+            for (uint8_t i = 0; i < count; i++) {
+                if (!need(21)) return false;
+                IoModuleInfo::PnSub tmp;
+                IoModuleInfo::PnSub& x = i < 64 ? m.subs[i] : tmp;
                 x.slot = rd16le(p_); x.subslot = rd16le(p_ + 2);
                 x.moduleIdent = rd32le(p_ + 4); x.submoduleIdent = rd32le(p_ + 8);
                 x.inLength = rd16le(p_ + 12); x.inByte = rd16le(p_ + 14);
                 x.outLength = rd16le(p_ + 16); x.outByte = rd16le(p_ + 18);
+                uint8_t records = p_[20];
+                p_ += 21;
+                x.recordOffset = m.recordUsed;
+                for (uint8_t r = 0; r < records; r++) {
+                    if (!need(4)) return false;
+                    uint16_t len = rd16le(p_ + 2);
+                    if (!need(4u + len)) return false;
+                    if (size_t(m.recordUsed) + 4 + len <= sizeof(m.recordPool)) {
+                        uint8_t* d = m.recordPool + m.recordUsed;
+                        d[0] = p_[0]; d[1] = p_[1]; d[2] = p_[2]; d[3] = p_[3];  // index, length (little endian)
+                        memcpy(d + 4, p_ + 4, len);
+                        m.recordUsed = uint16_t(m.recordUsed + 4 + len);
+                        x.recordCount++;
+                    }
+                    p_ += 4 + len;
+                }
             }
             break;
         }

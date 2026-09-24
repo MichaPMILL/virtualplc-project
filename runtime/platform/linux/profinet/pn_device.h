@@ -91,7 +91,7 @@ private:
     uint32_t connect(const std::vector<Block>& blocks, const sockaddr_in& from, Writer& w);
     uint32_t control(const std::vector<Block>& blocks, Writer& w);
     uint32_t release(const std::vector<Block>& blocks, Writer& w);
-    uint32_t write(const std::vector<Block>& blocks, Writer& w);
+    uint32_t write(const std::vector<Block>& blocks, const uint8_t* end, Writer& w);
     uint32_t read(const std::vector<Block>& blocks, Writer& w);
     void sendAppReady();
     void sendCyclic();
@@ -136,6 +136,7 @@ private:
     uint64_t lastWrite_ = 0;  // outputs older than 500 ms: the CPU is not running
     bool controllerRun_ = false;
     std::vector<uint8_t> frame_;
+    uint32_t records_ = 0;  // parameter records received (diagnostics)
 };
 
 }  // namespace pn

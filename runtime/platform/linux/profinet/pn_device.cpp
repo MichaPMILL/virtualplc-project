@@ -505,7 +505,9 @@ void Device::rpcRequest(const RpcHeader& h, const uint8_t* body, size_t n, const
     const uint8_t* blocksData;
     size_t length;
     std::vector<Block> blocks;
-    if (!parseNdr(body, n, h.le, false, ndr, blocksData, length) || !parseBlocks(blocksData, length, blocks)) return;
+    if (!parseNdr(body, n, h.le, false, ndr, blocksData, length)) return;
+    // a write request carries record data after its header: only the header is a block
+    if (!parseBlocks(blocksData, h.opnum == OP_WRITE ? std::min<size_t>(length, 64) : length, blocks)) return;
 
     std::vector<uint8_t> packet;
     Writer w(packet);
@@ -526,7 +528,7 @@ void Device::rpcRequest(const RpcHeader& h, const uint8_t* body, size_t n, const
             case OP_RELEASE: status = release(blocks, w); break;
             case OP_READ:
             case OP_READ_IMPLICIT: status = read(blocks, w); break;
-            case OP_WRITE: status = write(blocks, w); break;
+            case OP_WRITE: status = write(blocks, blocksData + length, w); break;
             case OP_CONTROL: status = control(blocks, w); break;
             default: status = ERR_RPC_UNSUPPORTED;
         }
@@ -667,6 +669,8 @@ uint32_t Device::control(const std::vector<Block>& blocks, Writer& w) {
         res.type = BT_PRM_END_RES;
         res.command = CMD_DONE;
         writeControl(w, res);
+        log("end of parametrization (" + std::to_string(records_) + " parameter record(s))");
+        records_ = 0;
         state_ = AR_WAIT_APPREADY_RES;
         appReadyTries_ = 0;
         appReadySeq_ = 0;
@@ -716,7 +720,7 @@ uint32_t Device::release(const std::vector<Block>& blocks, Writer& w) {
     return ERR_RELEASE_AR;
 }
 
-uint32_t Device::write(const std::vector<Block>& blocks, Writer& w) {
+uint32_t Device::write(const std::vector<Block>& blocks, const uint8_t* bodyEnd, Writer& w) {
     // IODWriteReqHeader + data, or IODWriteMultiple (index 0xE040) with records aligned on 4 bytes
     if (blocks.empty() || blocks[0].type != BT_IOD_WRITE_REQ) return ERR_WRITE_AR;
     RecordHeader h;
@@ -731,7 +735,7 @@ uint32_t Device::write(const std::vector<Block>& blocks, Writer& w) {
     }
     writeRecordRes(w, h, PNIO_OK);
     const uint8_t* p = blocks[0].data + blocks[0].length;
-    const uint8_t* end = p + h.length;
+    const uint8_t* end = size_t(bodyEnd - p) < h.length ? bodyEnd : p + h.length;
     while (p + 64 <= end) {
         std::vector<Block> one;
         if (!parseBlocks(p, 64, one) || one.empty() || one[0].type != BT_IOD_WRITE_REQ) break;
@@ -740,7 +744,9 @@ uint32_t Device::write(const std::vector<Block>& blocks, Writer& w) {
         writeRecordRes(w, sub, PNIO_OK);
         size_t step = 64 + sub.length;
         step = (step + 3) & ~size_t(3);
+        if (size_t(end - p) < step) break;
         p += step;
+        records_++;
     }
     return PNIO_OK;
 }

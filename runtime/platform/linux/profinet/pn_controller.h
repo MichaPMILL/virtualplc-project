@@ -25,6 +25,11 @@ struct RemoteSubmodule {
     uint32_t moduleIdent = 0, submoduleIdent = 0;
     uint16_t inLength = 0, inByte = 0;    // device → %I
     uint16_t outLength = 0, outByte = 0;  // %Q → device
+    struct Record {
+        uint16_t index;
+        std::vector<uint8_t> data;
+    };
+    std::vector<Record> records;  // written before PrmEnd
 };
 
 struct RemoteDevice {
@@ -59,7 +64,7 @@ public:
     std::string status(size_t index) const;
 
 private:
-    enum State { S_IDENTIFY, S_WAIT_IDENTIFY, S_WAIT_SET_IP, S_WAIT_CONNECT, S_WAIT_PRMEND, S_WAIT_APPREADY, S_RUN, S_PAUSE };
+    enum State { S_IDENTIFY, S_WAIT_IDENTIFY, S_WAIT_SET_IP, S_WAIT_CONNECT, S_WAIT_WRITE, S_WAIT_PRMEND, S_WAIT_APPREADY, S_RUN, S_PAUSE };
     struct Dev {
         RemoteDevice cfg;
         std::atomic<int> state{S_IDENTIFY};
@@ -87,7 +92,7 @@ private:
     void identify(Dev& d);
     void setIp(Dev& d);
     void connect(Dev& d);
-    void prmEnd(Dev& d);
+    void writeRecords(Dev& d);
     void sendRequest(Dev& d, uint16_t opnum);
     void sendCyclic(Dev& d);
     void lost(Dev& d, const std::string& why, bool pause = true);

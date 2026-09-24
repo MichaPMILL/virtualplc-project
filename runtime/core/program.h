@@ -70,7 +70,11 @@ struct IoModuleInfo {
         uint16_t slot = 0, subslot = 0;
         uint32_t moduleIdent = 0, submoduleIdent = 0;
         uint16_t inLength = 0, inByte = 0, outLength = 0, outByte = 0;
+        uint16_t recordOffset = 0;  // in recordPool: per record u16 index, u16 length, data
+        uint8_t recordCount = 0;
     } subs[64];
+    uint8_t recordPool[4096] = {0};
+    uint16_t recordUsed = 0;
 };
 
 class IoModuleReader {

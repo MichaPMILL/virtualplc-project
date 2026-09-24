@@ -27,3 +27,5 @@ export { BOXES, ladderToScl, LadderError, ladElementFor, ladElements, ladId, lad
 export type { BoxSpec, CoilType, ContactType, LadElement, LadNetwork, LadderScl } from './ladder.ts';
 export { fixIecInstances, flgNetToLadder, importSimaticMl, isSimaticMl, SimaticMlError } from './simaticml.ts';
 export type { SimaticMlImport } from './simaticml.ts';
+export { generateGsdml, parseGsdml, pnModuleIdent, pnSubmodules, PN_MODULE_SIZES } from './gsdml.ts';
+export type { GsdDap, GsdDevice, GsdModule, GsdRecord, GsdSubmodule } from './gsdml.ts';

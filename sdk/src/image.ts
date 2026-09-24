@@ -72,6 +72,8 @@ export interface PnSubmodule {
   /** Output data (controller → device): length and %Q byte */
   outLength: number;
   outByte: number;
+  /** Parameter records written before the end of parametrization (GSDML defaults) */
+  records?: Array<{ index: number; data: number[] }>;
 }
 
 /** One port of an IO-Link master: its process data mapped to the process image. */
@@ -232,6 +234,12 @@ function writeModule(w: ByteWriter, m: IoModuleConfig): void {
         .u16(m.cycleMs ?? 8).u16(m.watchdog ?? 3).u8(m.submodules.length);
       for (const x of m.submodules) {
         w.u16(x.slot).u16(x.subslot).u32(x.moduleIdent).u32(x.submoduleIdent).u16(x.inLength).u16(x.inByte).u16(x.outLength).u16(x.outByte);
+        const records = x.records ?? [];
+        w.u8(records.length);
+        for (const r of records) {
+          w.u16(r.index).u16(r.data.length);
+          for (const b of r.data) w.u8(b);
+        }
       }
       break;
   }

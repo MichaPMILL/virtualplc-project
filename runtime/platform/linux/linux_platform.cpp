@@ -235,7 +235,18 @@ void LinuxPlatform::configureProfinet() {
             r.watchdog = i.watchdog;
             for (uint8_t s = 0; s < i.subCount; s++) {
                 const IoModuleInfo::PnSub& x = i.subs[s];
-                r.submodules.push_back({x.slot, x.subslot, x.moduleIdent, x.submoduleIdent, x.inLength, x.inByte, x.outLength, x.outByte});
+                pn::RemoteSubmodule sub{x.slot, x.subslot, x.moduleIdent, x.submoduleIdent, x.inLength, x.inByte, x.outLength, x.outByte, {}};
+                const uint8_t* rec = i.recordPool + x.recordOffset;
+                for (uint8_t k = 0; k < x.recordCount; k++) {
+                    uint16_t index = uint16_t(rec[0] | (rec[1] << 8)), len = uint16_t(rec[2] | (rec[3] << 8));
+                    sub.records.push_back({index, std::vector<uint8_t>(rec + 4, rec + 4 + len)});
+                    for (uint16_t b = 0; b < len; b++) {
+                        snprintf(key, sizeof key, "%02x", rec[4 + b]);
+                        controllerKey += key;
+                    }
+                    rec += 4 + len;
+                }
+                r.submodules.push_back(sub);
                 snprintf(key, sizeof key, "%u.%u:%x/%x:%u@%u:%u@%u;", x.slot, x.subslot, x.moduleIdent, x.submoduleIdent, x.inLength, x.inByte, x.outLength,
                          x.outByte);
                 controllerKey += key;

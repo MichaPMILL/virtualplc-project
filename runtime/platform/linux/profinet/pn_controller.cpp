@@ -115,7 +115,7 @@ void Controller::loop() {
         uint64_t now = nowUs();
         int64_t wait = 20000;
         for (auto& d : devs_)
-            if (d->state == S_RUN || d->state == S_WAIT_APPREADY || d->state == S_WAIT_PRMEND) wait = std::min<int64_t>(wait, int64_t(d->nextSend) - int64_t(now));
+            if (d->state == S_RUN || d->state == S_WAIT_APPREADY || d->state == S_WAIT_PRMEND || d->state == S_WAIT_WRITE) wait = std::min<int64_t>(wait, int64_t(d->nextSend) - int64_t(now));
         if (wait < 0) wait = 0;
         pollfd fds[3] = {{raw_.fd(), POLLIN, 0}, {rpc_.fd(), POLLIN, 0}, {wake_, POLLIN, 0}};
         timespec ts{time_t(wait / 1000000), long(wait % 1000000) * 1000};
@@ -141,12 +141,12 @@ void Controller::loop() {
     }
     // orderly end: release the connections
     for (auto& d : devs_)
-        if (d->state == S_RUN || d->state == S_WAIT_APPREADY || d->state == S_WAIT_PRMEND) sendRequest(*d, OP_RELEASE);
+        if (d->state == S_RUN || d->state == S_WAIT_APPREADY || d->state == S_WAIT_PRMEND || d->state == S_WAIT_WRITE) sendRequest(*d, OP_RELEASE);
 }
 
 void Controller::step(Dev& d, uint64_t now) {
     const int state = d.state;
-    if ((state == S_RUN || state == S_WAIT_APPREADY || state == S_WAIT_PRMEND) && now >= d.nextSend) {
+    if ((state == S_RUN || state == S_WAIT_APPREADY || state == S_WAIT_PRMEND || state == S_WAIT_WRITE) && now >= d.nextSend) {
         sendCyclic(d);
         uint32_t cycle = d.out.cycleUs();
         d.nextSend += cycle;
@@ -172,6 +172,7 @@ void Controller::step(Dev& d, uint64_t now) {
             lost(d, "no answer to DCP set IP");
             break;
         case S_WAIT_CONNECT:
+        case S_WAIT_WRITE:
         case S_WAIT_PRMEND:
             if (++d.tries <= 3) {
                 rpc_.sendTo(d.request, [&] {
@@ -183,7 +184,7 @@ void Controller::step(Dev& d, uint64_t now) {
                 }());
                 d.deadline = now + SECOND;
             } else {
-                lost(d, state == S_WAIT_CONNECT ? "no answer to connect" : "no answer to PrmEnd");
+                lost(d, state == S_WAIT_CONNECT ? "no answer to connect" : state == S_WAIT_WRITE ? "no answer to the parameter write" : "no answer to PrmEnd");
             }
             break;
         case S_WAIT_APPREADY:
@@ -280,7 +281,7 @@ void Controller::onFrame(const uint8_t* p, size_t n) {
     for (auto& dp : devs_) {
         Dev& d = *dp;
         if (d.inFrameId != frameId || d.mac != eth.src) continue;
-        if (d.state != S_RUN && d.state != S_WAIT_APPREADY && d.state != S_WAIT_PRMEND) return;
+        if (d.state != S_RUN && d.state != S_WAIT_APPREADY && d.state != S_WAIT_PRMEND && d.state != S_WAIT_WRITE) return;
         const uint8_t* c = eth.payload + 2;
         if (eth.length < size_t(d.in.dataLength) + 6) return;
         const uint8_t dataStatus = c[d.in.dataLength + 2];
@@ -402,6 +403,60 @@ void Controller::connect(Dev& d) {
     }
 }
 
+void Controller::writeRecords(Dev& d) {
+    d.request.clear();
+    Writer w(d.request);
+    RpcHeader h;
+    h.object = pnObjectUuid(1, d.cfg.deviceId, d.cfg.vendorId);
+    h.interface = UUID_IO_DEVICE_INTERFACE;
+    h.activity = d.activity;
+    h.sequence = ++d.sequence;
+    h.opnum = OP_WRITE;
+    h.flags1 = RPC_FLAG_LASTFRAG | RPC_FLAG_IDEMPOTENT;
+    writeRpc(w, h);
+    size_t ndr = writeNdrRequest(w, 4096, h.le);
+    // IODWriteMultipleReq: a header for index 0xE040, then each record aligned on 4 bytes
+    RecordHeader all;
+    all.type = BT_IOD_WRITE_REQ;
+    all.sequence = 0;
+    all.arUuid = d.ar.uuid;
+    all.slot = 0xFFFF;
+    all.subslot = 0xFFFF;
+    all.index = INDEX_WRITE_MULTIPLE;
+    size_t headerAt = w.size();
+    writeRecordReq(w, all);
+    size_t start = w.size();
+    uint16_t seq = 1;
+    for (const RemoteSubmodule& s : d.cfg.submodules) {
+        for (const RemoteSubmodule::Record& r : s.records) {
+            RecordHeader one;
+            one.type = BT_IOD_WRITE_REQ;
+            one.sequence = seq++;
+            one.arUuid = d.ar.uuid;
+            one.slot = s.slot;
+            one.subslot = s.subslot;
+            one.index = r.index;
+            one.length = uint32_t(r.data.size());
+            size_t at = w.size();
+            writeRecordReq(w, one);
+            w.bytes(r.data.data(), r.data.size());
+            w.padTo(4, at);
+        }
+    }
+    // record data length of the multiple write header (offset: block header 6 + seq 2 + AR 16 + API 4 + slot/subslot 4 + pad 2 + index 2)
+    w.put32(headerAt + 6 + 2 + 16 + 4 + 4 + 2 + 2, uint32_t(w.size() - start));
+    finishNdr(w, ndr, h.le);
+    finishRpc(d.request);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(RPC_PORT);
+    a.sin_addr.s_addr = htonl(d.ip);
+    rpc_.sendTo(d.request, a);
+    d.state = S_WAIT_WRITE;
+    d.tries = 1;
+    d.deadline = nowUs() + SECOND;
+}
+
 void Controller::sendRequest(Dev& d, uint16_t opnum) {
     d.request.clear();
     Writer w(d.request);
@@ -468,6 +523,19 @@ void Controller::onRpcResponse(Dev& d, const RpcHeader& h, const uint8_t* body) 
         d.lastRx = nowUs();
         d.nextSend = nowUs();
         d.cycleCounter = 0;
+        bool records = false;
+        for (const RemoteSubmodule& s : d.cfg.submodules) records = records || !s.records.empty();
+        if (records) {
+            writeRecords(d);
+        } else {
+            d.state = S_WAIT_PRMEND;
+            sendRequest(d, OP_CONTROL);
+        }
+    } else if (d.state == S_WAIT_WRITE) {
+        if (ndr.status != PNIO_OK) {
+            lost(d, std::string("parameters refused by the device (PNIO status ") + status + ")");
+            return;
+        }
         d.state = S_WAIT_PRMEND;
         sendRequest(d, OP_CONTROL);
     } else if (d.state == S_WAIT_PRMEND) {

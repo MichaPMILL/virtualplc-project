@@ -6,7 +6,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compile, DeviceClient, type IoModuleConfig } from '../src/index.ts';
+import { compile, DeviceClient, generateGsdml, parseGsdml, pnModuleIdent, pnSubmodules, type IoModuleConfig } from '../src/index.ts';
 
 const CPU = new URL('../../runtime/build/vplc-cpu', import.meta.url).pathname;
 const NS = 'vplc-pn-test';
@@ -27,12 +27,6 @@ function image(source: string, hardware: IoModuleConfig[]): Uint8Array {
   assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
   return r.image!;
 }
-
-const dap = [
-  { slot: 0, subslot: 1, moduleIdent: 1, submoduleIdent: 1, inLength: 0, inByte: 0, outLength: 0, outByte: 0 },
-  { slot: 0, subslot: 0x8000, moduleIdent: 1, submoduleIdent: 2, inLength: 0, inByte: 0, outLength: 0, outByte: 0 },
-  { slot: 0, subslot: 0x8001, moduleIdent: 1, submoduleIdent: 3, inLength: 0, inByte: 0, outLength: 0, outByte: 0 },
-];
 
 async function until(what: () => boolean | Promise<boolean>, ms: number, message: string | (() => string)) {
   const end = Date.now() + ms;
@@ -57,6 +51,12 @@ test('PROFINET: IO-Controller and IO-Device (DCP, connect, cyclic data, watchdog
     ip('addr', 'add', '192.168.78.1/24', 'dev', 'vpnc');
     ip('link', 'set', 'vpnc', 'up');
 
+    // controller configuration from the GSDML of the device: OUT 2 bytes in slot 1, IN 2 bytes in slot 2
+    const gsd = parseGsdml(generateGsdml({ vendorId: 0, deviceId: 1 }).xml);
+    const byIdent = (ident: number) => [...gsd.modules.values()].find((m) => m.ident === ident)!;
+    const submodules = pnSubmodules(gsd.daps[0], [{ slot: 1, module: byIdent(pnModuleIdent('out', 2)) }, { slot: 2, module: byIdent(pnModuleIdent('in', 2)) }], 0, 0);
+    assert.deepEqual(submodules.map((x) => `${x.slot}.${x.subslot}`), ['0.1', '0.32768', '0.32769', '1.1', '2.1']);
+    submodules[3].records = [{ index: 1, data: [1, 2, 3] }, { index: 2, data: [4] }];
     const devDir = mkdtempSync(join(tmpdir(), 'vplc-pnd-'));
     const ctlDir = mkdtempSync(join(tmpdir(), 'vplc-pnc-'));
     // device: its outputs to the controller = its inputs + 1000; no IP yet (the controller sets it)
@@ -69,9 +69,7 @@ test('PROFINET: IO-Controller and IO-Device (DCP, connect, cyclic data, watchdog
       ORGANIZATION_BLOCK "Main" BEGIN "Count" := "Count" + 1; END_ORGANIZATION_BLOCK`,
     [{
       kind: 'profinet-remote', name: 'test-device', interface: 'vpnc', stationName: 'test-device', ip: '192.168.78.2', vendorId: 0, deviceId: 1, cycleMs: 4,
-      submodules: [...dap,
-        { slot: 1, subslot: 1, moduleIdent: 0x202, submoduleIdent: 0x202, inLength: 0, inByte: 0, outLength: 2, outByte: 0 },
-        { slot: 2, subslot: 1, moduleIdent: 0x102, submoduleIdent: 0x102, inLength: 2, inByte: 0, outLength: 0, outByte: 0 }],
+      submodules,
     }]));
     const start = (which: 'dev' | 'ctl') => {
       const args = ['--data', which === 'dev' ? devDir : ctlDir, '--port', which === 'dev' ? '20105' : '20187', '--modbus-port', '0', '--s7-port', '0', '--opcua-port', '0'];
@@ -85,6 +83,7 @@ test('PROFINET: IO-Controller and IO-Device (DCP, connect, cyclic data, watchdog
     start('ctl');
     await until(() => /data exchange started/.test(logs.ctl), 10000, () => `no data exchange:\n${logs.ctl}\n${logs.dev}`);
     assert.match(logs.dev, /IP address set to 192\.168\.78\.2/);
+    assert.match(logs.dev, /end of parametrization \(2 parameter record\(s\)\)/);
 
     // cyclic data both ways
     const ctl = new DeviceClient('127.0.0.1', 20187);
