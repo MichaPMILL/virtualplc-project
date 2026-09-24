@@ -1,0 +1,54 @@
+// User interface texts. French first, with the usual automation vocabulary,
+// so that automation engineers find the usual terms.
+export const t = {
+  appName: 'VirtualPLC Studio',
+  // Menus
+  menuProject: 'Projet', menuEdit: 'Edition', menuView: 'Affichage', menuInsert: 'Insertion', menuOnline: 'En ligne',
+  menuOptions: 'Options', menuTools: 'Outils', menuWindow: 'Fenêtre', menuHelp: 'Aide',
+  newProject: 'Nouveau...', openProject: 'Ouvrir...', saveProject: 'Enregistrer le projet', saveAs: 'Enregistrer sous...',
+  closeProject: 'Fermer', importSource: 'Sources externes > Générer des blocs à partir de la source...', exit: 'Quitter',
+  undo: 'Annuler', redo: 'Rétablir', cut: 'Couper', copy: 'Copier', paste: 'Coller', delete: 'Supprimer', compile: 'Compiler',
+  compileSoftware: 'Compiler > Logiciel (tous les blocs)',
+  showTree: 'Arborescence du projet', showTasks: 'Cartes des tâches', showInspector: "Fenêtre d'inspection", showDetails: 'Vue détaillée',
+  addDevice: 'Ajouter un appareil', addBlock: 'Ajouter nouveau bloc', addTagTable: 'Ajouter une table de variables',
+  addWatchTable: 'Ajouter une table de visualisation',
+  goOnline: 'Liaison en ligne', goOffline: 'Couper la liaison en ligne', downloadToDevice: "Charger dans l'appareil",
+  startCpu: 'Démarrer la CPU', stopCpu: 'Arrêter la CPU', onlineDiag: 'En ligne & diagnostic', monitorAll: 'Visualiser tout',
+  accessibleDevices: 'Appareils accessibles...', settings: 'Paramètres', about: 'À propos de VirtualPLC Studio', help: 'Aide en ligne',
+  // Panels
+  projectTree: 'Arborescence du projet', devices: 'Appareils', detailsView: 'Vue détaillée',
+  taskCards: 'Cartes des tâches', instructions: 'Instructions', onlineTools: 'Outils en ligne', tasks: 'Tâches',
+  basicInstructions: 'Instructions de base', favorites: 'Favoris',
+  properties: 'Propriétés', info: 'Info', diagnostics: 'Diagnostic', general: 'Général', compileTab: 'Compiler', crossRef: 'Références croisées',
+  portalView: 'Vue du portail', overview: "Vue d'ensemble",
+  // Tree
+  devicesNetworks: 'Appareils & Réseaux', deviceConfig: 'Configuration des appareils', programBlocks: 'Blocs de programme',
+  plcTags: 'Variables API', showAllTags: 'Afficher toutes les variables', defaultTagTable: 'Table de variables standard',
+  watchTables: 'Tables de visualisation et de forçage', forceTable: 'Table de forçage permanent',
+  externalSources: 'Sources externes', dataTypes: 'Types de données API', technologyObjects: 'Objets technologiques',
+  onlineBackups: 'Sauvegardes en ligne', localModules: 'Modules locaux',
+  // Tag table
+  name: 'Nom', dataType: 'Type de données', address: 'Adresse', retain: 'Rémanence', hmiAccess: 'Accessible depuis IHM',
+  comment: 'Commentaire', monitorValue: 'Valeur de visualisation', modifyValue: 'Valeur de forçage', startValue: 'Valeur de départ',
+  defaultValue: 'Valeur par défaut', tags: 'Variables', userConstants: 'Constantes utilisateur', value: 'Valeur',
+  addNew: '<Ajouter>', displayFormat: "Format d'affichage",
+  // Interface sections
+  sInput: 'Input', sOutput: 'Output', sInOut: 'InOut', sStatic: 'Static', sTemp: 'Temp', sConstant: 'Constant', sReturn: 'Return',
+  blockInterface: 'Interface du bloc',
+  // Dialogs
+  ok: 'OK', cancel: 'Annuler', yes: 'Oui', no: 'Non', close: 'Fermer', finish: 'Terminer', load: 'Charger', connect: 'Liaison en ligne',
+  blockName: 'Nom', number: 'Numéro', manual: 'manuel', automatic: 'automatique', language: 'Langage', type: 'Type',
+  organizationBlock: "Bloc d'organisation", functionBlock: 'Bloc fonctionnel', function: 'Fonction', dataBlock: 'Bloc de données',
+  obDescription: "Les blocs d'organisation (OB) constituent l'interface entre le système d'exploitation et le programme utilisateur. Ils sont appelés par le système d'exploitation.",
+  fbDescription: 'Les blocs fonctionnels (FB) sont des blocs de code qui enregistrent durablement leurs valeurs dans des blocs de données d\'instance, de sorte qu\'elles restent disponibles après le traitement du bloc.',
+  fcDescription: 'Les fonctions (FC) sont des blocs de code sans mémoire.',
+  dbDescription: 'Les blocs de données (DB) enregistrent des données du programme.',
+  programCycle: 'Program cycle', startup: 'Startup', globalDb: 'DB global', instanceDbOf: 'DB d\'instance de',
+  interfaceType: "Type d'interface PG/PC", interfaceTcp: 'TCP/IP (Ethernet / Wi-Fi)', interfaceSerial: 'Série (USB)',
+  ipAddress: 'Adresse IP', port: 'Port', password: 'Mot de passe',
+  extendedDownload: 'Chargement étendu', loadPreview: 'Aperçu du chargement', loadResults: 'Résultats du chargement',
+  // States
+  run: 'RUN', stop: 'STOP', error: 'ERROR', maint: 'MAINT',
+  online: 'En ligne', offline: 'Hors ligne',
+  noProject: 'Aucun projet ouvert',
+};

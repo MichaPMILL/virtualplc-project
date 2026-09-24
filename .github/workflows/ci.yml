@@ -51,3 +51,23 @@ jobs:
           npm ci
           npx tsc --noEmit
           npm test
+
+  studio:
+    name: Studio (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: SDK dependencies
+        working-directory: sdk
+        run: npm ci
+      - name: Studio
+        working-directory: studio
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build

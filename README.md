@@ -14,6 +14,45 @@ variable to HMIs/SCADA through its own Modbus TCP server.
 > (emergency stops, personnel protection, ...). Use certified safety hardware
 > for those, and treat VirtualPLC as supervisory/automation logic only.
 
+## VirtualPLC Studio + portable CPU (new architecture)
+
+Next to the PHP soft-PLC, the repository now contains a complete engineering
+workflow that targets small hardware:
+
+```
+ VirtualPLC Studio (Electron, Windows/macOS/Linux)
+   project tree · device view · tag tables · OB/FB/FC/DB editors (SCL) · watch tables
+        │ compiles SCL → bytecode (sdk/)
+        ▼ TCP 20105 (download, RUN/STOP, monitoring, forcing, diagnostic buffer)
+ vplc-cpu (portable C++ VM, runtime/)  →  Linux PC, Raspberry Pi (GPIO), Modbus TCP remote I/O
+                                          (ESP32 / Arduino firmware: planned)
+```
+
+| Path       | Content                                                                   |
+|------------|---------------------------------------------------------------------------|
+| `spec/`    | Instruction set (single source of truth, generates `sdk/src/isa.ts` and `runtime/core/isa.h`) |
+| `sdk/`     | TypeScript SCL compiler, project model (`.vplcproj`), device client, `vplc` CLI |
+| `runtime/` | C++ VM and CPU (`vplc-cpu`, `vplc-sim`), CMake                            |
+| `studio/`  | The engineering application                                               |
+| `docs/`    | `architecture.md`, `bytecode.md`, `protocol.md`                           |
+
+Studio uses the usual automation vocabulary and layout (portal view / project view, *Appareils &
+réseaux*, *Blocs de programme*, *Variables API*, *Tables de visualisation*, inspector
+window, task cards, online mode in orange, *Charger dans l'appareil*, *Visualisation
+on/off*, *Forcer*), so an automation engineer finds everything where they expect it.
+
+```bash
+# CPU on a Linux box / Raspberry Pi
+cmake -S runtime -B runtime/build -DCMAKE_BUILD_TYPE=Release && cmake --build runtime/build -j
+runtime/build/vplc-cpu --data /var/lib/virtualplc     # see deploy/vplc-cpu.service
+
+# Studio (desktop)
+cd sdk && npm ci && cd ../studio && npm ci
+npm start            # Electron app
+npm run web          # same UI in a browser on http://127.0.0.1:8123 (development)
+npm run dist         # installers: .dmg / NSIS .exe / AppImage + .deb (in studio/release)
+```
+
 ## Features
 
 - **SCL language**: `IF/ELSIF/ELSE`, `CASE`, `FOR ... BY`, `WHILE`, `REPEAT`, `EXIT`, `RETURN`,
