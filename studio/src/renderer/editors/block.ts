@@ -219,7 +219,7 @@ export function blockEditor(device: Device, block: Block): EditorView {
   // Instructions inserted from the task card ("Options d'appel" for timers/counters)
   /** Instance of a timer / counter / edge block: #multi-instance or "single instance DB". */
   const createInstance = async (fb: string): Promise<{ ref: string; multi: boolean; name: string } | null> => {
-    const base = fb.includes('TRIG') ? 'R_TRIG_Instance' : fb.startsWith('CT') ? 'IEC_Counter_0' : 'IEC_Timer_0';
+    const base = fb.startsWith('DataLog') ? `${fb}_Instance` : fb.includes('TRIG') ? 'R_TRIG_Instance' : fb.startsWith('CT') ? 'IEC_Counter_0' : 'IEC_Timer_0';
     const choice = await callOptionsDialog(device, block, fb, base);
     if (!choice) return null;
     if (choice.multi) {
@@ -251,6 +251,9 @@ export function blockEditor(device: Device, block: Block): EditorView {
       TON: 'IN := , PT := T#1S', TOF: 'IN := , PT := T#1S', TP: 'IN := , PT := T#1S',
       CTU: 'CU := , R := , PV := ', CTD: 'CD := , LD := , PV := ', CTUD: 'CU := , CD := , R := , LD := , PV := ',
       R_TRIG: 'CLK := ', F_TRIG: 'CLK := ',
+      DataLogCreate: "REQ := , RECORDS := 1000, FORMAT := 1, TIMESTAMP := 1, NAME := 'Journal_1', ID := , HEADER := , DATA := ",
+      DataLogOpen: "REQ := , MODE := 0, NAME := 'Journal_1', ID := ",
+      DataLogWrite: 'REQ := , ID := ', DataLogClose: 'REQ := , ID := ', DataLogNewFile: "REQ := , RECORDS := 1000, NAME := 'Journal_1', ID := ",
     };
     const choice = await createInstance(it.fb);
     if (!choice) return;

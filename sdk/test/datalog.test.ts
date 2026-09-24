@@ -217,3 +217,89 @@ test('traceability: TLS verify refuses an untrusted server certificate', { skip:
     assert.match(st.error ?? '', /certificate/i);
   });
 });
+
+test('traceability: TIA instructions DataLogCreate / DataLogOpen / DataLogWrite', { skip }, async () => {
+  const text = `
+TYPE "LogRecord"
+STRUCT
+   Temperature : Real;
+   Count : DInt;
+   Ok : Bool;
+   Batch : String[16];
+END_STRUCT;
+END_TYPE
+
+DATA_BLOCK "DataLog_DB"
+   VAR
+      Record : "LogRecord";
+      Header : String[64] := 'Temperature,Count,Ok,Batch';
+      ID : DWord;
+      Created : Bool;
+   END_VAR
+BEGIN
+   Record.Batch := 'B-42';
+END_DATA_BLOCK
+
+FUNCTION_BLOCK "Logger"
+   VAR_INPUT
+      Trigger : Bool;
+   END_VAR
+   VAR
+      Create : DataLogCreate;
+      Open : DataLogOpen;
+      Write : DataLogWrite;
+      Opened : Bool;
+   END_VAR
+BEGIN
+    #Create(REQ := NOT "DataLog_DB".Created, RECORDS := 1000, FORMAT := 1, TIMESTAMP := 1, NAME := 'Production',
+            ID := "DataLog_DB".ID, HEADER := "DataLog_DB".Header, DATA := "DataLog_DB".Record);
+    IF #Create.DONE THEN
+        "DataLog_DB".Created := TRUE;
+    END_IF;
+    #Open(REQ := "DataLog_DB".Created AND NOT #Opened, MODE := 0, NAME := 'Production', ID := "DataLog_DB".ID);
+    IF #Open.DONE THEN
+        #Opened := TRUE;
+    END_IF;
+    #Write(REQ := #Trigger AND #Opened, ID := "DataLog_DB".ID);
+END_FUNCTION_BLOCK
+
+VAR_GLOBAL n : DInt; lineLogger : "Logger"; END_VAR
+
+ORGANIZATION_BLOCK "Main"
+BEGIN
+    n := n + 1;
+    "DataLog_DB".Record.Count := n;
+    "DataLog_DB".Record.Temperature := DINT_TO_REAL(n) / 10.0;
+    "DataLog_DB".Record.Ok := (n MOD 2) = 0;
+    lineLogger(Trigger := (n MOD 5) = 0);
+END_ORGANIZATION_BLOCK`;
+  const r0 = compile({ sources: [{ file: 'tia.scl', text }], cycleMs: 10 });
+  assert.equal(r0.ok, true, JSON.stringify(r0.diagnostics));
+  assert.deepEqual(r0.dataLogs, [{ name: 'Production', program: true, columns: ['Temperature', 'Count', 'Ok', 'Batch'] }]);
+  // settings added in Traçabilité (same name, no column): retention and database
+  const withDb = compile({ sources: [{ file: 'tia.scl', text }], dataLogs: [{ id: 'x', name: 'Production', trigger: { kind: 'program' }, columns: [], retentionDays: 30 }] });
+  assert.equal(withDb.ok, true, JSON.stringify(withDb.diagnostics));
+  // run it: records every 5 scans (rising edge of REQ)
+  const dir = mkdtempSync(join(tmpdir(), 'vplc-tia-'));
+  const port = await freePort();
+  const cpu = spawn(CPU, ['--data', dir, '--listen', '127.0.0.1', '--port', String(port), '--name', 'Line2'], { stdio: 'ignore' });
+  const client = new DeviceClient('127.0.0.1', port);
+  try {
+    for (let i = 0; ; i++) {
+      try { await client.connect(); break; } catch (e) { if (i > 50) throw e; await sleep(100); }
+    }
+    await client.download(r0.image!);
+    await client.start(true);
+    await sleep(1000);
+    const st = await client.dataLogRead(0, 10);
+    assert.deepEqual(st.columns, ['Temperature', 'Count', 'Ok', 'Batch']);
+    assert.ok(st.records! >= 5, `records ${st.records}`);
+    const row = st.rows![0];
+    assert.equal(Number(row[3]) % 5, 0);
+    assert.equal(row[2], Number(row[3]) / 10);
+    assert.equal(row[5], 'B-42');
+  } finally {
+    client.close();
+    cpu.kill();
+  }
+});

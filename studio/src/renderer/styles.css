@@ -461,3 +461,5 @@ body.simulation .toolbar .brand::after { content: 'SIMULATION'; margin-left: 10p
 .ok-text { color: var(--ok); font-weight: 600; }
 .err-text { color: #c42b1c; font-weight: 600; }
 .ifc-method.error { color: #c42b1c; }
+.dl-badge { margin-left: 6px; padding: 0 4px; border-radius: 3px; background: #e6f4ea; color: #2e7d4f; font-size: 10px; }
+.dl-program { margin: 6px 10px; padding: 6px 10px; background: var(--panel-alt); border: 1px solid var(--border-light); }

@@ -31,9 +31,28 @@ function tagPaths(device: Device): string[] {
   return [...out];
 }
 
+/** A data log of the list: configured in Traçabilité and / or created by DataLogCreate in the program */
+interface Entry {
+  name: string;
+  /** Columns defined by DataLogCreate (DATA) */
+  program?: string[];
+  config?: DataLog;
+}
+
 export function dataLogsEditor(device: Device): EditorView {
   const logs = () => (device.dataLogs ??= []);
-  let current: DataLog | undefined = logs()[0];
+  const entries = (): Entry[] => {
+    const out: Entry[] = [];
+    const compiled = store.compile.get(device.id)?.dataLogs ?? [];
+    for (const l of compiled) {
+      if (l.program) out.push({ name: l.name, program: l.columns, config: logs().find((x) => x.name.toLowerCase() === l.name.toLowerCase()) });
+    }
+    for (const c of logs()) if (!out.some((e) => e.config === c)) out.push({ name: c.name, config: c });
+    return out;
+  };
+  let currentName: string | undefined = entries()[0]?.name;
+  const entry = () => entries().find((e) => e.name === currentName);
+  let current: DataLog | undefined = entry()?.config;
   let status: DataLogStatus | null = null;
   let timer: number | undefined;
 
@@ -66,11 +85,22 @@ export function dataLogsEditor(device: Device): EditorView {
 
   const renderList = () => {
     clear(list);
-    for (const l of logs()) {
-      const err = store.compile.get(device.id)?.diagnostics.some((d) => d.dataLogId === l.id && d.severity === 'error');
-      list.append(h('div', { className: `ifc-method${l === current ? ' selected' : ''}${err ? ' error' : ''}`, onclick: () => select(l) },
-        svg(icons.trace), ` ${l.name}`, h('span', { className: 'muted', style: 'margin-left:auto' }, l.destination ? l.destination.kind === 'postgresql' ? 'PostgreSQL' : 'MySQL' : 'local')));
+    for (const e of entries()) {
+      const l = e.config;
+      const err = l && store.compile.get(device.id)?.diagnostics.some((d) => d.dataLogId === l.id && d.severity === 'error');
+      list.append(h('div', { className: `ifc-method${e.name === currentName ? ' selected' : ''}${err ? ' error' : ''}`, onclick: () => select(e.name), title: e.program ? 'Créé par DataLogCreate dans le programme' : '' },
+        svg(icons.trace), ` ${e.name}`, e.program ? h('span', { className: 'dl-badge' }, 'DataLogCreate') : null,
+        h('span', { className: 'muted', style: 'margin-left:auto' }, l?.destination ? l.destination.kind === 'postgresql' ? 'PostgreSQL' : 'MySQL' : 'local')));
     }
+  };
+
+  /** Settings of a program log are kept in a configured log without columns */
+  const ensureConfig = (): DataLog => {
+    if (!current) {
+      current = { id: newId('dlog'), name: currentName!, trigger: { kind: 'program' }, columns: [] };
+      logs().push(current);
+    }
+    return current;
   };
 
   const field = (label: string, input: HTMLElement, hint?: string) =>
@@ -78,18 +108,33 @@ export function dataLogsEditor(device: Device): EditorView {
 
   const renderForm = () => {
     clear(form);
-    if (!current) {
-      form.append(h('div', { className: 'muted', style: 'padding:12px' }, 'Ajoutez un journal de données : ses colonnes sont des variables, enregistrées à chaque déclenchement dans la base de données de la CPU, puis copiées dans votre base PostgreSQL ou MySQL / MariaDB.'));
+    const e = entry();
+    if (!e) {
+      form.append(h('div', { className: 'muted', style: 'padding:12px' },
+        'Comme dans les outils habituels, créez vos journaux dans le programme avec DataLogCreate (NAME, DATA = structure d\'un DB global) puis écrivez-les avec DataLogWrite : ils apparaissent ici après compilation. '
+        + 'Vous pouvez aussi définir un journal ici (colonnes = variables) et l\'écrire avec DATALOG_WRITE(\'Nom\'). '
+        + 'Pour chaque journal, la CPU garde les enregistrements dans sa base, puis peut les copier dans PostgreSQL ou MySQL / MariaDB.'));
       return;
     }
-    const log = current;
+    if (e.program && !current) {
+      // program log without settings yet: shown with defaults, created on the first change
+      current = undefined;
+    }
+    const log: DataLog = current ?? { id: '', name: e.name, trigger: { kind: 'program' }, columns: [] };
+    const settingsTouch = () => {
+      if (!current) {
+        const c = ensureConfig();
+        Object.assign(c, { ...log, id: c.id, columns: [] });
+      }
+      touch();
+    };
     const text = (value: string, set: (v: string) => void, attrs: Record<string, unknown> = {}) => {
       const i = h('input', { value, ...attrs });
-      i.onchange = () => { set(i.value.trim()); touch(); };
+      i.onchange = () => { set(i.value.trim()); settingsTouch(); };
       return i;
     };
     // --- trigger
-    const kind = h('select', null, h('option', { value: 'program' }, 'Par le programme : DATALOG_WRITE(\'' + log.name + '\')'),
+    const kind = h('select', null, h('option', { value: 'program' }, e.program ? 'Par le programme : DataLogWrite' : 'Par le programme : DATALOG_WRITE(\'' + log.name + '\')'),
       h('option', { value: 'edge' }, 'Front montant d\'une variable Bool'), h('option', { value: 'period' }, 'Périodique'));
     kind.value = log.trigger.kind;
     const trig = h('span');
@@ -106,7 +151,7 @@ export function dataLogsEditor(device: Device): EditorView {
     };
     kind.onchange = () => {
       log.trigger = kind.value === 'edge' ? { kind: 'edge', tag: '' } : kind.value === 'period' ? { kind: 'period', ms: 1000 } : { kind: 'program' };
-      touch();
+      settingsTouch();
       renderTrigger();
     };
     renderTrigger();
@@ -122,7 +167,7 @@ export function dataLogsEditor(device: Device): EditorView {
       const tls = h('select', null, h('option', { value: 'verify' }, 'TLS avec vérification du certificat (recommandé)'),
         h('option', { value: 'require' }, 'TLS sans vérification du certificat'), h('option', { value: 'disable' }, 'Sans chiffrement (réseau de confiance uniquement)'));
       tls.value = d.tls ?? 'verify';
-      tls.onchange = () => { d.tls = tls.value as typeof d.tls; touch(); renderDest(); };
+      tls.onchange = () => { d.tls = tls.value as typeof d.tls; settingsTouch(); renderDest(); };
       destFields.append(
         field('Serveur', text(d.host, (v) => { d.host = v; }, { placeholder: 'ex. db.usine.local' })),
         field('Port', text(String(d.port ?? DEFAULT_DB_PORT[d.kind]), (v) => { d.port = Number(v) || undefined; }, { type: 'number', style: 'width:110px' })),
@@ -139,7 +184,7 @@ export function dataLogsEditor(device: Device): EditorView {
         kind: dest.value as 'postgresql' | 'mysql', host: log.destination?.host ?? '', port: undefined,
         database: log.destination?.database ?? 'traceability', table: log.destination?.table ?? log.name.toLowerCase(), user: log.destination?.user ?? 'plc', tls: log.destination?.tls ?? 'verify',
       } : undefined;
-      touch();
+      settingsTouch();
       renderDest();
     };
     renderDest();
@@ -149,20 +194,24 @@ export function dataLogsEditor(device: Device): EditorView {
       field('Commentaire', text(log.comment ?? '', (v) => { log.comment = v || undefined; })),
       field('Déclenchement', h('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap' }, kind, trig)),
       field('Conservation dans la CPU', h('span', null, retention, ' jours'), '0 = toujours ; avec une base de données, seulement une fois les enregistrements copiés'),
-      h('div', { className: 'dl-columns' }, columns.element),
+      e.program
+        ? h('div', { className: 'dl-program' }, h('b', null, 'Colonnes définies par DataLogCreate (paramètre DATA) : '), e.program.join(', ') || '—',
+          h('div', { className: 'muted' }, 'Le journal est créé, ouvert et écrit par le programme (DataLogCreate / DataLogOpen / DataLogWrite). Ici : copie vers une base de données et conservation.'))
+        : h('div', { className: 'dl-columns' }, columns.element),
       h('div', { className: 'panel-subheader' }, svg(icons.network), ' Base de données'),
       field('Destination', dest),
       destFields,
       h('datalist', { id: 'dl-tags' }, ...tagPaths(device).map((p) => h('option', { value: p }))),
     );
-    columns.render();
+    if (!e.program) columns.render();
   };
 
   // --- online: state, password, test, latest records, certificate
-  const index = () => (current ? logs().indexOf(current) : -1);
+  /** Index of the log in the CPU: order of the last compilation */
+  const index = () => (store.compile.get(device.id)?.dataLogs ?? []).findIndex((l) => l.name.toLowerCase() === currentName?.toLowerCase());
   const poll = async () => {
     const s = store.onlineOf(device.id);
-    if (!current || !s.connected) {
+    if (!currentName || !s.connected || index() < 0) {
       status = null;
       renderOnline();
       return;
@@ -178,14 +227,18 @@ export function dataLogsEditor(device: Device): EditorView {
     clear(online);
     const s = store.onlineOf(device.id);
     online.append(h('div', { className: 'panel-subheader' }, svg(icons.online), ' En ligne'));
-    if (!current) return;
+    if (!currentName) return;
+    if (index() < 0 && s.connected) {
+      online.append(h('div', { className: 'muted', style: 'padding:6px 10px' }, 'Compilez et chargez le programme pour ce journal.'));
+      return;
+    }
     if (!s.connected) {
       online.append(h('div', { className: 'muted', style: 'padding:6px 10px' }, 'Passez en ligne (ou démarrez la simulation) pour voir les enregistrements, définir le mot de passe de la base de données et exporter des certificats.'));
       return;
     }
     const st = status;
     if (!st) return;
-    const d = current.destination;
+    const d = current?.destination;
     const kv = (k: string, v: string | HTMLElement) => [h('span', { className: 'muted' }, k), typeof v === 'string' ? h('span', null, v) : v];
     const stateText = !d ? 'base locale de la CPU' : st.connected ? 'connectée' : st.error ? 'non connectée' : 'connexion…';
     online.append(h('div', { className: 'kv', style: 'padding:6px 10px' },
@@ -239,13 +292,13 @@ export function dataLogsEditor(device: Device): EditorView {
   };
 
   const certificate = async () => {
-    if (!current) return;
+    if (!currentName) return;
     const max = Number(await promptDialog('Certificat de traçabilité', 'Nombre d\'enregistrements (les plus récents)', '1000'));
     if (!max) return;
     try {
       const cert = await call('traceCertificate', device.id, index(), max);
       const fp = await keyFingerprint(cert.publicKey);
-      downloadFile(`${device.name}_${current.name}_${new Date().toISOString().slice(0, 10)}.trace.json`, JSON.stringify(cert, null, 1), 'application/json');
+      downloadFile(`${device.name}_${currentName}_${new Date().toISOString().slice(0, 10)}.trace.json`, JSON.stringify(cert, null, 1), 'application/json');
       await alertDialog('Certificat de traçabilité', `${cert.records.length} enregistrement(s) signés par la CPU.\n\nLe client vérifie le certificat avec la page tools/trace-verifier/index.html (hors ligne) ou « vplc verify ».\nCommuniquez-lui l'empreinte de la clé de cette CPU :\n\n${fp}`);
     } catch (e) {
       await alertDialog('Certificat de traçabilité', (e as Error).message, 'error');
@@ -253,7 +306,7 @@ export function dataLogsEditor(device: Device): EditorView {
   };
 
   const exportCsv = async () => {
-    if (!current) return;
+    if (!currentName) return;
     const rows: Array<Array<unknown>> = [];
     let before = 0;
     let cols: string[] = [];
@@ -267,11 +320,12 @@ export function dataLogsEditor(device: Device): EditorView {
     }
     const esc = (v: unknown) => (v === null || v === undefined ? '' : /[;"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
     const csv = [['id', 'time_utc', ...cols].join(';'), ...rows.reverse().map((r) => [r[0], r[1], ...cols.map((_, i) => r[2 + i])].map(esc).join(';'))].join('\n');
-    downloadFile(`${device.name}_${current.name}.csv`, csv + '\n', 'text/csv');
+    downloadFile(`${device.name}_${currentName}.csv`, csv + '\n', 'text/csv');
   };
 
-  const select = (l: DataLog | undefined) => {
-    current = l;
+  const select = (name: string | undefined) => {
+    currentName = name;
+    current = entries().find((x) => x.name === name)?.config;
     status = null;
     renderList();
     renderForm();
@@ -289,22 +343,29 @@ export function dataLogsEditor(device: Device): EditorView {
     const log: DataLog = { id: newId('dlog'), name, trigger: { kind: 'program' }, columns: [] };
     logs().push(log);
     touch();
-    select(log);
+    select(log.name);
   };
   const rename = async () => {
-    if (!current) return;
+    if (!current || entry()?.program) return;
     const name = await promptDialog('Renommer le journal', t.name, current.name);
     if (!name || name === current.name) return;
     if (!NAME_RE.test(name)) return;
     current.name = name;
+    currentName = name;
     touch();
     renderForm();
   };
   const remove = async () => {
-    if (!current || !(await confirmDialog('Supprimer', `Supprimer le journal « ${current.name} » du projet ? Les enregistrements déjà écrits restent dans les bases de données.`))) return;
+    if (!current) return;
+    const program = entry()?.program;
+    const question = program
+      ? `Supprimer les réglages (base de données, conservation) du journal « ${current.name} » ? Le journal reste créé par DataLogCreate dans le programme.`
+      : `Supprimer le journal « ${current.name} » du projet ? Les enregistrements déjà écrits restent dans les bases de données.`;
+    if (!(await confirmDialog('Supprimer', question))) return;
     device.dataLogs = logs().filter((x) => x !== current);
+    current = undefined;
     touch();
-    select(logs()[0]);
+    select(program ? currentName : entries()[0]?.name);
   };
 
   const element = h('div', { className: 'editor-host' },
@@ -323,7 +384,11 @@ export function dataLogsEditor(device: Device): EditorView {
   renderForm();
   const unsubscribe = store.on((topic) => {
     if (topic === 'online') void poll();
-    if (topic === 'compile') renderList();
+    if (topic === 'compile') {
+      if (!currentName) currentName = entries()[0]?.name;
+      renderList();
+      renderForm();
+    }
   });
   return {
     element, icon: 'trace', title: () => `Traçabilité — ${device.name}`, crumbs: () => [device.name, 'Traçabilité'],
@@ -332,7 +397,8 @@ export function dataLogsEditor(device: Device): EditorView {
       timer ??= window.setInterval(() => void poll(), 2000);
     },
     refresh: () => {
-      if (current && !logs().includes(current)) current = logs()[0];
+      if (!entries().some((e) => e.name === currentName)) currentName = entries()[0]?.name;
+      current = entry()?.config;
       renderList();
       renderForm();
     },

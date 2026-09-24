@@ -221,6 +221,13 @@ const INSTRUCTIONS: Array<[string, IconName, Instruction[]]> = [
     { name: 'DEVICE_DIAG', desc: 'Diagnostic actif sur un module (PROFINET)', snippet: 'DEVICE_DIAG()' },
     { name: 'PN_ALARM', desc: 'Alarme vers le maître PROFINET (1 diagnostic, 12 fin de diagnostic, 2 processus)', snippet: 'PN_ALARM(MODULE := , SLOT := 1, KIND := 1, CODE := 1)' },
   ]],
+  ['Journaux de données (traçabilité)', 'trace', [
+    { name: 'DataLogCreate', desc: 'Créer un journal (NAME, DATA = structure d\'un DB global)', fb: 'DataLogCreate' },
+    { name: 'DataLogOpen', desc: 'Ouvrir un journal existant', fb: 'DataLogOpen' },
+    { name: 'DataLogWrite', desc: 'Écrire un enregistrement (valeurs de DATA)', fb: 'DataLogWrite' },
+    { name: 'DataLogClose', desc: 'Fermer un journal', fb: 'DataLogClose' },
+    { name: 'DataLogNewFile', desc: 'Nouveau fichier (journal suivant)', fb: 'DataLogNewFile' },
+  ]],
   ['Chaînes de caractères', 'string', [
     { name: 'CONCAT', desc: 'Concaténer', snippet: 'CONCAT(IN1 := , IN2 := )' }, { name: 'LEN', desc: 'Longueur', snippet: 'LEN()' },
     { name: 'LOG', desc: 'Écrire dans le tampon de diagnostic', snippet: "LOG('');" },
@@ -257,7 +264,7 @@ export function taskCards(): HTMLElement {
             draggable: 'true',
             ondragstart: (e: Event) => (e as DragEvent).dataTransfer?.setData('text/plain', it.snippet ?? it.name),
             ondblclick: () => window.dispatchEvent(new CustomEvent('studio:insert-instruction', { detail: it })),
-          }, svg(icons[it.fb ? (it.fb.includes('TRIG') ? 'logic' : it.fb.startsWith('CT') ? 'counter' : 'timer') : icon]), h('b', null, it.name), h('span', { className: 'desc' }, it.desc))) : [])));
+          }, svg(icons[it.fb ? (it.fb.startsWith('DataLog') ? 'trace' : it.fb.includes('TRIG') ? 'logic' : it.fb.startsWith('CT') ? 'counter' : 'timer') : icon]), h('b', null, it.name), h('span', { className: 'desc' }, it.desc))) : [])));
       }
     } else if (card === 'versions') {
       versionsCard(body);

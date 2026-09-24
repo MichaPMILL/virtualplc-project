@@ -1,5 +1,40 @@
 # Traceability (data logs)
 
+## Programming: as in the usual engineering tools
+
+Data logs are programmed with the usual instructions (task card *Journaux de données*),
+called as single or multi-instances, with the same parameters:
+
+| Instruction | Parameters | Effect |
+|---|---|---|
+| `DataLogCreate` | `REQ`, `RECORDS`, `FORMAT`, `TIMESTAMP`, `NAME`, `ID` (in-out), `HEADER`, `DATA` | declares the log `NAME` with the columns of `DATA`; `ID` receives its identifier |
+| `DataLogOpen` | `REQ`, `MODE`, `NAME`, `ID` | gives the `ID` of an existing log (after a restart) |
+| `DataLogWrite` | `REQ`, `ID` | writes one record: the current values of `DATA` |
+| `DataLogClose`, `DataLogNewFile`, `DataLogClear`, `DataLogDelete` | `REQ`, `ID` … | accepted for compatibility (DONE); records are never removed |
+
+All of them answer `DONE`, `BUSY`, `ERROR`, `STATUS` (16#0000 done, 16#7000 no job,
+16#80C0 unknown log, 16#80B4 record not written) and act on the **rising edge of `REQ`**.
+
+```
+#Create(REQ := NOT "DataLog_DB".Created, RECORDS := 1000, FORMAT := 1, TIMESTAMP := 1,
+        NAME := 'Production', ID := "DataLog_DB".ID, HEADER := "DataLog_DB".Header,
+        DATA := "DataLog_DB".Record);          // "LogRecord": Temperature, Count, Ok, Batch
+#Write(REQ := #PartDone, ID := "DataLog_DB".ID);
+```
+
+Differences: `NAME` must be a constant and `DATA` a variable of a global data block (or a
+PLC tag) — the columns are known when compiling, as the records are typed columns of a
+database rather than CSV lines; `RECORDS`, `FORMAT` and `HEADER` are not used (the records
+stay in the CPU database, see *retention*); every record is time-stamped (`TIMESTAMP`).
+
+The log then appears in *Traçabilité* (badge *DataLogCreate*), where you add what the usual
+tools do not have: the copy to a PostgreSQL / MySQL / MariaDB database and the retention time.
+
+A log can also be defined entirely in *Traçabilité* (columns = tags; trigger: program with
+`DATALOG_WRITE('Name')`, rising edge of a Bool, or period).
+
+## Triggers
+
 A **data log** records the values of tags (its *columns*) each time it is triggered:
 
 | Trigger | When |

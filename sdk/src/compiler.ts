@@ -10,7 +10,8 @@ import {
 import { buildImage, HMI_STRING, HMI_TIME, type DbEntry, type FunctionEntry, type HmiSymbol, type IoModuleConfig, type LineEntry, type ServicesConfig } from './image.ts';
 import type { SymbolNode } from './symbols.ts';
 import { civilFromDays } from './literals.ts';
-import { resolveDataLogs, type DataLog } from './datalog.ts';
+import { resolveDataLogs, type DataLog, type DataLogImage } from './datalog.ts';
+import { DATALOG_FB_SOURCES, DATALOG_FBS } from './datalogFbs.ts';
 
 export const COMPILER_VERSION = '0.1.0';
 
@@ -57,6 +58,8 @@ export interface CompileResult {
   hmiSymbols?: HmiSymbol[];
   /** Data blocks with their number and location */
   dbs?: DbEntry[];
+  /** Data logs of the program (configured in the Studio or created with DataLogCreate) */
+  dataLogs?: Array<{ name: string; columns: string[]; program: boolean }>;
   /** function index -> block name / file, for mapping runtime faults to sources */
   functions: Array<{ name: string; kind: string; file?: string }>;
   stats: { code: number; data: number; constants: number; inputs: number; outputs: number; memory: number };
@@ -228,6 +231,9 @@ class Compiler {
   private readonly classes = new Map<string, ClassInfo>();
   private readonly interfaces = new Map<string, IfcInfo>();
   private readonly slots = new Map<string, Slot>();
+  /** Data logs: index -> name (configured ones first, then those created by DataLogCreate) */
+  private readonly logNames: string[] = [];
+  private readonly programLogs = new Map<string, { name: string; line: number; file?: string; columns?: DataLogImage['columns'] }>();
 
   private dataTop = 0;
   private init!: MemoryImage;
@@ -264,6 +270,7 @@ class Compiler {
     this.collect(() => this.declareBlocks());
     if (!this.hasErrors()) this.declareClasses();
     this.collect(() => this.declareGlobals());
+    this.collect(() => this.declareDataLogs());
     if (this.hasErrors()) return this.result();
 
     this.collect(() => this.allocate());
@@ -291,6 +298,13 @@ class Compiler {
         this.program.interfaces.push(...p.interfaces);
       } catch (e) {
         this.diagnostics.push(toDiagnostic(e));
+      }
+    }
+    // Data log instructions (DataLogCreate, DataLogWrite...) used by the program
+    if (this.options.sources.some((src) => /\bDataLog(Create|Open|Write|Close|NewFile|Clear|Delete)\b/i.test(src.text))) {
+      const defined = new Set(this.program.pous.map((x) => x.name.toUpperCase()));
+      for (const key of DATALOG_FBS) {
+        if (!defined.has(key)) this.program.pous.push(...parse(DATALOG_FB_SOURCES[key], '#datalog').pous);
       }
     }
   }
@@ -392,6 +406,127 @@ class Compiler {
     if (pou && pou.kind === 'FUNCTION_BLOCK') return { k: 'fb', name: pou.name, library: false };
     if (pou) throw this.err(`'${t.name}' is a ${pou.kind === 'FUNCTION' ? 'function (FC)' : 'organization block'}, not a data type`, t.line);
     throw this.err(`Unknown data type '${t.name}'`, t.line);
+  }
+
+  // -------------------------------------------------------------------------
+  // Traceability: data logs
+  // -------------------------------------------------------------------------
+
+  /** Configured data logs, then the ones created by DataLogCreate(NAME := '...', DATA := ...) */
+  private declareDataLogs(): void {
+    for (const l of this.options.dataLogs ?? []) this.logNames.push(l.name);
+    const visitExpr = (e: Expr, pou: { file?: string }): void => {
+      if (e.kind === 'call') {
+        const arg = (n: string) => e.args.find((a) => a.name?.toUpperCase() === n);
+        const name = arg('NAME')?.value;
+        if (name?.kind === 'string' && arg('DATA')) {
+          const key = name.value.toUpperCase();
+          if (!this.programLogs.has(key)) {
+            this.programLogs.set(key, { name: name.value, line: e.line, file: pou.file });
+            if (this.logIndex(name.value) < 0) this.logNames.push(name.value);
+          }
+        }
+        e.args.forEach((a) => visitExpr(a.value, pou));
+      } else if (e.kind === 'binary') {
+        visitExpr(e.left, pou);
+        visitExpr(e.right, pou);
+      } else if (e.kind === 'unary') {
+        visitExpr(e.operand, pou);
+      }
+    };
+    const visit = (body: Stmt[], pou: { file?: string }): void => {
+      for (const st of body) {
+        switch (st.kind) {
+          case 'call': visitExpr(st.call, pou); break;
+          case 'assign': visitExpr(st.value, pou); break;
+          case 'if': st.branches.forEach((b) => visit(b.body, pou)); if (st.else) visit(st.else, pou); break;
+          case 'while': case 'repeat': case 'for': visit(st.body, pou); break;
+          case 'case': st.branches.forEach((b) => visit(b.body, pou)); if (st.else) visit(st.else, pou); break;
+          default:
+        }
+      }
+    };
+    for (const pou of this.program.pous) {
+      visit(pou.body, pou);
+      for (const m of pou.methods ?? []) visit(m.body, { file: m.file ?? pou.file });
+    }
+  }
+
+  private logIndex(name: string): number {
+    return this.logNames.findIndex((n) => n.toUpperCase() === name.toUpperCase());
+  }
+
+  /** Call of DataLogCreate / DataLogOpen...: DATA defines the columns, NAME gives the log index */
+  private dataLogCall(e: Extract<Expr, { kind: 'call' }>, key: string): Extract<Expr, { kind: 'call' }> {
+    const arg = (n: string) => e.args.find((a) => a.name?.toUpperCase() === n);
+    if (arg('__INDEX')) throw this.err(`'__INDEX' is not a parameter of ${exprName(e.callee)}`, e.line);
+    const args = e.args.filter((a) => !['DATA', 'HEADER'].includes(a.name?.toUpperCase() ?? ''));
+    if (key === 'DATALOGCREATE' || key === 'DATALOGOPEN') {
+      const nameArg = arg('NAME')?.value;
+      const name = nameArg?.kind === 'string' ? nameArg.value : nameArg ? String(this.fold(nameArg) ?? '') : '';
+      if (!name) throw this.err(`${key === 'DATALOGCREATE' ? 'DataLogCreate' : 'DataLogOpen'}: NAME must be a constant string (e.g. NAME := 'Production')`, e.line);
+      const index = this.logIndex(name);
+      if (index < 0) throw this.err(`DataLogOpen: no data log '${name}' (create it with DataLogCreate or in Traçabilité)`, e.line);
+      if (key === 'DATALOGCREATE') {
+        const data = arg('DATA')?.value;
+        if (!data) throw this.err(`DataLogCreate: DATA is missing (the structure written by DataLogWrite)`, e.line);
+        const columns = this.dataColumns(data, e.line);
+        const log = this.programLogs.get(name.toUpperCase());
+        if (log) {
+          if (log.columns && JSON.stringify(log.columns) !== JSON.stringify(columns)) {
+            throw this.err(`DataLogCreate: data log '${name}' is created elsewhere with another DATA`, e.line);
+          }
+          log.columns = columns;
+        }
+      }
+      args.push({ name: '__INDEX', value: { kind: 'int', value: index, line: e.line }, output: false });
+    }
+    return { ...e, args };
+  }
+
+  /** Columns of DATA: its elementary members (structures and arrays are flattened) */
+  private dataColumns(data: Expr, line: number): DataLogImage['columns'] {
+    const p = this.place(data);
+    if (p.k !== 'static' || p.area === 'N' || p.area === 'C') {
+      throw this.err('DataLogCreate: DATA must be a variable of a global data block or a PLC tag (e.g. "DataLog_DB".Record)', line);
+    }
+    const out: DataLogImage['columns'] = [];
+    const clean = (n: string) => {
+      let c = n.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'value';
+      if (!/^[A-Za-z_]/.test(c)) c = `c_${c}`;
+      return c.slice(0, 63);
+    };
+    const leaf = (t: DataType, offset: number, bit: number | undefined, name: string): void => {
+      if (out.length > 64) return;
+      if (t.k === 'elem') {
+        const info = ELEMENTARY[t.name];
+        out.push({ name: clean(name), area: p.area as 'D' | 'I' | 'Q' | 'M', offset, bit, type: t.name === 'TIME' ? HMI_TIME : info.vm, size: info.size });
+      } else if (t.k === 'string') {
+        out.push({ name: clean(name), area: p.area as 'D' | 'I' | 'Q' | 'M', offset, type: HMI_STRING, size: t.length + 2 });
+      } else if (t.k === 'array') {
+        const size = this.sizeOf(t.elem);
+        for (let i = t.low; i <= t.high; i++) leaf(t.elem, offset + (i - t.low) * size, undefined, `${name}_${i}`);
+      } else if (t.k === 'struct' || t.k === 'db' || (t.k === 'fb' && !t.library)) {
+        const layout = t.k === 'struct' ? this.structLayout(t) : t.k === 'db' ? this.dbLayouts.get(t.name.toUpperCase())! : this.fbLayout(t);
+        for (const m of layout.members.values()) {
+          if (m.section === 'inout') continue;
+          leaf(m.type, offset + m.offset, undefined, name ? `${name}_${m.name}` : m.name);
+        }
+      } else {
+        throw this.err(`DataLogCreate: ${typeName(t)} cannot be recorded`, line);
+      }
+    };
+    const top = p.type.k === 'struct' || p.type.k === 'db' || p.type.k === 'fb' ? '' : exprName(data).replace(/^.*[."]/, '') || 'value';
+    leaf(p.type, p.offset, p.bit, top);
+    if (out.length > 64) throw this.err('DataLogCreate: DATA has more than 64 values', line);
+    const seen = new Set<string>();
+    for (const c of out) {
+      let n = c.name;
+      for (let k = 2; seen.has(n.toLowerCase()); k++) n = `${c.name}_${k}`;
+      seen.add(n.toLowerCase());
+      c.name = n;
+    }
+    return out;
   }
 
   // -------------------------------------------------------------------------
@@ -2432,10 +2567,16 @@ class Compiler {
       case 'DATALOG_WRITE': {
         // DATALOG_WRITE('Name'): records the columns of the data log now; FALSE if the queue is full
         const a = args[0];
-        const name = a.kind === 'string' ? a.value : a.kind === 'var' ? a.name : null;
-        const index = name === null ? -1 : (this.options.dataLogs ?? []).findIndex((l) => l.name.toUpperCase() === name.toUpperCase());
-        if (index < 0) throw this.err(`DATALOG_WRITE: unknown data log${name ? ` '${name}'` : ''} (see Traçabilité in the device)`, e.line);
-        this.pushInt(index);
+        if (a.kind === 'string' || (a.kind === 'var' && !this.lookup(a.name, a.scope))) {
+          const name = a.kind === 'string' ? a.value : a.name;
+          const index = this.logIndex(name);
+          if (index < 0) throw this.err(`DATALOG_WRITE: unknown data log '${name}' (see Traçabilité in the device, or DataLogCreate)`, e.line);
+          this.pushInt(index);
+        } else {
+          // index of the log (DataLogWrite: ID - 1)
+          if (!isInt(this.typeOf(a))) throw this.err('DATALOG_WRITE expects the name of a data log', e.line);
+          this.expr(a, T.LINT);
+        }
         this.emit(Op.SYS, SysFn.DATALOG_WRITE, 1);
         return;
       }
@@ -2693,6 +2834,8 @@ class Compiler {
 
   private callInstance(e: Extract<Expr, { kind: 'call' }>): void {
     const fbType = this.instanceType(e);
+    const dlKey = fbType.name.toUpperCase();
+    if (!fbType.library && DATALOG_FBS.includes(dlKey) && this.pous.get(dlKey)?.file === '#datalog') e = this.dataLogCall(e, dlKey);
     let callee = e.callee;
     if (callee.kind === 'member' && this.typeOf(callee.base).k === 'fb'
       && (this.typeOf(callee.base) as { name: string }).name.toUpperCase() === callee.member.toUpperCase()) {
@@ -2863,9 +3006,8 @@ class Compiler {
     }
     const hmiSymbols = this.hmiSymbols();
     const dbs = this.dbTable();
-    const logs = resolveDataLogs(this.options.dataLogs ?? [], this.symbols);
-    for (const message of logs.errors) this.diagnostics.push({ severity: 'error', message, file: '#datalogs' });
-    if (logs.errors.length) return this.result();
+    const logs = this.dataLogImages();
+    if (!logs) return this.result();
     const image = buildImage({
       name: this.options.name ?? 'program',
       compilerVersion: COMPILER_VERSION,
@@ -2886,7 +3028,7 @@ class Compiler {
       symbols: hmiSymbols,
       dbs,
       services: this.options.services,
-      dataLogs: logs.images,
+      dataLogs: logs,
     });
     const crc = new DataView(image.buffer, image.byteOffset + image.length - 4, 4).getUint32(0, true);
     return {
@@ -2897,6 +3039,50 @@ class Compiler {
       hmiSymbols,
       dbs,
     };
+  }
+
+  /**
+   * Data logs of the image, in index order: configured ones (Traçabilité) and the ones created
+   * by DataLogCreate; a configured log without columns only adds settings (database,
+   * retention, trigger) to the program log of the same name.
+   */
+  private dataLogImages(): DataLogImage[] | null {
+    const configured = this.options.dataLogs ?? [];
+    let failed = false;
+    const error = (message: string) => {
+      this.diagnostics.push({ severity: 'error', message, file: '#datalogs' });
+      failed = true;
+    };
+    const plain = configured.filter((l) => !this.programLogs.has(l.name.toUpperCase()));
+    const settingsOnly = configured.filter((l) => this.programLogs.has(l.name.toUpperCase()));
+    for (const l of settingsOnly) {
+      if (l.columns.length) error(`Data log '${l.name}': its columns are defined by DataLogCreate in the program (remove them in Traçabilité)`);
+    }
+    const resolved = resolveDataLogs(plain, this.symbols);
+    resolved.errors.forEach(error);
+    const settings = resolveDataLogs(settingsOnly.map((l) => ({ ...l, columns: [{ name: 'x', tag: '%M0.0' }] })), this.symbols);
+    settings.errors.forEach(error);
+    const images: DataLogImage[] = [];
+    for (const name of this.logNames) {
+      const key = name.toUpperCase();
+      const program = this.programLogs.get(key);
+      if (program) {
+        if (!program.columns) {
+          error(`Data log '${name}': DataLogCreate with DATA was not compiled`);
+          continue;
+        }
+        const s = settings.images.find((x) => x.name.toUpperCase() === key);
+        images.push({
+          name: program.name, trigger: s?.trigger ?? { kind: 'program' }, retentionDays: s?.retentionDays ?? 0,
+          columns: program.columns, destination: s?.destination,
+        });
+      } else {
+        const img = resolved.images.find((x) => x.name.toUpperCase() === key);
+        if (img) images.push(img);
+      }
+    }
+    if (images.length > 16) error('At most 16 data logs per CPU');
+    return failed ? null : images;
   }
 
   /** Flattens the symbol tree into the variables visible to HMIs. */
@@ -2944,6 +3130,11 @@ class Compiler {
       diagnostics: this.diagnostics,
       symbols: this.symbols,
       functions: ordered.map((f) => ({ name: f.block ?? f.pou.name, kind: f.block ? 'FUNCTION_BLOCK' : f.pou.kind, file: f.pou.file })),
+      dataLogs: this.logNames.map((name) => {
+        const p = this.programLogs.get(name.toUpperCase());
+        const c = (this.options.dataLogs ?? []).find((l) => l.name.toUpperCase() === name.toUpperCase());
+        return { name, program: !!p, columns: p ? (p.columns ?? []).map((x) => x.name) : (c?.columns ?? []).map((x) => x.name) };
+      }),
       stats: {
         code: this.code.length, data: this.dataTop, constants: this.consts.length,
         inputs: this.imageSize.I, outputs: this.imageSize.Q, memory: this.imageSize.M,

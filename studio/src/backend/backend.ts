@@ -17,6 +17,8 @@ export interface CompileSummary {
   codeLines: Record<string, number>;
   /** Numbered data blocks and their location in the data memory (absolute addresses) */
   dbs: Array<{ number: number; name: string; offset: number; size: number }>;
+  /** Data logs in the order of the CPU (configured ones, then DataLogCreate) */
+  dataLogs: Array<{ name: string; columns: string[]; program: boolean }>;
   time: string;
 }
 
@@ -52,7 +54,7 @@ export class Backend {
     }
     return {
       ok: r.ok, diagnostics: r.diagnostics, programId: r.programId, stats: r.stats, symbols: r.symbols,
-      functions: r.functions, time: new Date().toISOString(), dbs: r.dbs ?? [],
+      functions: r.functions, time: new Date().toISOString(), dbs: r.dbs ?? [], dataLogs: r.dataLogs ?? [],
       codeLines: Object.fromEntries(r.sources.filter((x) => x.blockId).map((x) => [x.blockId!, x.codeLine])),
     };
   }
