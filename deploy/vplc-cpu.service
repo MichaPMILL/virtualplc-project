@@ -23,9 +23,10 @@ KillSignal=SIGTERM
 TimeoutStopSec=5
 # Real-time friendly scheduling for a steadier scan cycle
 Nice=-10
-# S7 communication (port 102) for HMIs: allow binding a port below 1024
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# S7 communication (port 102) for HMIs: bind a port below 1024
+# PROFINET: raw Ethernet frames (CAP_NET_RAW), IP address set by the controller (CAP_NET_ADMIN)
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN
 
 NoNewPrivileges=true
 ProtectSystem=strict

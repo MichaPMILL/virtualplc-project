@@ -58,7 +58,35 @@ export type IoModuleConfig =
     /** Watchdog factor (default 3) */
     watchdog?: number;
     submodules: PnSubmodule[];
+    /** Studio only: catalogue of the device (from its GSDML) and plugged modules */
+    catalog?: PnCatalog;
   };
+
+/** What the Studio keeps of a GSDML file to configure the device again. */
+export interface PnCatalog {
+  file: string;
+  vendor: string;
+  family?: string;
+  dapName: string;
+  dapIdent: number;
+  dapSubmodules: PnCatalogSubmodule[];
+  physicalSlots: number[];
+  minCycleMs: number;
+  modules: Array<{ id: string; name: string; orderNumber?: string; ident: number; slots: number[]; fixed: number[]; submodules: PnCatalogSubmodule[] }>;
+  plugged: Array<{ slot: number; moduleId: string }>;
+  /** First %I / %Q bytes of the device */
+  inBase: number;
+  outBase: number;
+}
+
+export interface PnCatalogSubmodule {
+  name: string;
+  subslot: number;
+  ident: number;
+  inLength: number;
+  outLength: number;
+  records: Array<{ index: number; data: number[] }>;
+}
 
 /** A submodule of a PROFINET IO-Device (from its GSDML), mapped to the process image. */
 export interface PnSubmodule {

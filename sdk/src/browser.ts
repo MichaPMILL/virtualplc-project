@@ -14,7 +14,7 @@ export { decodeValue, encodeValue, formatValue, formatTime } from './values.ts';
 export { formatTemporal, parseTemporal, parseDurationNs, TEMPORAL_PREFIXES, type TemporalType } from './literals.ts';
 export type { PlcValue } from './values.ts';
 export type { Diagnostic } from './diagnostics.ts';
-export type { DbEntry, HmiSymbol, IoLinkPort, IoModuleConfig, PnSubmodule, ServicesConfig } from './image.ts';
+export type { DbEntry, HmiSymbol, IoLinkPort, IoModuleConfig, PnCatalog, PnCatalogSubmodule, PnSubmodule, ServicesConfig } from './image.ts';
 export { BOXES, ladderToScl, LadderError, ladElementFor, ladElements, ladId, ladOperands } from './ladder.ts';
 export type { BoxSpec, CoilType, ContactType, LadElement, LadNetwork, LadderScl } from './ladder.ts';
 export { fixIecInstances, flgNetToLadder, importSimaticMl, isSimaticMl, SimaticMlError } from './simaticml.ts';

@@ -78,6 +78,28 @@ workstation (menu *Projet*, toolbar, task card *Versions*):
 
 Authentication uses the workstation's Git credentials (Git Credential Manager, SSH keys).
 
+### PROFINET
+
+In-house PROFINET IO stack (RT_CLASS_1, no third-party code) in `vplc-cpu` for Linux / Raspberry Pi
+(`runtime/platform/linux/profinet`: DCP, DCE/RPC connection establishment, cyclic data, watchdog):
+
+- **The CPU as IO-Device** of another controller: in *Configuration des appareils*, add
+  *IO-Device PROFINET*, choose the network interface, the name of station and the exchanged
+  areas (controller outputs → `%I`, controller inputs ← `%Q`), then *Exporter le fichier GSDML*
+  and import it into the controller's engineering tool (modules IN / OUT / IN-OUT of 1 to
+  128 bytes, mapped in slot order). The controller can set the name and the IP address (DCP);
+  they are kept by the CPU.
+- **The CPU as IO-Controller**: *+ > Appareil PROFINET (fichier GSDML)...* reads the device's
+  GSDML; choose the module of each slot, the name of station, the IP address and the update
+  time; addresses are assigned and *Créer les variables API* creates the tags. At start-up the
+  CPU finds the device by its name, gives it its IP address, writes the default parameter
+  records of the GSDML, and exchanges data every cycle (`DEVICE_OK(PN_1)` in the program).
+
+Requirements: raw Ethernet access (`CAP_NET_RAW`, and `CAP_NET_ADMIN` for the IP set by DCP —
+see `deploy/vplc-cpu.service`). Not yet supported: IRT / RT_CLASS_3, alarms and diagnosis from
+the devices, shared devices, both roles on the same interface. Use a vendor ID assigned by PI
+for devices you distribute (0x0000 is for trials).
+
 ### Ladder (CONT)
 
 OB, FB and FC can be programmed in **CONT** (ladder diagram) instead of SCL — choose the

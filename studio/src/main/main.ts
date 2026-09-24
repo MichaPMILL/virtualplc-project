@@ -13,6 +13,7 @@ const FILTERS = {
   scl: [{ name: 'Fichiers exportés (sources SCL, DB, types, tables de variables, export XML)', extensions: ['scl', 'db', 'udt', 'xlsx', 'xml', 'txt'] }],
   zip: [{ name: 'Archive ZIP', extensions: ['zip'] }],
   iodd: [{ name: 'Description IO-Link (IODD)', extensions: ['xml'] }],
+  gsdml: [{ name: 'Description PROFINET (GSDML)', extensions: ['xml'] }],
 };
 
 function createWindow(): void {
@@ -77,9 +78,9 @@ ipcMain.handle('api', async (_e, method: ApiMethod, args: unknown[]) => {
   return fn(...args);
 });
 
-ipcMain.handle('files.openMany', async (_e, kind?: 'iodd') => {
+ipcMain.handle('files.openMany', async (_e, kind?: 'iodd' | 'gsdml') => {
   if (!win) return [];
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: kind === 'iodd' ? FILTERS.iodd : FILTERS.scl });
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: kind ? FILTERS[kind] : FILTERS.scl });
   if (r.canceled) return [];
   return Promise.all(r.filePaths.map(async (path) => ({ path, name: basename(path), bytes: new Uint8Array(await readFile(path)) })));
 });
