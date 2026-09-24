@@ -27,6 +27,9 @@ export interface CompileOptions {
   buildTime?: number;
   /** Cycle time of the main OB in milliseconds (CPU property); default 10. */
   cycleMs?: number;
+  /** Names of the cyclic and startup OBs (default: "Main"/OB1 and "Startup"/OB100). */
+  mainOb?: string;
+  startupOb?: string;
 }
 
 export interface CompileResult {
@@ -369,7 +372,7 @@ class Compiler {
     if (imageInits.length > 0) {
       const input = imageInits.find((v) => v.address!.area === 'I');
       if (input) throw this.err(`'${input.name}': inputs cannot have a start value`, input.line, input.file);
-      let startup = ['STARTUP', 'OB100', 'COMPLETE_RESTART'].map((n) => this.pous.get(n)).find((p) => p?.kind === 'ORGANIZATION_BLOCK');
+      let startup = [this.options.startupOb?.toUpperCase() ?? '', 'STARTUP', 'OB100', 'COMPLETE_RESTART'].map((n) => this.pous.get(n)).find((p) => p?.kind === 'ORGANIZATION_BLOCK');
       if (!startup) {
         startup = { kind: 'ORGANIZATION_BLOCK', name: 'Startup', returnType: null, vars: [], body: [], line: imageInits[0].line, file: imageInits[0].file };
         this.pous.set('STARTUP', startup);
@@ -1828,8 +1831,8 @@ class Compiler {
   private link(): CompileResult {
     const ordered = [...this.functions.values()].sort((a, b) => a.index - b.index);
     const find = (names: string[]) => ordered.find((f) => f.pou.kind === 'ORGANIZATION_BLOCK' && names.includes(f.pou.name.toUpperCase()));
-    const main = find(['MAIN', 'OB1', 'OB_MAIN']);
-    const startup = find(['STARTUP', 'OB100', 'COMPLETE_RESTART']);
+    const main = find(this.options.mainOb ? [this.options.mainOb.toUpperCase()] : ['MAIN', 'OB1', 'OB_MAIN']);
+    const startup = find(this.options.startupOb ? [this.options.startupOb.toUpperCase()] : ['STARTUP', 'OB100', 'COMPLETE_RESTART']);
     if (!main) this.diagnostics.push({ severity: 'warning', message: 'No cyclic organization block "Main" (OB1): the CPU will run without program logic' });
 
     const entries: FunctionEntry[] = ordered.map((f) => ({ codeOffset: f.codeOffset, frameOffset: f.zeroOffset, frameSize: f.zeroSize }));

@@ -15,3 +15,4 @@ export { decodeValue, encodeValue, formatValue, formatTime } from './values.ts';
 export type { PlcValue } from './values.ts';
 export { DeviceClient, DeviceError } from './device.ts';
 export type { DeviceInfo, DeviceState, LogEntry } from './device.ts';
+export * from './project.ts';
