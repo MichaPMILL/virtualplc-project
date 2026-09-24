@@ -1,0 +1,72 @@
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    paths: ['firmware/**', 'runtime/core/**', 'spec/**', '.github/workflows/firmware.yml']
+  pull_request:
+    paths: ['firmware/**', 'runtime/core/**', 'spec/**', '.github/workflows/firmware.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ESP32
+            core: esp32:esp32
+            fqbn: esp32:esp32:esp32
+            url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          - name: ESP32-S3
+            core: esp32:esp32
+            fqbn: esp32:esp32:esp32s3
+            url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          - name: Raspberry Pi Pico W
+            core: rp2040:rp2040
+            fqbn: rp2040:rp2040:rpipicow
+            url: https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
+          - name: Arduino Uno R4 WiFi
+            core: arduino:renesas_uno
+            fqbn: arduino:renesas_uno:unor4wifi
+          - name: Arduino Due
+            core: arduino:sam
+            fqbn: arduino:sam:arduino_due_x
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Board support
+        run: |
+          arduino-cli config init
+          if [ -n "${{ matrix.url }}" ]; then arduino-cli config set board_manager.additional_urls "${{ matrix.url }}"; fi
+          arduino-cli core update-index
+          arduino-cli core install ${{ matrix.core }}
+      - name: Compile
+        run: |
+          arduino-cli compile --fqbn ${{ matrix.fqbn }} --library runtime/core --warnings default \
+            --output-dir build/${{ matrix.fqbn }} firmware/VirtualPLC
+      - uses: actions/upload-artifact@v4
+        with:
+          name: virtualplc-firmware-${{ strategy.job-index }}
+          path: build/${{ matrix.fqbn }}/*.bin
+          if-no-files-found: ignore
+
+  host-simulation:
+    name: Sketch on Linux (serial link, GPIO, storage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: sudo apt-get update && sudo apt-get install -y socat
+      - run: cmake -S runtime -B runtime/build -DVPLC_OPCUA=OFF && cmake --build runtime/build -j --target vplc-firmware-sim vplc-cpu
+      - working-directory: sdk
+        run: |
+          npm ci
+          sudo --preserve-env=PATH node --test test/firmware.test.ts test/serial.test.ts

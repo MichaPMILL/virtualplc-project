@@ -19,6 +19,18 @@ add_library(vplc_core STATIC
 target_include_directories(vplc_core PUBLIC core)
 target_compile_options(vplc_core PRIVATE -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
 
+# The microcontroller firmware sketch on Linux, with a small Arduino shim (tests)
+file(GLOB VPLC_CORE_SOURCES core/*.cpp)
+add_executable(vplc-firmware-sim
+  ../firmware/test/host/host.cpp
+  ../firmware/test/host/sketch.cpp
+  ../firmware/VirtualPLC/mcu_platform.cpp
+  ../firmware/VirtualPLC/firmware.cpp
+  ${VPLC_CORE_SOURCES})
+target_include_directories(vplc-firmware-sim PRIVATE ../firmware/test/host ../firmware/VirtualPLC core)
+target_compile_definitions(vplc-firmware-sim PRIVATE ARDUINO=10800 VPLC_HOST_SIM=1)
+target_compile_options(vplc-firmware-sim PRIVATE -Wall -Wextra)
+
 add_executable(vplc-sim tools/vplc-sim.cpp)
 target_link_libraries(vplc-sim vplc_core m)
 target_compile_options(vplc-sim PRIVATE -Wall -Wextra)

@@ -5,7 +5,14 @@
 #error "Arduino AVR boards (Uno, Mega, Nano) do not have enough RAM for VirtualPLC: use an ESP32, a Raspberry Pi Pico (W), an Arduino Uno R4, Nano 33 IoT, Due or Portenta"
 #endif
 
-#if defined(ESP32)
+#if defined(VPLC_HOST_SIM)
+// the sketch running on Linux for tests (firmware/test/host): 32 KB board profile
+#define VPLC_BOARD "host-sim"
+#define VPLC_HAS_FS 1
+#define VPLC_PROGRAM_SIZE (8u * 1024u)
+#define VPLC_DATA_SIZE (8u * 1024u)
+#define VPLC_ADC_BITS 12
+#elif defined(ESP32)
 #define VPLC_BOARD "esp32"
 #define VPLC_HAS_WIFI 1
 #define VPLC_HAS_FS 1
@@ -46,6 +53,14 @@
 #define VPLC_PROGRAM_SIZE (6u * 1024u)
 #define VPLC_DATA_SIZE (6u * 1024u)
 #define VPLC_ADC_BITS 10
+#endif
+
+// analogWrite() (PWM, or DAC on the ESP32 pins 25 / 26)
+#if defined(VPLC_HOST_SIM) || defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RENESAS) || defined(ARDUINO_ARCH_SAM) || \
+    defined(ARDUINO_ARCH_MBED) || defined(ARDUINO_ARCH_SAMD)
+#define VPLC_HAS_ANALOG_OUT 1
+#else
+#define VPLC_HAS_ANALOG_OUT 0
 #endif
 
 #ifndef VPLC_HAS_WIFI

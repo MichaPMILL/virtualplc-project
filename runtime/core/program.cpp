@@ -209,11 +209,11 @@ bool IoModuleReader::next(IoModuleInfo& m) {
             m.cycleMs = rd16le(p_ + 4); m.watchdog = rd16le(p_ + 6);
             uint8_t count = p_[8];
             p_ += 9;
-            m.subCount = count < VPLC_PN_MAX_SUBMODULES ? count : uint8_t(VPLC_PN_MAX_SUBMODULES);
+            m.subCount = size_t(count) + 1 <= size_t(VPLC_PN_MAX_SUBMODULES) ? count : uint8_t(VPLC_PN_MAX_SUBMODULES);
             for (uint8_t i = 0; i < count; i++) {
                 if (!need(21)) return false;
                 IoModuleInfo::PnSub tmp;
-                IoModuleInfo::PnSub& x = i < VPLC_PN_MAX_SUBMODULES ? m.subs[i] : tmp;
+                IoModuleInfo::PnSub& x = size_t(i) + 1 <= size_t(VPLC_PN_MAX_SUBMODULES) ? m.subs[i] : tmp;
                 x.slot = rd16le(p_); x.subslot = rd16le(p_ + 2);
                 x.moduleIdent = rd32le(p_ + 4); x.submoduleIdent = rd32le(p_ + 8);
                 x.inLength = rd16le(p_ + 12); x.inByte = rd16le(p_ + 14);
@@ -225,7 +225,7 @@ bool IoModuleReader::next(IoModuleInfo& m) {
                     if (!need(4)) return false;
                     uint16_t len = rd16le(p_ + 2);
                     if (!need(4u + len)) return false;
-                    if (i < VPLC_PN_MAX_SUBMODULES && size_t(m.recordUsed) + 4 + len <= size_t(VPLC_PN_RECORD_POOL)) {
+                    if (size_t(i) + 1 <= size_t(VPLC_PN_MAX_SUBMODULES) && size_t(m.recordUsed) + 4 + len <= size_t(VPLC_PN_RECORD_POOL)) {
                         uint8_t* d = m.recordPool + m.recordUsed;
                         d[0] = p_[0]; d[1] = p_[1]; d[2] = p_[2]; d[3] = p_[3];  // index, length (little endian)
                         memcpy(d + 4, p_ + 4, len);

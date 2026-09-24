@@ -44,7 +44,9 @@ void Cpu::record(const char* message) {
     LogEntry& e = logs_[logSeq_ % VPLC_LOG_ENTRIES];
     e.seq = ++logSeq_;
     e.time = platform_.millis();
-    snprintf(e.text, sizeof e.text, "%s", message);
+    size_t n = strnlen(message, sizeof e.text - 1);  // long messages are cut
+    memcpy(e.text, message, n);
+    e.text[n] = 0;
 }
 
 void Cpu::log(const char* message) {

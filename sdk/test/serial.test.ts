@@ -10,6 +10,7 @@ import { compile, DeviceClient, isSerialPort } from '../src/index.ts';
 
 const CPU = new URL('../../runtime/build/vplc-cpu', import.meta.url).pathname;
 const skip = !existsSync(CPU) ? 'build runtime/ first' : (() => {
+  if (process.getuid?.() !== 0) return 'needs root (serial port links under /dev)';
   try { execFileSync('socat', ['-V'], { stdio: 'ignore' }); return false; } catch { return 'needs socat'; }
 })();
 

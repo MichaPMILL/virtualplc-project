@@ -24,8 +24,8 @@ workflow that targets small hardware:
    project tree · device view · tag tables · OB/FB/FC/DB editors (SCL, CONT) · watch tables
         │ compiles SCL → bytecode (sdk/)
         ▼ TCP 20105 (download, RUN/STOP, monitoring, forcing, diagnostic buffer)
- vplc-cpu (portable C++ VM, runtime/)  →  Linux PC, Raspberry Pi (GPIO), Modbus TCP remote I/O
-                                          (ESP32 / Arduino firmware: planned)
+ vplc-cpu (portable C++ VM, runtime/)  →  Linux PC, Raspberry Pi (GPIO), Modbus TCP remote I/O, PROFINET
+ firmware/VirtualPLC (same core)       →  ESP32, Raspberry Pi Pico (W), Arduino Uno R4, Due… (USB or Wi-Fi)
 ```
 
 | Path       | Content                                                                   |
@@ -33,6 +33,7 @@ workflow that targets small hardware:
 | `spec/`    | Instruction set (single source of truth, generates `sdk/src/isa.ts` and `runtime/core/isa.h`) |
 | `sdk/`     | TypeScript SCL compiler, project model (`.vplcproj`), device client, `vplc` CLI |
 | `runtime/` | C++ VM and CPU (`vplc-cpu`, `vplc-sim`), CMake                            |
+| `firmware/`| Microcontroller firmware (Arduino sketch: ESP32, Pico, Uno R4…), see `firmware/README.md` |
 | `studio/`  | The engineering application                                               |
 | `docs/`    | `architecture.md`, `bytecode.md`, `protocol.md`                           |
 

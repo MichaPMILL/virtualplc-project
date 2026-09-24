@@ -53,8 +53,9 @@ void McuPlatform::log(const char* message) {
 
 void McuPlatform::note(const char* message) {
     if (noteCount_ >= 4) return;
-    strncpy(notes_[noteCount_], message, sizeof notes_[0] - 1);
-    notes_[noteCount_][sizeof notes_[0] - 1] = 0;
+    size_t n = strnlen(message, sizeof notes_[0] - 1);
+    memcpy(notes_[noteCount_], message, n);
+    notes_[noteCount_][n] = 0;
     noteCount_++;
 }
 
@@ -172,9 +173,11 @@ uint16_t McuPlatform::configureIo(const Program& program) {
                 m.ok = true;
                 break;
             case IoModule::IO_GPIO_AO:
-#if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RENESAS) || defined(ARDUINO_ARCH_SAM) || defined(ARDUINO_ARCH_MBED) || defined(ARDUINO_ARCH_SAMD)
+#if VPLC_HAS_ANALOG_OUT
                 pinMode(m.pin, OUTPUT);
                 m.ok = true;
+#else
+                note("Analog outputs are not supported on this board");
 #endif
                 break;
             default:
@@ -227,7 +230,7 @@ void McuPlatform::writeOutputs(const uint8_t* image, uint32_t size) {
                 continue;
             }
 #endif
-#if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RENESAS) || defined(ARDUINO_ARCH_SAM) || defined(ARDUINO_ARCH_MBED) || defined(ARDUINO_ARCH_SAMD)
+#if VPLC_HAS_ANALOG_OUT
             analogWrite(m.pin, int(uint32_t(v) * 255u / ANALOG_FULL_SCALE));  // PWM
 #endif
         }
