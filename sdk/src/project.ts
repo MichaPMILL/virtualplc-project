@@ -6,6 +6,7 @@ import { parse, parseAddress } from './parser.ts';
 import { TYPE_DISPLAY, type Elementary } from './types.ts';
 import { formatTemporal, type TemporalType } from './literals.ts';
 import type { TypeRef, Expr } from './ast.ts';
+import { ladderToScl, LadderError, ladElementFor, type LadNetwork } from './ladder.ts';
 
 export const PROJECT_FORMAT = 'virtualplc-project';
 export const PROJECT_VERSION = 1;
@@ -54,8 +55,12 @@ export interface Block {
   /** FC return type ('Void' = none) */
   returnType?: string;
   interface: BlockInterface;
+  /** Programming language of the code (default SCL) */
+  language?: 'SCL' | 'LAD';
   /** SCL statements (body between BEGIN and END_xxx) */
   code: string;
+  /** LAD blocks: networks (the SCL code is generated from them) */
+  networks?: LadNetwork[];
   /** DB: instance of this function block (instance DB) */
   instanceOf?: string;
   /** Global DB: variables */
@@ -246,12 +251,28 @@ export interface GeneratedSource {
   typeId?: string;
   /** Line of the source where the user code starts (1-based) */
   codeLine: number;
+  /** LAD blocks: network / element of each generated code line, translation error */
+  ladder?: { lines: Array<{ network: number; element?: string }>; error?: LadderError };
 }
 
 /** Generates the SCL external source of a block. */
 export function blockSource(b: Block): GeneratedSource {
   const lines: string[] = [];
-  const i = b.interface;
+  let i = b.interface;
+  let code = b.code;
+  let ladder: GeneratedSource['ladder'];
+  if (b.language === 'LAD' && b.type !== 'DB') {
+    try {
+      const l = ladderToScl(b.networks ?? []);
+      code = l.code;
+      ladder = { lines: l.lines };
+      // power flow temporaries of the networks
+      i = { ...i, temp: [...i.temp, ...l.temps.map((name) => ({ name, dataType: 'Bool' }))] };
+    } catch (e) {
+      code = '';
+      ladder = { lines: [], error: e instanceof LadderError ? e : new LadderError((e as Error).message, 0) };
+    }
+  }
   const header = (kw: string, extra = '') => {
     lines.push(`${kw} ${q(b.name)}${extra}`);
     lines.push('VERSION : 0.1');
@@ -283,9 +304,9 @@ export function blockSource(b: Block): GeneratedSource {
   }
   lines.push('BEGIN');
   const codeLine = lines.length + 1;
-  lines.push(b.code.replace(/\r\n/g, '\n').replace(/\n+$/, ''));
+  lines.push(code.replace(/\r\n/g, '\n').replace(/\n+$/, ''));
   lines.push(b.type === 'OB' ? 'END_ORGANIZATION_BLOCK' : b.type === 'FC' ? 'END_FUNCTION' : 'END_FUNCTION_BLOCK');
-  return { file: b.name, text: lines.join('\n') + '\n', blockId: b.id, tagTableId: null, codeLine };
+  return { file: b.name, text: lines.join('\n') + '\n', blockId: b.id, tagTableId: null, codeLine, ladder };
 }
 
 /** Generates the SCL external source of a PLC data type (.udt). */
@@ -320,6 +341,9 @@ export interface ProjectDiagnostic extends Diagnostic {
   codeLine?: number;
   /** "Interface" when the error is in the block interface / declarations */
   location?: 'code' | 'interface' | 'tags' | 'type';
+  /** LAD blocks: network (0-based) and element of the error */
+  network?: number;
+  element?: string;
 }
 
 export interface ProjectCompileResult extends Omit<CompileResult, 'diagnostics'> {
@@ -386,6 +410,10 @@ export function hmiAccess(device: Device): { hidden: string[]; readOnly: string[
 export function compileDevice(project: Project, device: Device): ProjectCompileResult {
   const sources = [...(device.types ?? []).map(dataTypeSource), ...device.tagTables.map(tagTableSource), ...device.blocks.map(blockSource)];
   const pre = checkDevice(device);
+  for (const src of sources) {
+    const err = src.ladder?.error;
+    if (err) pre.push({ severity: 'error', message: `Network ${err.network + 1}: ${err.message}`, blockId: src.blockId!, location: 'code', file: src.file, network: err.network, element: err.element });
+  }
   const main = device.blocks.find((b) => b.type === 'OB' && (b.event ?? 'ProgramCycle') === 'ProgramCycle');
   const startup = device.blocks.find((b) => b.type === 'OB' && b.event === 'Startup');
   const result = pre.some((d) => d.severity === 'error')
@@ -410,6 +438,14 @@ export function compileDevice(project: Project, device: Device): ProjectCompileR
       if (d.line && src.codeLine && d.line >= src.codeLine) {
         pd.location = 'code';
         pd.codeLine = d.line - src.codeLine + 1;
+        const origin = src.ladder?.lines[pd.codeLine - 1];
+        if (origin) {
+          pd.network = origin.network;
+          const block = device.blocks.find((b) => b.id === src.blockId);
+          const network = block?.networks?.[origin.network];
+          pd.element = network ? ladElementFor(network, d.message, origin.element) : origin.element;
+          pd.message = `Network ${origin.network + 1}: ${d.message}`;
+        }
       } else {
         pd.location = 'interface';
       }

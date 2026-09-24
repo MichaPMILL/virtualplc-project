@@ -21,7 +21,7 @@ workflow that targets small hardware:
 
 ```
  VirtualPLC Studio (Electron, Windows/macOS/Linux)
-   project tree · device view · tag tables · OB/FB/FC/DB editors (SCL) · watch tables
+   project tree · device view · tag tables · OB/FB/FC/DB editors (SCL, CONT) · watch tables
         │ compiles SCL → bytecode (sdk/)
         ▼ TCP 20105 (download, RUN/STOP, monitoring, forcing, diagnostic buffer)
  vplc-cpu (portable C++ VM, runtime/)  →  Linux PC, Raspberry Pi (GPIO), Modbus TCP remote I/O
@@ -56,7 +56,7 @@ npm run dist         # installers: .dmg / NSIS .exe / AppImage + .deb (in studio
 ### Team work and archiving (Git)
 
 Projects are saved as a **folder with one file per object** (`<Project>.vplcproj` manifest,
-`devices/<PLC>/blocks/<Block>.json` + `.scl` code, `tags/`, `watch/`), so Git can compare
+`devices/<PLC>/blocks/<Block>.json` + `.scl` code — CONT networks stay in the `.json` —, `tags/`, `watch/`), so Git can compare
 and merge the work of several engineers. The Studio drives the `git` tool installed on the
 workstation (menu *Projet*, toolbar, task card *Versions*):
 
@@ -77,6 +77,20 @@ workstation (menu *Projet*, toolbar, task card *Versions*):
   and on the server). The history can show every branch.
 
 Authentication uses the workstation's Git credentials (Git Credential Manager, SSH keys).
+
+### Ladder (CONT)
+
+OB, FB and FC can be programmed in **CONT** (ladder diagram) instead of SCL — choose the
+language in *Ajouter nouveau bloc*. The editor draws networks between the power rails:
+normally open / closed contacts, rising / falling edge contacts (with their edge memory bit),
+`NOT`, assignment / negated / set / reset coils, parallel branches (*Branche*), and boxes:
+`TON`, `TOF`, `TP`, `CTU`, `CTD`, `CTUD`, `R_TRIG`, `F_TRIG`, `SR`, `RS`, `MOVE`, `ADD`,
+`SUB`, `MUL`, `DIV`, `MOD`, comparisons (`CMP ==`, `<>`, `>`, `>=`, `<`, `<=`), `IN_RANGE`,
+`OUT_RANGE` and block calls. Instructions of the task card can be double-clicked (timers and
+counters ask for a single or multi-instance, as in SCL). Operands complete from the tags
+and the block interface; errors point to the network and the element. With *Visualisation*
+on, the power flow is drawn in green and box parameters show their values. Networks are
+translated to SCL by the compiler (`sdk/src/ladder.ts`); *CONT→SCL* converts a block for good.
 
 ### Data types
 

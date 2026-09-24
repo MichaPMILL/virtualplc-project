@@ -4,7 +4,7 @@
 //   <Project>.vplcproj                    manifest (name, author, comment, creation date)
 //   devices/<Device>/device.json          CPU settings, connection, I/O modules
 //   devices/<Device>/blocks/<Block>.json  block properties and interface
-//   devices/<Device>/blocks/<Block>.scl   block code (SCL statements)
+//   devices/<Device>/blocks/<Block>.scl   block code (SCL statements; LAD networks are in the .json)
 //   devices/<Device>/tags/<Table>.json    PLC tag table
 //   devices/<Device>/watch/<Table>.json   watch table
 //   devices/<Device>/types/<Type>.json    PLC data type (UDT)
@@ -98,8 +98,8 @@ export function projectToFiles(project: Project): ProjectFiles {
     const blockNames = uniqueNames(blocks, (b) => b.name);
     for (const b of blocks) {
       const base = `${dir}/blocks/${blockNames.get(b)}`;
-      files[`${base}.json`] = json(pick(b, ['id', 'name', 'type', 'number', 'comment', 'event', 'returnType', 'instanceOf', 'interface', 'members']));
-      if (b.type !== 'DB') files[`${base}.scl`] = b.code.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n');
+      files[`${base}.json`] = json(pick(b, ['id', 'name', 'type', 'number', 'comment', 'event', 'returnType', 'instanceOf', 'interface', 'members', 'language', 'networks']));
+      if (b.type !== 'DB' && b.language !== 'LAD') files[`${base}.scl`] = b.code.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n');
     }
     const tagNames = uniqueNames(d.tagTables, (t) => t.name);
     for (const t of d.tagTables) files[`${dir}/tags/${tagNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'tags', 'constants']));

@@ -1,5 +1,5 @@
 // Program editor for OB / FC / FB (interface + SCL) and data block editor.
-import { blockLabel, findSymbol, newId, type Block, type Device, type Member, type SymbolNode } from '../../../../sdk/src/browser.ts';
+import { blockLabel, findSymbol, ladderToScl, newId, type Block, type Device, type Member, type SymbolNode } from '../../../../sdk/src/browser.ts';
 import * as A from '../actions.ts';
 import { clear, h, svg } from '../dom.ts';
 import { icons, type IconName } from '../icons.ts';
@@ -7,7 +7,8 @@ import { t } from '../i18n.ts';
 import { store } from '../store.ts';
 import { hmiColumns } from './tagTable.ts';
 import { DATA_TYPES, FB_TYPES, Grid, valueClass } from './grid.ts';
-import { button, openDialog } from '../ui/dialogs.ts';
+import { alertDialog, button, confirmDialog, openDialog } from '../ui/dialogs.ts';
+import { LadderEditor } from './ladder.ts';
 import { operandsOf, SclEditor, type CompletionSource } from './sclEditor.ts';
 import type { EditorView } from './types.ts';
 
@@ -91,6 +92,8 @@ export function blockEditor(device: Device, block: Block): EditorView {
     },
   };
   let editor: SclEditor | null = null;
+  let ladder: LadderEditor | null = null;
+  const isLad = block.language === 'LAD';
   let instance = '';
   const instances = () => device.blocks.filter((b) => b.type === 'DB' && b.instanceOf === block.name).map((b) => b.name);
   const instancePrefix = () => (instance ? `"${instance}".` : '');
@@ -139,15 +142,19 @@ export function blockEditor(device: Device, block: Block): EditorView {
     h('div', { className: 'panel-toolbar' },
       h('button', { className: 'tbtn', title: t.compile, onclick: () => void A.compileCmd(device) }, svg(icons.compile)),
       h('span', { className: 'sep' }),
-      h('button', { className: 'tbtn', title: 'Commenter la sélection', onclick: () => toggleComment() }, '//'),
-      h('button', { className: 'tbtn', title: 'Insérer une REGION', onclick: () => editor?.insert('REGION Nouvelle région\n    \nEND_REGION\n') }, '{ }'),
+      ...(isLad ? [
+        h('button', { className: 'tbtn', title: 'Convertir le bloc en SCL', onclick: () => void convertToScl() }, 'CONT→SCL'),
+      ] : [
+        h('button', { className: 'tbtn', title: 'Commenter la sélection', onclick: () => toggleComment() }, '//'),
+        h('button', { className: 'tbtn', title: 'Insérer une REGION', onclick: () => editor?.insert('REGION Nouvelle région\n    \nEND_REGION\n') }, '{ }'),
+      ]),
       h('span', { className: 'sep' }),
       h('button', { className: 'tbtn', title: t.monitorAll, onclick: () => void A.toggleMonitorCmd() }, svg(icons.glasses)),
       h('span', { style: 'display:flex;align-items:center;gap:4px;margin-left:8px' }, h('span', { className: 'muted' }, 'Instance :'), instanceSel)),
     h('div', { className: 'block-editor', style: 'flex:1;min-height:0' },
       ifacePanel, resizer,
       h('div', { className: 'block-code' },
-        h('div', { className: 'panel-subheader', style: 'gap:6px' }, svg(icons[blockIcon(block)]), blockLabel(block), comment),
+        h('div', { className: 'panel-subheader', style: 'gap:6px' }, svg(icons[blockIcon(block)]), blockLabel(block), isLad ? h('span', { className: 'muted' }, 'CONT') : null, comment),
         codeWrap)));
 
   const toggleComment = () => {
@@ -166,22 +173,70 @@ export function blockEditor(device: Device, block: Block): EditorView {
     });
   };
 
+  const convertToScl = async () => {
+    if (!await confirmDialog('Convertir en SCL', `Le bloc « ${block.name} » sera converti en SCL : les réseaux CONT seront remplacés par le code SCL équivalent. Continuer ?`)) return;
+    let r;
+    try {
+      r = ladderToScl(block.networks ?? []);
+    } catch (e) {
+      await alertDialog('Convertir en SCL', `Conversion impossible : ${(e as Error).message}`, 'error');
+      return;
+    }
+    block.interface.temp.push(...r.temps.map((name) => ({ name, dataType: 'Bool' })));
+    block.code = r.code;
+    block.language = undefined;
+    block.networks = undefined;
+    store.touch();
+    const ref = { kind: 'block' as const, deviceId: device.id, blockId: block.id };
+    A.closeEditor(ref);
+    A.openEditor(ref);
+  };
+
   const applyErrors = () => {
+    if (ladder) {
+      ladder.setErrors(store.diagnosticsFor(block.id).filter((d) => d.location === 'code'));
+      return;
+    }
     if (!editor) return;
     const diags = store.diagnosticsFor(block.id).filter((d) => d.location === 'code' && d.codeLine);
     editor.setErrors(diags.map((d) => ({ line: d.codeLine!, message: d.message, severity: d.severity })));
   };
 
   const onGoto = (e: Event) => {
-    const { blockId, line } = (e as CustomEvent).detail as { blockId: string; line: number };
-    if (blockId === block.id) setTimeout(() => editor?.gotoLine(line), 30);
+    const { blockId, line, network, element: el } = (e as CustomEvent).detail as { blockId: string; line: number; network?: number; element?: string };
+    if (blockId !== block.id) return;
+    if (ladder) setTimeout(() => ladder?.goto(network ?? 0, el), 30);
+    else setTimeout(() => editor?.gotoLine(line), 30);
   };
   window.addEventListener('studio:goto-line', onGoto);
 
   // Instructions inserted from the task card ("Options d'appel" for timers/counters)
+  /** Instance of a timer / counter / edge block: #multi-instance or "single instance DB". */
+  const createInstance = async (fb: string): Promise<{ ref: string; multi: boolean; name: string } | null> => {
+    const base = fb.includes('TRIG') ? 'R_TRIG_Instance' : fb.startsWith('CT') ? 'IEC_Counter_0' : 'IEC_Timer_0';
+    const choice = await callOptionsDialog(device, block, fb, base);
+    if (!choice) return null;
+    if (choice.multi) {
+      block.interface.static.push({ name: choice.name, dataType: fb });
+      iface.render();
+    } else if (!device.blocks.some((b) => b.name.toLowerCase() === choice.name.toLowerCase())) {
+      const used = new Set(device.blocks.filter((b) => b.type === 'DB').map((b) => b.number));
+      let n = 1;
+      while (used.has(n)) n++;
+      device.blocks.push({ id: newId('blk'), name: choice.name, type: 'DB', number: n, interface: { input: [], output: [], inout: [], static: [], temp: [], constant: [] }, code: '', instanceOf: fb });
+    }
+    store.touch();
+    return { ref: choice.multi ? `#${choice.name}` : `"${choice.name}"`, ...choice };
+  };
+
   const onInsert = async (e: Event) => {
-    if (!editor || !element.isConnected) return;
+    if (!element.isConnected) return;
     const it = (e as CustomEvent).detail as { name: string; snippet?: string; fb?: string };
+    if (ladder) {
+      if (!ladder.insertInstruction(it)) store.addMessage({ severity: 'warning', text: `L'instruction ${it.name} n'existe pas en CONT : utilisez un bloc SCL.`, path: blockLabel(block) });
+      return;
+    }
+    if (!editor) return;
     if (!it.fb) {
       editor.insert(it.snippet ?? it.name);
       return;
@@ -191,23 +246,9 @@ export function blockEditor(device: Device, block: Block): EditorView {
       CTU: 'CU := , R := , PV := ', CTD: 'CD := , LD := , PV := ', CTUD: 'CU := , CD := , R := , LD := , PV := ',
       R_TRIG: 'CLK := ', F_TRIG: 'CLK := ',
     };
-    const base = it.fb.includes('TRIG') ? 'R_TRIG_Instance' : it.fb.startsWith('CT') ? 'IEC_Counter_0' : 'IEC_Timer_0';
-    const choice = await callOptionsDialog(device, block, it.fb, base);
+    const choice = await createInstance(it.fb);
     if (!choice) return;
-    if (choice.multi) {
-      block.interface.static.push({ name: choice.name, dataType: it.fb });
-      iface.render();
-      editor.insert(`#${choice.name}(${params[it.fb]});`);
-    } else {
-      if (!device.blocks.some((b) => b.name.toLowerCase() === choice.name.toLowerCase())) {
-        const used = new Set(device.blocks.filter((b) => b.type === 'DB').map((b) => b.number));
-        let n = 1;
-        while (used.has(n)) n++;
-        device.blocks.push({ id: newId('blk'), name: choice.name, type: 'DB', number: n, interface: { input: [], output: [], inout: [], static: [], temp: [], constant: [] }, code: '', instanceOf: it.fb });
-      }
-      editor.insert(`"${choice.name}".${it.fb}(${params[it.fb]});`);
-    }
-    store.touch();
+    editor.insert(choice.multi ? `#${choice.name}(${params[it.fb]});` : `"${choice.name}".${it.fb}(${params[it.fb]});`);
   };
   window.addEventListener('studio:insert-instruction', onInsert);
   const unsubscribe = store.on((topic) => {
@@ -216,9 +257,35 @@ export function blockEditor(device: Device, block: Block): EditorView {
 
   // Monitoring: operands of each line
   let lineOperands: Array<{ line: number; label: string; path: string }> = [];
+  /** Monitoring path of an operand as written in the code, null when it can't be read. */
+  const pathOf = (op: string, symbols: SymbolNode[], globals: Set<string>, locals: Set<string>): string | null => {
+    let path: string | null = null;
+    if (op.startsWith('%') || op.startsWith('"')) path = op;
+    else if (op.startsWith('#')) path = block.type === 'FB' && instance ? `"${instance}".${op.slice(1)}` : null;
+    else if (locals.has(op.split('.')[0].toLowerCase())) path = block.type === 'FB' && instance ? `"${instance}".${op}` : null;
+    else if (globals.has(op.split('.')[0].toLowerCase()) || device.blocks.some((b) => b.type === 'DB' && b.name.toLowerCase() === op.split('.')[0].toLowerCase())) {
+      const [first, ...rest] = op.split('.');
+      path = [`"${first}"`, ...rest].join('.');
+    }
+    if (!path) return null;
+    const sym = op.startsWith('%') ? null : findSymbol(symbols, path);
+    if (!op.startsWith('%') && (!sym || sym.children)) return null;
+    return path;
+  };
+  const monitorContext = () => ({
+    symbols: store.symbols(device.id),
+    globals: new Set(device.tagTables.flatMap((tt) => tt.tags.map((x) => x.name.toLowerCase()))),
+    locals: new Set(allMembers().map((m) => m.name.toLowerCase())),
+  });
+  let ladPaths: string[] = [];
+  const ifaceMembers = () => (block.type === 'FB' && instance ? sections.filter((s) => s !== 'temp' && s !== 'constant').flatMap((s) => block.interface[s]) : []);
   const monitor = {
     deviceId: device.id,
     paths: () => {
+      if (ladder) {
+        ladPaths = ladder.monitorPaths();
+        return [...ladPaths, ...ifaceMembers().map((m) => `"${instance}".${m.name}`)];
+      }
       if (!editor) return [];
       const symbols = store.symbols(device.id);
       const globals = new Set(device.tagTables.flatMap((tt) => tt.tags.map((x) => x.name.toLowerCase())));
@@ -230,26 +297,24 @@ export function blockEditor(device: Device, block: Block): EditorView {
       lineOperands = [];
       for (let n = firstLine; n <= lastLine; n++) {
         for (const op of operandsOf(doc.line(n).text).slice(0, 6)) {
-          let path: string | null = null;
-          if (op.startsWith('%') || op.startsWith('"')) path = op;
-          else if (op.startsWith('#')) path = block.type === 'FB' && instance ? `"${instance}".${op.slice(1)}` : null;
-          else if (locals.has(op.split('.')[0].toLowerCase())) path = block.type === 'FB' && instance ? `"${instance}".${op}` : null;
-          else if (globals.has(op.split('.')[0].toLowerCase()) || device.blocks.some((b) => b.type === 'DB' && b.name.toLowerCase() === op.split('.')[0].toLowerCase())) {
-            const [first, ...rest] = op.split('.');
-            path = [`"${first}"`, ...rest].join('.');
-          }
-          if (!path) continue;
-          const sym = op.startsWith('%') ? null : findSymbol(symbols, path);
-          if (!op.startsWith('%') && (!sym || sym.children)) continue;
-          lineOperands.push({ line: n, label: op, path });
+          const path = pathOf(op, symbols, globals, locals);
+          if (path) lineOperands.push({ line: n, label: op, path });
         }
       }
-      // interface rows of FBs
-      const ifacePaths = block.type === 'FB' && instance ? sections.filter((s) => s !== 'temp' && s !== 'constant')
-        .flatMap((s) => block.interface[s]).map((m) => `"${instance}".${m.name}`) : [];
+      const ifacePaths = ifaceMembers().map((m) => `"${instance}".${m.name}`);
       return [...lineOperands.map((o) => o.path), ...ifacePaths];
     },
     apply: (values: Array<{ path: string; text?: string; error?: string }>) => {
+      if (ladder) {
+        const map = new Map<string, string>();
+        ladPaths.forEach((p, i) => { if (values[i]?.text !== undefined && !values[i].error) map.set(p, values[i].text!); });
+        ladder.applyMonitor(map);
+        ifaceMembers().forEach((m, i) => {
+          const v = values[ladPaths.length + i];
+          iface.setMonitor(m, [{ text: v?.text ?? '', cls: valueClass(v?.text) }]);
+        });
+        return;
+      }
       if (!editor) return;
       const byLine = new Map<number, Array<{ label: string; text: string }>>();
       lineOperands.forEach((o, i) => {
@@ -276,7 +341,19 @@ export function blockEditor(device: Device, block: Block): EditorView {
     title: () => blockLabel(block),
     crumbs: () => [device.name, t.programBlocks, blockLabel(block)],
     shown: () => {
-      if (!editor) {
+      if (isLad && !ladder) {
+        ladder = new LadderEditor(codeWrap, {
+          device, block,
+          onChange: () => store.touch(),
+          locals: () => allMembers().map((m) => m.name),
+          monitorPath: (op) => {
+            const c = monitorContext();
+            return pathOf(op, c.symbols, c.globals, c.locals);
+          },
+          createInstance: async (fb) => (await createInstance(fb))?.ref ?? null,
+        });
+        applyErrors();
+      } else if (!isLad && !editor) {
         editor = new SclEditor(codeWrap, block.code, (text) => {
           block.code = text;
           store.touch();
@@ -288,11 +365,13 @@ export function blockEditor(device: Device, block: Block): EditorView {
     refresh: () => {
       iface.render();
       editor?.setText(block.code);
+      ladder?.render();
       refreshInstances();
     },
     monitor,
     monitorStopped: () => {
       editor?.setMonitor([]);
+      ladder?.stopMonitor();
       iface.clearMonitor();
     },
     destroy: () => {
@@ -300,6 +379,7 @@ export function blockEditor(device: Device, block: Block): EditorView {
       window.removeEventListener('studio:insert-instruction', onInsert);
       unsubscribe();
       editor?.destroy();
+      ladder?.destroy();
     },
   };
 }

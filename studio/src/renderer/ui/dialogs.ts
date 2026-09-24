@@ -87,6 +87,7 @@ export interface NewBlockSpec {
   event?: 'ProgramCycle' | 'Startup';
   instanceOf?: string;
   returnType?: string;
+  language?: 'SCL' | 'LAD';
 }
 
 export function addBlockDialog(device: Device, preset?: Partial<NewBlockSpec>): Promise<NewBlockSpec | null> {
@@ -107,6 +108,8 @@ export function addBlockDialog(device: Device, preset?: Partial<NewBlockSpec>): 
       const number = h('input', { type: 'number', min: '1', max: '65535', style: 'width:90px' });
       const auto = h('input', { type: 'checkbox', checked: true });
       const extra = h('div');
+      const language = h('select', null, h('option', { value: 'SCL' }, 'SCL'), h('option', { value: 'LAD' }, 'CONT (schéma à contacts)'));
+      language.value = preset?.language ?? 'SCL';
       let extraValue = (): Partial<NewBlockSpec> => ({});
 
       const defaultName = (k: BlockType) => {
@@ -149,7 +152,7 @@ export function addBlockDialog(device: Device, preset?: Partial<NewBlockSpec>): 
         clear(form);
         form.append(
           h('div', { className: 'field', style: 'grid-template-columns:120px 1fr' }, h('label', null, t.blockName), name),
-          h('div', { className: 'field', style: 'grid-template-columns:120px 1fr' }, h('label', null, t.language), h('select', { disabled: true }, h('option', null, 'SCL'))),
+          h('div', { className: 'field', style: 'grid-template-columns:120px 1fr' }, h('label', null, t.language), type === 'DB' ? h('select', { disabled: true }, h('option', null, '—')) : language),
           h('div', { className: 'field', style: 'grid-template-columns:120px auto auto 1fr' }, h('label', null, t.number), number,
             h('label', { style: 'display:flex;gap:4px;align-items:center' }, auto, t.automatic)),
           extra,
@@ -163,7 +166,7 @@ export function addBlockDialog(device: Device, preset?: Partial<NewBlockSpec>): 
       const ok = () => {
         const n = name.value.trim();
         if (!n) return;
-        result = { type, name: n, number: Number(number.value) || nextBlockNumber(device, type), ...extraValue() };
+        result = { type, name: n, number: Number(number.value) || nextBlockNumber(device, type), ...extraValue(), language: type === 'DB' ? undefined : language.value as 'SCL' | 'LAD' };
         d.close();
       };
       name.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });

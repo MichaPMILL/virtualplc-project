@@ -1,6 +1,6 @@
 // Commands of the Studio (menus, toolbar, shortcuts, tree context menus).
 import {
-  blockLabel, DEVICE_TYPES, emptyInterface, importExternalSource, importTagTableXlsx, loadProject, newDevice, newId, newProject, saveProject,
+  blockLabel, DEVICE_TYPES, emptyInterface, importExternalSource, importTagTableXlsx, ladId, loadProject, newDevice, newId, newProject, saveProject,
   type Block, type Device,
 } from '../../../sdk/src/browser.ts';
 import type { CompileSummary, MonitorValue } from '../backend/backend.ts';
@@ -47,11 +47,11 @@ export function pruneEditors(): void {
   store.emit('editors');
 }
 
-export function goto(ref: EditorRef & { line?: number }): void {
+export function goto(ref: EditorRef & { line?: number; network?: number; element?: string }): void {
   openEditor(ref.kind === 'block' ? { kind: 'block', deviceId: ref.deviceId, blockId: ref.blockId } : ref);
-  if (ref.kind === 'block' && ref.line) {
+  if (ref.kind === 'block' && (ref.line || ref.network !== undefined)) {
     // The block editor listens to this event to move its cursor
-    window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: { blockId: ref.blockId, line: ref.line } }));
+    window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: { blockId: ref.blockId, line: ref.line, network: ref.network, element: ref.element } }));
   }
 }
 
@@ -317,6 +317,7 @@ export async function addBlockCmd(device = currentDevice(), preset?: Parameters<
     returnType: spec.type === 'FC' ? spec.returnType ?? 'Void' : undefined,
     instanceOf: spec.type === 'DB' ? spec.instanceOf : undefined,
     members: spec.type === 'DB' && !spec.instanceOf ? [] : undefined,
+    ...(spec.language === 'LAD' ? { language: 'LAD' as const, networks: [{ id: ladId('n'), elements: [] }] } : {}),
   };
   device.blocks.push(block);
   store.touch();
@@ -433,10 +434,10 @@ export async function compileCmd(device = currentDevice(), quiet = false): Promi
     const dataType = device.types.find((x) => x.id === d.typeId);
     const path = tagTable ? `${device.name} > ${t.plcTags} > ${tagTable.name}`
       : dataType ? `${device.name} > ${t.dataTypes} > ${dataType.name}` : blockPath(device, d.blockId);
-    const where = d.location === 'interface' ? ' (interface)' : d.codeLine ? ` (ligne ${d.codeLine})` : '';
+    const where = d.location === 'interface' ? ' (interface)' : d.network !== undefined ? '' : d.codeLine ? ` (ligne ${d.codeLine})` : '';
     store.messages.push({
       severity: d.severity, text: `${d.message}${where}`, path, time: new Date().toLocaleTimeString(),
-      goto: d.blockId ? { kind: 'block', deviceId: device.id, blockId: d.blockId, line: d.codeLine }
+      goto: d.blockId ? { kind: 'block', deviceId: device.id, blockId: d.blockId, line: d.codeLine, network: d.network, element: d.element }
         : tagTable ? { kind: 'tagTable', deviceId: device.id, tableId: tagTable.id }
           : dataType ? { kind: 'dataType', deviceId: device.id, typeId: dataType.id } : undefined,
     });

@@ -20,7 +20,7 @@ export interface Message {
   text: string;
   path?: string;
   time: string;
-  goto?: EditorRef & { line?: number };
+  goto?: EditorRef & { line?: number; network?: number; element?: string };
 }
 
 export interface OnlineState {
