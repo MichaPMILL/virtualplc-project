@@ -1,9 +1,9 @@
 {
-  "id": "ifc-carton-closer-17",
+  "id": "ifc-carton-closer-18",
   "name": "ICylinder",
   "methods": [
     {
-      "id": "mth-carton-closer-18",
+      "id": "mth-carton-closer-19",
       "name": "Extend",
       "returnType": "Void",
       "interface": {
@@ -16,7 +16,7 @@
       }
     },
     {
-      "id": "mth-carton-closer-19",
+      "id": "mth-carton-closer-20",
       "name": "Retract",
       "returnType": "Void",
       "interface": {
@@ -29,7 +29,7 @@
       }
     },
     {
-      "id": "mth-carton-closer-20",
+      "id": "mth-carton-closer-21",
       "name": "IsExtended",
       "returnType": "Bool",
       "interface": {
@@ -42,7 +42,7 @@
       }
     },
     {
-      "id": "mth-carton-closer-21",
+      "id": "mth-carton-closer-22",
       "name": "IsRetracted",
       "returnType": "Bool",
       "interface": {
@@ -55,7 +55,7 @@
       }
     },
     {
-      "id": "mth-carton-closer-22",
+      "id": "mth-carton-closer-23",
       "name": "InFault",
       "returnType": "Bool",
       "interface": {
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "mth-carton-closer-23",
+      "id": "mth-carton-closer-24",
       "name": "Reset",
       "returnType": "Void",
       "interface": {

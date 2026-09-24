@@ -28,6 +28,9 @@ VAR_GLOBAL
     "YV_PressDown" AT %Q1.3 : Bool;      // presse : bobine descente (bistable)
     "YV_PressUp" AT %Q1.4 : Bool;        // presse : bobine montée (bistable)
     "YV_Glue" AT %Q1.5 : Bool;           // pistolet à colle
+    // Démonstration sans machine
+    "S_PlantModel" AT %I2.0 : Bool;      // 1 = capteurs simulés par le modèle de la machine (PlantModel)
+    "S_Jam" AT %I2.1 : Bool;             // modèle : 1 = bloque le vérin des rabats latéraux (défaut)
     // Compteur de production (visible par un pupitre opérateur)
     "BoxCount" AT %MD10 : DInt;
 END_VAR

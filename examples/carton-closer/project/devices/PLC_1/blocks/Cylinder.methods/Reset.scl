@@ -1,1 +1,2 @@
 Fault := FALSE;
+Watchdog(IN := FALSE);    // la surveillance repart de zéro

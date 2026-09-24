@@ -62,6 +62,7 @@ VERSION : 0.1
 
    METHOD Reset
       Fault := FALSE;
+      Watchdog(IN := FALSE);    // la surveillance repart de zéro
    END_METHOD
 
 BEGIN

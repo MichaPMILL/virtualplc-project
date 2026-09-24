@@ -1,0 +1,152 @@
+{
+  "id": "blk-carton-closer-16",
+  "name": "PlantModel",
+  "type": "FB",
+  "number": 4,
+  "interface": {
+    "input": [
+      {
+        "name": "StopperValve",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideFlapsValve",
+        "dataType": "Bool"
+      },
+      {
+        "name": "FrontFlapsValve",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PressDownValve",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PressUpValve",
+        "dataType": "Bool"
+      },
+      {
+        "name": "ConveyorIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "ConveyorOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "JamSideFlaps",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Stroke",
+        "dataType": "Time",
+        "defaultValue": "T#400MS",
+        "comment": "durée d'un mouvement de vérin"
+      },
+      {
+        "name": "Speed",
+        "dataType": "Real",
+        "defaultValue": "100.0",
+        "comment": "vitesse des convoyeurs (unités / s)"
+      }
+    ],
+    "output": [
+      {
+        "name": "StopperOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "StopperIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideFlapsOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideFlapsIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "FrontFlapsOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PressOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PressIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "BoxAtStation",
+        "dataType": "Bool"
+      },
+      {
+        "name": "BoxOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "BoxPosition",
+        "dataType": "Real",
+        "comment": "0 = entrée, 100 = butée, 200 = capteur de sortie"
+      }
+    ],
+    "inout": [],
+    "static": [
+      {
+        "name": "StopperExt",
+        "dataType": "TON"
+      },
+      {
+        "name": "StopperRet",
+        "dataType": "TON"
+      },
+      {
+        "name": "SideExt",
+        "dataType": "TON"
+      },
+      {
+        "name": "SideRet",
+        "dataType": "TON"
+      },
+      {
+        "name": "FrontExt",
+        "dataType": "TON"
+      },
+      {
+        "name": "FrontRet",
+        "dataType": "TON"
+      },
+      {
+        "name": "PressExt",
+        "dataType": "TON"
+      },
+      {
+        "name": "PressRet",
+        "dataType": "TON"
+      },
+      {
+        "name": "PressDown",
+        "dataType": "Bool",
+        "comment": "mémoire du distributeur bistable"
+      },
+      {
+        "name": "Last",
+        "dataType": "UDInt"
+      }
+    ],
+    "temp": [
+      {
+        "name": "now",
+        "dataType": "UDInt"
+      },
+      {
+        "name": "step",
+        "dataType": "Real"
+      }
+    ],
+    "constant": []
+  }
+}

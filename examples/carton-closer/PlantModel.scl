@@ -1,0 +1,99 @@
+// Fermeuse de cartons - modèle de la machine (démonstration sans machine réelle)
+//
+// Quand le commutateur "S_PlantModel" est à 1, le programme n'utilise plus les capteurs
+// réels : ce bloc les calcule à partir des distributeurs et des moteurs (vérins de 0,4 s,
+// convoyeurs, un nouveau carton dès que le précédent est sorti). "S_Jam" bloque le vérin
+// des rabats latéraux pour montrer la gestion des défauts.
+
+FUNCTION_BLOCK "PlantModel"
+VERSION : 0.1
+   VAR_INPUT
+      StopperValve : Bool;
+      SideFlapsValve : Bool;
+      FrontFlapsValve : Bool;
+      PressDownValve : Bool;
+      PressUpValve : Bool;
+      ConveyorIn : Bool;
+      ConveyorOut : Bool;
+      JamSideFlaps : Bool;
+      Stroke : Time := T#400MS;      // durée d'un mouvement de vérin
+      Speed : Real := 100.0;         // vitesse des convoyeurs (unités / s)
+   END_VAR
+   VAR_OUTPUT
+      StopperOut : Bool;
+      StopperIn : Bool;
+      SideFlapsOut : Bool;
+      SideFlapsIn : Bool;
+      FrontFlapsOut : Bool;
+      PressOut : Bool;
+      PressIn : Bool;
+      BoxAtStation : Bool;
+      BoxOut : Bool;
+      BoxPosition : Real;            // 0 = entrée, 100 = butée, 200 = capteur de sortie
+   END_VAR
+   VAR
+      StopperExt : TON;
+      StopperRet : TON;
+      SideExt : TON;
+      SideRet : TON;
+      FrontExt : TON;
+      FrontRet : TON;
+      PressExt : TON;
+      PressRet : TON;
+      PressDown : Bool;              // mémoire du distributeur bistable
+      Last : UDInt;
+   END_VAR
+   VAR_TEMP
+      now : UDInt;
+      step : Real;
+   END_VAR
+BEGIN
+    REGION Vérins : le capteur de fin de course change une durée "Stroke" après le distributeur
+        StopperExt(IN := StopperValve, PT := Stroke);
+        StopperRet(IN := NOT StopperValve, PT := Stroke);
+        StopperOut := StopperExt.Q;
+        StopperIn := StopperRet.Q;
+
+        // vérin bloqué : il ne sort plus
+        SideExt(IN := SideFlapsValve AND NOT JamSideFlaps, PT := Stroke);
+        SideRet(IN := NOT SideFlapsValve, PT := Stroke);
+        SideFlapsOut := SideExt.Q;
+        SideFlapsIn := SideRet.Q;
+
+        FrontExt(IN := FrontFlapsValve, PT := Stroke);
+        FrontRet(IN := NOT FrontFlapsValve, PT := Stroke);
+        FrontFlapsOut := FrontExt.Q;
+
+        // distributeur bistable : garde sa position sans bobine alimentée
+        IF PressDownValve AND NOT PressUpValve THEN
+            PressDown := TRUE;
+        ELSIF PressUpValve AND NOT PressDownValve THEN
+            PressDown := FALSE;
+        END_IF;
+        PressExt(IN := PressDown, PT := Stroke);
+        PressRet(IN := NOT PressDown, PT := Stroke);
+        PressOut := PressExt.Q;
+        PressIn := PressRet.Q;
+    END_REGION
+
+    REGION Convoyeurs et carton
+        now := MILLIS();
+        step := Speed * UDINT_TO_REAL(now - Last) / 1000.0;
+        Last := now;
+        IF BoxPosition < 100.0 THEN
+            IF ConveyorIn THEN
+                BoxPosition := BoxPosition + step;
+                IF BoxPosition >= 100.0 AND NOT StopperIn THEN
+                    BoxPosition := 100.0;        // arrêté par la butée
+                END_IF;
+            END_IF;
+        ELSIF ConveyorOut AND (BoxPosition > 100.0 OR StopperIn) THEN
+            BoxPosition := BoxPosition + step;
+        END_IF;
+        IF BoxPosition >= 300.0 THEN
+            BoxPosition := 0.0;                  // carton suivant à l'entrée
+        END_IF;
+        BoxAtStation := BoxPosition >= 100.0 AND BoxPosition < 110.0;
+        BoxOut := BoxPosition >= 200.0 AND BoxPosition < 230.0;
+    END_REGION
+END_FUNCTION_BLOCK

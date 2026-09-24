@@ -1,14 +1,35 @@
+REGION Capteurs : machine réelle ou modèle
+    IF "S_PlantModel" THEN
+        "Plant"(StopperValve := "YV_Stopper", SideFlapsValve := "YV_SideFlaps", FrontFlapsValve := "YV_FrontFlaps",
+                PressDownValve := "YV_PressDown", PressUpValve := "YV_PressUp",
+                ConveyorIn := "M_ConveyorIn", ConveyorOut := "M_ConveyorOut", JamSideFlaps := "S_Jam",
+                StopperOut => stopperOut, StopperIn => stopperIn, SideFlapsOut => sideOut, SideFlapsIn => sideIn,
+                FrontFlapsOut => frontOut, PressOut => pressOut, PressIn => pressIn,
+                BoxAtStation => boxAtStation, BoxOut => boxOut);
+    ELSE
+        stopperOut := "B_Stopper_Out";
+        stopperIn := "B_Stopper_In";
+        sideOut := "B_SideFlaps_Out";
+        sideIn := "B_SideFlaps_In";
+        frontOut := "B_FrontFlaps_Out";
+        pressOut := "B_Press_Out";
+        pressIn := "B_Press_In";
+        boxAtStation := "B_BoxAtStation";
+        boxOut := "B_BoxOut";
+    END_IF;
+END_REGION
+
 REGION Séquence (commande les vérins par leurs méthodes)
     "Machine"(Start := "BP_Start", Stop := "BP_Stop", EmergencyOk := "AU_Ok", Reset := "BP_Reset",
-              BoxAtStation := "B_BoxAtStation", BoxOut := "B_BoxOut",
+              BoxAtStation := boxAtStation, BoxOut := boxOut,
               Stopper := "Stopper", SideFlaps := "SideFlaps", FrontFlaps := "FrontFlaps", Press := "Press",
               ConveyorIn => "M_ConveyorIn", ConveyorOut => "M_ConveyorOut", Glue => "YV_Glue",
               Running => "H_Running", FaultLamp => "H_Fault", Count => "BoxCount");
 END_REGION
 
 REGION Vérins (capteurs -> distributeurs)
-    "Stopper"(SensorOut := "B_Stopper_Out", SensorIn := "B_Stopper_In", Valve => "YV_Stopper");
-    "SideFlaps"(SensorOut := "B_SideFlaps_Out", SensorIn := "B_SideFlaps_In", Valve => "YV_SideFlaps");
-    "FrontFlaps"(SensorOut := "B_FrontFlaps_Out", Valve => "YV_FrontFlaps");
-    "Press"(SensorOut := "B_Press_Out", SensorIn := "B_Press_In", Valve => "YV_PressDown", ValveIn => "YV_PressUp");
+    "Stopper"(SensorOut := stopperOut, SensorIn := stopperIn, Valve => "YV_Stopper");
+    "SideFlaps"(SensorOut := sideOut, SensorIn := sideIn, Valve => "YV_SideFlaps");
+    "FrontFlaps"(SensorOut := frontOut, Valve => "YV_FrontFlaps");
+    "Press"(SensorOut := pressOut, SensorIn := pressIn, Valve => "YV_PressDown", ValveIn => "YV_PressUp");
 END_REGION

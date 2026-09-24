@@ -110,6 +110,32 @@ test('example: carton closing machine (OOP)', { skip }, async () => {
   }, { cycleMs: 10 });
 });
 
+test('example: carton closing machine with its plant model (S_PlantModel)', { skip }, async () => {
+  await withSim(source('carton-closer'), async (sim) => {
+    await sim.set('S_PlantModel', true);
+    await sim.set('BP_Stop', true);
+    await sim.set('AU_Ok', true);
+    await sim.scan(100, 10);
+    assert.equal(await sim.get('"Machine".Step'), 10, 'initialised without fault');
+    await sim.set('BP_Start', true);
+    await sim.scan(5, 10);
+    await sim.set('BP_Start', false);
+    await sim.scan(2000, 10);   // 20 s
+    const count = (await sim.get('BoxCount')) as number;
+    assert.ok(count >= 3, `boxes closed: ${count}`);
+    // jammed cylinder: fault, then repaired and acknowledged
+    await sim.set('S_Jam', true);
+    await sim.scan(800, 10);
+    assert.equal(await sim.get('"Machine".Step'), 99);
+    await sim.set('S_Jam', false);
+    await sim.set('BP_Reset', true);
+    await sim.scan(2, 10);
+    await sim.set('BP_Reset', false);
+    await sim.scan(200, 10);
+    assert.equal(await sim.get('"Machine".Step'), 10);
+  }, { cycleMs: 10 });
+});
+
 test('example: traffic lights (no OOP)', { skip }, async () => {
   await withSim(source('traffic-lights'), async (sim) => {
     const lights = async () => {

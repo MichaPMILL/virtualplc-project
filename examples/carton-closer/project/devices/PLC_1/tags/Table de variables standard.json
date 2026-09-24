@@ -27,6 +27,12 @@
       "comment": "presse : distributeur bistable"
     },
     {
+      "name": "Plant",
+      "dataType": "PlantModel",
+      "address": "",
+      "comment": "modèle de la machine (S_PlantModel = 1)"
+    },
+    {
       "name": "BP_Start",
       "dataType": "Bool",
       "address": "%I0.0",
@@ -163,6 +169,18 @@
       "dataType": "Bool",
       "address": "%Q1.5",
       "comment": "pistolet à colle"
+    },
+    {
+      "name": "S_PlantModel",
+      "dataType": "Bool",
+      "address": "%I2.0",
+      "comment": "1 = capteurs simulés par le modèle de la machine (PlantModel)"
+    },
+    {
+      "name": "S_Jam",
+      "dataType": "Bool",
+      "address": "%I2.1",
+      "comment": "modèle : 1 = bloque le vérin des rabats latéraux (défaut)"
     },
     {
       "name": "BoxCount",

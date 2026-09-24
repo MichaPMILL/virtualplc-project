@@ -9,7 +9,44 @@
     "output": [],
     "inout": [],
     "static": [],
-    "temp": [],
+    "temp": [
+      {
+        "name": "stopperOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "stopperIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "sideOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "sideIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "frontOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "pressOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "pressIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "boxAtStation",
+        "dataType": "Bool"
+      },
+      {
+        "name": "boxOut",
+        "dataType": "Bool"
+      }
+    ],
     "constant": []
   }
 }

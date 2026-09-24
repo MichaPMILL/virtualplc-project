@@ -1,0 +1,48 @@
+REGION Vérins : le capteur de fin de course change une durée "Stroke" après le distributeur
+    StopperExt(IN := StopperValve, PT := Stroke);
+    StopperRet(IN := NOT StopperValve, PT := Stroke);
+    StopperOut := StopperExt.Q;
+    StopperIn := StopperRet.Q;
+
+    // vérin bloqué : il ne sort plus
+    SideExt(IN := SideFlapsValve AND NOT JamSideFlaps, PT := Stroke);
+    SideRet(IN := NOT SideFlapsValve, PT := Stroke);
+    SideFlapsOut := SideExt.Q;
+    SideFlapsIn := SideRet.Q;
+
+    FrontExt(IN := FrontFlapsValve, PT := Stroke);
+    FrontRet(IN := NOT FrontFlapsValve, PT := Stroke);
+    FrontFlapsOut := FrontExt.Q;
+
+    // distributeur bistable : garde sa position sans bobine alimentée
+    IF PressDownValve AND NOT PressUpValve THEN
+        PressDown := TRUE;
+    ELSIF PressUpValve AND NOT PressDownValve THEN
+        PressDown := FALSE;
+    END_IF;
+    PressExt(IN := PressDown, PT := Stroke);
+    PressRet(IN := NOT PressDown, PT := Stroke);
+    PressOut := PressExt.Q;
+    PressIn := PressRet.Q;
+END_REGION
+
+REGION Convoyeurs et carton
+    now := MILLIS();
+    step := Speed * UDINT_TO_REAL(now - Last) / 1000.0;
+    Last := now;
+    IF BoxPosition < 100.0 THEN
+        IF ConveyorIn THEN
+            BoxPosition := BoxPosition + step;
+            IF BoxPosition >= 100.0 AND NOT StopperIn THEN
+                BoxPosition := 100.0;        // arrêté par la butée
+            END_IF;
+        END_IF;
+    ELSIF ConveyorOut AND (BoxPosition > 100.0 OR StopperIn) THEN
+        BoxPosition := BoxPosition + step;
+    END_IF;
+    IF BoxPosition >= 300.0 THEN
+        BoxPosition := 0.0;                  // carton suivant à l'entrée
+    END_IF;
+    BoxAtStation := BoxPosition >= 100.0 AND BoxPosition < 110.0;
+    BoxOut := BoxPosition >= 200.0 AND BoxPosition < 230.0;
+END_REGION

@@ -3,6 +3,16 @@
   "name": "Table de visualisation_1",
   "rows": [
     {
+      "name": "S_PlantModel",
+      "comment": "démonstration : capteurs simulés"
+    },
+    {
+      "name": "S_Jam"
+    },
+    {
+      "name": "\"Plant\".BoxPosition"
+    },
+    {
       "name": "BP_Start"
     },
     {

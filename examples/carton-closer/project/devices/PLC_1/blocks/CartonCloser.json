@@ -1,8 +1,8 @@
 {
-  "id": "blk-carton-closer-16",
+  "id": "blk-carton-closer-17",
   "name": "CartonCloser",
   "type": "FB",
-  "number": 4,
+  "number": 5,
   "interface": {
     "input": [
       {

@@ -52,6 +52,7 @@ const row = (name: string, comment?: string): WatchRow => ({ name, ...(comment ?
 
 build('carton-closer', 'Fermeuse de cartons',
   'Exemple POO : interface "ICylinder", vérins dérivés (EXTENDS), séquence de fermeture de cartons.', [
+    row('S_PlantModel', 'démonstration : capteurs simulés'), row('S_Jam'), row('"Plant".BoxPosition'),
     row('BP_Start'), row('BP_Stop'), row('AU_Ok'), row('BP_Reset'),
     row('"Machine".Step', 'étape de la séquence'), row('BoxCount'),
     row('B_BoxAtStation'), row('B_BoxOut'), row('M_ConveyorIn'), row('M_ConveyorOut'),
