@@ -1690,6 +1690,10 @@ class Compiler {
 
   private lookup(name: string, scope: 'global' | 'local' | null): Sym | null {
     const key = name.toUpperCase();
+    // return value of a function written with its quoted name ("MyFC" := ...)
+    if (scope === 'global' && this.fn?.returnSlot !== undefined && this.fn.returnSlot >= 0 && key === this.fn.pou.name.toUpperCase()) {
+      return this.fn.locals.get(key) ?? null;
+    }
     if (scope !== 'global' && this.fn) {
       const s = this.fn.locals.get(key);
       if (s) return s;
