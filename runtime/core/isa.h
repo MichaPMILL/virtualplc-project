@@ -1,6 +1,6 @@
 // Generated from spec/isa.json by tools/gen-isa.mjs - do not edit.
 #pragma once
-#include <cstdint>
+#include <stdint.h>
 
 namespace vplc {
 

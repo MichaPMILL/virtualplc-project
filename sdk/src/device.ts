@@ -3,9 +3,10 @@
 // and the port number the speed in bauds.
 import { Socket } from 'node:net';
 import { crc32 } from './crc32.ts';
-import { BAUD_RATES, DEFAULT_BAUD, isSerialPort } from './serial.ts';
+import { BAUD_RATES, DEFAULT_BAUD, isSerialPort, isSimulatorHost } from './serial.ts';
+import { simulator } from './simulator.ts';
 
-export { isSerialPort };
+export { isSerialPort, isSimulatorHost };
 import { Area, Command, PROTOCOL_PORT, Status } from './isa.ts';
 import type { SymbolNode } from './symbols.ts';
 import { decodeValue, encodeValue, type PlcValue } from './values.ts';
@@ -90,6 +91,10 @@ export class DeviceClient {
     let info: DeviceInfo;
     if (isSerialPort(this.host)) {
       info = await this.connectSerial();
+    } else if (isSimulatorHost(this.host)) {
+      const sim = await simulator();
+      this.socket = sim.connect((d) => this.onData(d));
+      info = await this.info();
     } else {
       await this.connectTcp();
       info = await this.info();

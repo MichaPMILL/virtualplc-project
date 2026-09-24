@@ -62,6 +62,7 @@ function shortcuts(e: KeyboardEvent): void {
   };
   if (e.shiftKey && k === 'e') { e.preventDefault(); void A.startCpuCmd(); return; }
   if (e.shiftKey && k === 'q') { e.preventDefault(); void A.stopCpuCmd(); return; }
+  if (e.shiftKey && k === 'x') { e.preventDefault(); A.toggleSimulationCmd(); return; }
   const fn = map[k];
   if (fn && !(e.shiftKey && k !== 's')) {
     e.preventDefault();

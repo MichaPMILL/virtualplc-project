@@ -130,6 +130,17 @@ and the block interface; errors point to the network and the element. With *Visu
 on, the power flow is drawn in green and box parameters show their values. Networks are
 translated to SCL by the compiler (`sdk/src/ladder.ts`); *CONT→SCL* converts a block for good.
 
+### Simulation mode
+
+*En ligne > Démarrer la simulation* (toolbar button, `Ctrl+Shift+X`) replaces the device by a
+**simulated CPU running inside the Studio**: the same C++ CPU core, compiled to WebAssembly
+(`runtime/wasm`, 120 KB), executing the program in real time. The program is compiled and
+loaded as into a real CPU; monitoring, watch tables, forcing, diagnostics and runtime errors
+work the same way. The *Simulation* panel drives the inputs of the tags on `%I` (switch or
+push button, values for words) and shows the outputs `%Q` as lamps. No hardware and no
+network are needed — try it with the examples below. `runtime/wasm/build.sh` rebuilds
+`sdk/wasm/vplc-sim.wasm` (clang with the wasm32 target and wasi-libc).
+
 ### Examples
 
 - [`examples/carton-closer`](examples/carton-closer) — carton closing machine with pneumatic

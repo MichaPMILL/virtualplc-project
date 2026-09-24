@@ -12,6 +12,7 @@ import type { EditorView } from '../editors/types.ts';
 import { watchTableEditor } from '../editors/watchTable.ts';
 import { dataTypeEditor } from '../editors/dataType.ts';
 import { interfaceEditor, methodEditor } from '../editors/method.ts';
+import { simulationEditor } from '../editors/simulation.ts';
 import * as V from '../versioning.ts';
 import { historyEditor } from '../versioning.ts';
 import { branchesEditor } from '../branches.ts';
@@ -88,6 +89,7 @@ function createView(ref: EditorRef): EditorView | null {
       const i = device.interfaces?.find((x) => x.id === ref.interfaceId);
       return i ? interfaceEditor(device, i) : null;
     }
+    case 'simulation': return simulationEditor(device);
   }
 }
 
@@ -243,6 +245,7 @@ function labelOf(ref: EditorRef): string {
       return `${b?.name ?? '?'}.${b?.methods?.find((x) => x.id === ref.methodId)?.name ?? '?'}`;
     }
     case 'interface': return d?.interfaces?.find((x) => x.id === ref.interfaceId)?.name ?? '?';
+    case 'simulation': return `Simulation — ${d?.name ?? '?'}`;
     case 'device': return d?.name ?? '?';
     case 'online': return t.onlineDiag;
     case 'allTags': return t.showAllTags;

@@ -1,0 +1,52 @@
+// Simulated CPU (WebAssembly build of the CPU core) driven through the device protocol.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { compile } from '../src/compiler.ts';
+import { DeviceClient } from '../src/device.ts';
+import { findSymbol } from '../src/symbols.ts';
+
+const wasm = new URL('../wasm/vplc-sim.wasm', import.meta.url);
+const skip = existsSync(wasm) ? false : 'build runtime/wasm first (runtime/wasm/build.sh)';
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test('simulated CPU: download, run in real time, simulated inputs, monitoring', { skip }, async () => {
+  const dir = new URL('../../examples/traffic-lights/', import.meta.url);
+  const text = readdirSync(dir).filter((f) => f.endsWith('.scl')).sort().map((f) => readFileSync(new URL(f, dir), 'utf8')).join('\n');
+  // short timings: flash 5 s -> 300 ms, all red 2 s -> 200 ms
+  const fast = text.replace('StartupFlash : Time := T#5S', 'StartupFlash : Time := T#300MS').replace('AllRed : Time := T#2S', 'AllRed : Time := T#200MS');
+  const r = compile({ sources: [{ file: 'traffic.scl', text: fast }], cycleMs: 10 });
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  const sym = (p: string) => findSymbol(r.symbols, p)!;
+
+  const client = new DeviceClient('simulation');
+  const info = await client.connect();
+  assert.equal(info.device, 'simulator');
+  await client.download(r.image!);
+  await client.start(true);
+  let s = await client.state();
+  assert.equal(s.state, 'RUN');
+  assert.equal(s.programId, r.programId);
+
+  const bit = async (area: 'I' | 'Q', name: string) => {
+    const x = sym(name);
+    const [b] = await client.read([{ area, offset: x.offset, length: 1 }]);
+    return ((b[0] >> x.bit!) & 1) === 1;
+  };
+  await sleep(300);
+  assert.equal(await bit('Q', 'H_Main_Green'), false, 'switched off: flashing amber');
+  // simulated input: S_On
+  const on = sym('S_On');
+  await client.writeSymbol(on, true);
+  await sleep(900);
+  assert.equal(await bit('Q', 'H_Main_Green'), true, 'main road green after flash + all red');
+  s = await client.state();
+  assert.ok(s.scanUs !== undefined);
+  client.close();
+
+  // a second connection sees the same CPU (the program is kept)
+  const again = new DeviceClient('simulation');
+  await again.connect();
+  assert.equal((await again.state()).programId, r.programId);
+  again.close();
+});

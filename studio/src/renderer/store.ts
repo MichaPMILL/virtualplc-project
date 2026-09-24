@@ -14,6 +14,7 @@ export type EditorRef =
   | { kind: 'dataType'; deviceId: string; typeId: string }
   | { kind: 'method'; deviceId: string; blockId: string; methodId: string }
   | { kind: 'interface'; deviceId: string; interfaceId: string }
+  | { kind: 'simulation'; deviceId: string }
   | { kind: 'history' }
   | { kind: 'branches' };
 
@@ -60,6 +61,8 @@ class Store {
   compile = new Map<string, CompileSummary>();
   online = new Map<string, OnlineState>();
   monitoring = false;
+  /** Devices whose online connection goes to the simulated CPU (simulation mode) */
+  simulation = new Set<string>();
   layout = { tree: true, tasks: true, inspector: true };
   private listeners = new Set<Listener>();
 

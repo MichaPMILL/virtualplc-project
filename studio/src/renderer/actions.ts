@@ -43,6 +43,7 @@ export function pruneEditors(): void {
     if (e.kind === 'dataType') return d.types.some((b) => b.id === e.typeId);
     if (e.kind === 'method') return !!d.blocks.find((b) => b.id === e.blockId)?.methods?.some((m) => m.id === e.methodId);
     if (e.kind === 'interface') return !!d.interfaces?.some((b) => b.id === e.interfaceId);
+    if (e.kind === 'simulation') return store.simulation.has(d.id);
     return true;
   });
   if (store.active && !store.editors.some((e) => sameEditor(e, store.active!))) store.active = store.editors[0] ?? null;
@@ -585,6 +586,16 @@ let monitorTimer: number | undefined;
 
 async function ensureConnected(device: Device, title: string, action: string, forceDialog = false): Promise<boolean> {
   if (store.onlineOf(device.id).connected) return true;
+  if (store.simulation.has(device.id)) {
+    try {
+      await call('connect', device.id, 'simulation', 0);
+      store.onlineOf(device.id).host = 'simulation';
+      return true;
+    } catch (e) {
+      await alertDialog(title, (e as Error).message, 'error');
+      return false;
+    }
+  }
   const known = !forceDialog && device.connection.host && passwords.has(device.id);
   let spec = known ? { host: device.connection.host, port: device.connection.port, password: passwords.get(device.id) ?? '' } : null;
   for (;;) {
@@ -607,6 +618,38 @@ async function ensureConnected(device: Device, title: string, action: string, fo
       spec = null;
     }
   }
+}
+
+/**
+ * Simulation mode: the device is replaced by a CPU simulated in the Studio (the same CPU core,
+ * compiled to WebAssembly). Loading, monitoring, forcing and the diagnostics work as with the
+ * real CPU; the simulation panel sets the inputs and shows the outputs.
+ */
+export async function startSimulationCmd(device = currentDevice()): Promise<void> {
+  if (!device) return;
+  if (store.onlineOf(device.id).connected) await goOfflineCmd(device);
+  store.simulation.add(device.id);
+  document.body.classList.add('simulation');
+  store.addMessage({ severity: 'info', text: `Simulation démarrée : ${device.name} est remplacée par une CPU simulée.`, path: device.name });
+  store.emit('online');
+  await downloadCmd(device);
+  await goOnlineCmd(device);
+  openEditor({ kind: 'simulation', deviceId: device.id });
+}
+
+export async function stopSimulationCmd(device = currentDevice()): Promise<void> {
+  if (!device || !store.simulation.has(device.id)) return;
+  if (store.onlineOf(device.id).connected) await goOfflineCmd(device);
+  store.simulation.delete(device.id);
+  if (store.simulation.size === 0) document.body.classList.remove('simulation');
+  store.addMessage({ severity: 'info', text: 'Simulation arrêtée.', path: device.name });
+  store.emit('online');
+  pruneEditors();
+}
+
+export function toggleSimulationCmd(device = currentDevice()): void {
+  if (!device) return;
+  void (store.simulation.has(device.id) ? stopSimulationCmd(device) : startSimulationCmd(device));
 }
 
 export async function goOnlineCmd(device = currentDevice()): Promise<void> {

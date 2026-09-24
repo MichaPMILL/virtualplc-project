@@ -48,7 +48,7 @@ const libs = Object.entries(isa.libraryBlocks).map(([name, b]) => {
 const h = [
   `// ${header}`,
   '#pragma once',
-  '#include <cstdint>',
+  '#include <stdint.h>',
   '',
   'namespace vplc {',
   '',

@@ -422,3 +422,17 @@ tr.vc-current td { font-weight: 600; }
 .ifc-method { display: flex; align-items: center; gap: 4px; padding: 3px 8px; cursor: default; white-space: nowrap; }
 .ifc-method:hover { background: var(--hover); }
 .ifc-method.selected { background: var(--select); }
+
+/* Simulation mode */
+body.simulation .toolbar .brand::after { content: 'SIMULATION'; margin-left: 10px; padding: 1px 6px; border-radius: 3px; background: #6a4fa3; color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .5px; }
+.sim-panel { flex: 1; overflow: auto; padding: 6px 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; align-content: start; }
+.sim-block table.grid td { padding: 2px 6px; }
+.sim-switch { min-width: 34px; height: 20px; border: 1px solid var(--border); border-radius: 10px; background: #e3e7eb; font: 600 11px monospace; cursor: pointer; }
+.sim-switch.on { background: #1a9e5e; border-color: #137a48; color: #fff; }
+.sim-push { height: 20px; border: 1px solid var(--border); border-radius: 3px; background: linear-gradient(#fff, #e6e9ed); font-size: 11px; cursor: pointer; }
+.sim-push:active { background: #cfd6dd; }
+.sim-lamp { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 1px solid #7a838c; background: #d9dde1; vertical-align: middle; }
+.sim-lamp.on { background: radial-gradient(circle at 35% 35%, #fff59a, #f5b800); border-color: #b88a00; box-shadow: 0 0 6px #f5c400; }
+.sim-lamp.red.on { background: radial-gradient(circle at 35% 35%, #ffb3a8, #e0301e); border-color: #9e1c0f; box-shadow: 0 0 6px #ff4a33; }
+.sim-lamp.green.on { background: radial-gradient(circle at 35% 35%, #b9f5c9, #1fae55); border-color: #137a3a; box-shadow: 0 0 6px #2ad066; }
+.sim-lamp.amber.on { background: radial-gradient(circle at 35% 35%, #ffe0a3, #f59300); border-color: #b86e00; box-shadow: 0 0 6px #ffa51f; }

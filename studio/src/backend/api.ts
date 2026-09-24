@@ -3,8 +3,13 @@
 import { Backend } from './backend.ts';
 import * as git from './git.ts';
 import { folderForNewProject, openProjectPath, saveProjectPath, type ProjectLayout } from './projectStore.ts';
-import { join } from 'node:path';
-import { MANIFEST_EXT, safeFileName } from '../../../sdk/src/index.ts';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { MANIFEST_EXT, safeFileName, setSimulatorWasm } from '../../../sdk/src/index.ts';
+
+// dist/vplc-sim.wasm, next to the bundled backend (main.cjs in Electron, backend.mjs in web mode)
+declare const __dirname: string | undefined;
+setSimulatorWasm(join(typeof __dirname === 'string' ? __dirname : dirname(fileURLToPath(import.meta.url)), 'vplc-sim.wasm'));
 
 export function createApi(backend = new Backend()) {
   return {

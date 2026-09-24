@@ -20,6 +20,7 @@ type Entry = Item | 'sep';
 
 const mod = host.platform === 'darwin' ? '⌘' : 'Ctrl+';
 const hasProject = () => store.project !== null;
+const isSimulating = () => { const d = A.currentDevice(); return !!d && store.simulation.has(d.id); };
 const isOnline = () => {
   const d = A.currentDevice();
   return !!d && store.onlineOf(d.id).connected;
@@ -77,6 +78,8 @@ const MENUS: Array<[string, Entry[]]> = [
     { label: t.goOffline, icon: 'offline', run: () => void A.goOfflineCmd(), enabled: isOnline, shortcut: `${mod}M` },
     'sep',
     { label: t.downloadToDevice, icon: 'download', run: () => void A.downloadCmd(), enabled: hasProject, shortcut: `${mod}L` },
+    'sep',
+    { label: 'Démarrer la simulation', icon: 'sim', run: () => A.toggleSimulationCmd(), enabled: hasProject, checked: isSimulating, shortcut: `${mod}Shift+X` },
     'sep',
     { label: t.startCpu, icon: 'run', run: () => void A.startCpuCmd(), enabled: hasProject, shortcut: `${mod}Shift+E` },
     { label: t.stopCpu, icon: 'stop', run: () => void A.stopCpuCmd(), enabled: hasProject, shortcut: `${mod}Shift+Q` },
@@ -162,6 +165,7 @@ export function toolbar(): HTMLElement {
   const onlineBtn = tbtn('online', `${t.goOnline} (${mod}K)`, () => void A.goOnlineCmd(), () => hasProject() && !isOnline(), 'online-btn');
   const offlineBtn = tbtn('offline', `${t.goOffline} (${mod}M)`, () => void A.goOfflineCmd(), isOnline);
   const monitor = tbtn('glasses', `${t.monitorAll} (${mod}T)`, () => void A.toggleMonitorCmd());
+  const simBtn = tbtn('sim', `Démarrer / arrêter la simulation (${mod}Shift+X)`, () => A.toggleSimulationCmd());
   bar.append(
     tbtn('newFile', t.newProject, A.newProjectCmd, () => true),
     tbtn('open', t.openProject, A.openProjectCmd, () => true),
@@ -179,6 +183,7 @@ export function toolbar(): HTMLElement {
     h('span', { className: 'sep' }),
     tbtn('compile', `${t.compile} (${mod}B)`, () => void A.compileCmd()),
     tbtn('download', `${t.downloadToDevice} (${mod}L)`, () => void A.downloadCmd()),
+    simBtn,
     h('span', { className: 'sep' }),
     onlineBtn,
     offlineBtn,
@@ -193,6 +198,7 @@ export function toolbar(): HTMLElement {
     for (const b of bar.querySelectorAll<HTMLButtonElement & { _enabled?: () => boolean }>('.tbtn')) b.disabled = b._enabled ? !b._enabled() : false;
     onlineBtn.classList.toggle('active', isOnline());
     monitor.classList.toggle('pressed', store.monitoring);
+    simBtn.classList.toggle('pressed', isSimulating());
   };
   store.on(refresh);
   refresh();

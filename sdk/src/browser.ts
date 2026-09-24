@@ -21,5 +21,5 @@ export { fixIecInstances, flgNetToLadder, importSimaticMl, isSimaticMl, SimaticM
 export type { SimaticMlImport } from './simaticml.ts';
 export { generateGsdml, parseGsdml, pnModuleIdent, pnSubmodules, PN_MODULE_SIZES } from './gsdml.ts';
 export type { GsdDap, GsdDevice, GsdModule, GsdRecord, GsdSubmodule } from './gsdml.ts';
-export { BAUD_RATES, DEFAULT_BAUD, isSerialPort } from './serial.ts';
+export { BAUD_RATES, DEFAULT_BAUD, isSerialPort, isSimulatorHost } from './serial.ts';
 export { PROTOCOL_PORT } from './isa.ts';
