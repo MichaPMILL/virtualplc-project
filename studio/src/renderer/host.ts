@@ -1,5 +1,6 @@
 // Access to the host: Electron (preload bridge) or the development web server.
 import type { StudioApi, ApiMethod } from '../backend/api.ts';
+import { promptDialog } from './ui/dialogs.ts';
 
 export interface OpenedFile {
   path: string;
@@ -11,13 +12,16 @@ interface HostBridge {
   kind: 'electron' | 'web';
   platform: string;
   invoke(method: string, args: unknown[]): Promise<unknown>;
-  openFile(kind: 'project' | 'scl'): Promise<OpenedFile | null>;
-  saveFile(path: string | null, text: string, suggestedName: string): Promise<string | null>;
+  openFile(kind: 'scl'): Promise<OpenedFile | null>;
+  /** Native file/folder chooser; returns an absolute path on this computer */
+  pickPath(kind: PathKind, suggested?: string): Promise<string | null>;
   setDirty(dirty: boolean): void;
   setTitle(title: string): void;
   quit(): void;
   onMenu(cb: (action: string) => void): void;
 }
+
+export type PathKind = 'openProject' | 'saveProject' | 'folder' | 'zip';
 
 declare global {
   interface Window {
@@ -35,11 +39,11 @@ function webHost(): HostBridge {
       if (data.error) throw new Error(data.error);
       return data.result;
     },
-    openFile(kind) {
+    openFile() {
       return new Promise((resolve) => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = kind === 'project' ? '.vplcproj,.json' : '.scl,.txt';
+        input.accept = '.scl,.txt';
         input.onchange = async () => {
           const f = input.files?.[0];
           resolve(f ? { path: f.name, name: f.name, text: await f.text() } : null);
@@ -47,14 +51,13 @@ function webHost(): HostBridge {
         input.click();
       });
     },
-    async saveFile(path, text, suggestedName) {
-      const name = path ?? suggestedName;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-      a.download = name.endsWith('.vplcproj') ? name : `${name}.vplcproj`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-      return a.download;
+    // Web (development) mode: the backend runs on this computer, paths are typed in
+    pickPath(kind, suggested) {
+      const label = {
+        openProject: 'Chemin du projet (.vplcproj ou dossier)', saveProject: 'Chemin du projet (.vplcproj)',
+        folder: 'Dossier', zip: "Chemin de l'archive (.zip)",
+      }[kind];
+      return promptDialog('Chemin sur ce poste', label, suggested ?? '');
     },
     setDirty() {},
     setTitle(title) {

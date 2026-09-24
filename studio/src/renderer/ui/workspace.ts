@@ -10,6 +10,8 @@ import { deviceEditor, onlineEditor } from '../editors/device.ts';
 import { tagTableEditor } from '../editors/tagTable.ts';
 import type { EditorView } from '../editors/types.ts';
 import { watchTableEditor } from '../editors/watchTable.ts';
+import * as V from '../versioning.ts';
+import { historyEditor } from '../versioning.ts';
 
 const views = new Map<string, EditorView>();
 const keyOf = (ref: EditorRef) => JSON.stringify(ref);
@@ -33,7 +35,9 @@ function overviewEditor(): EditorView {
         field('Commentaire', p.comment ?? '', (v) => { p.comment = v; }),
         field('Date de création', new Date(p.created).toLocaleString()),
         field('Dernière modification', new Date(p.modified).toLocaleString()),
-        field('Chemin', store.filePath ?? '(non enregistré)')),
+        field('Chemin', store.filePath ?? '(non enregistré)'),
+        field('Format', store.fileLayout === 'folder' ? 'Dossier (un fichier par objet, versionnable)' : store.fileLayout === 'file' ? 'Fichier unique' : '—'),
+        field('Gestion de versions', store.git?.repo ? `Git — branche ${store.git.branch ?? '?'}${store.git.remoteUrl ? ` — ${store.git.remoteUrl}` : ''}` : 'Non activée')),
       h('div', { className: 'panel-subheader' }, t.devicesNetworks),
       h('table', { className: 'grid' },
         h('tr', null, h('th', null, 'Appareil'), h('th', null, "Type d'appareil"), h('th', null, 'Adresse'), h('th', null, 'Blocs'), h('th', null, 'Modules E/S')),
@@ -48,6 +52,7 @@ function overviewEditor(): EditorView {
 
 function createView(ref: EditorRef): EditorView | null {
   if (ref.kind === 'overview') return overviewEditor();
+  if (ref.kind === 'history') return historyEditor();
   const device = store.device(ref.deviceId);
   if (!device || device.id !== ref.deviceId) return null;
   switch (ref.kind) {
@@ -93,7 +98,7 @@ export function workarea(): HTMLElement {
         if (view) views.set(keyOf(ref), view);
       }
     }
-    const online = ref && ref.kind !== 'overview' && store.onlineOf(ref.deviceId).connected;
+    const online = ref && 'deviceId' in ref && store.onlineOf(ref.deviceId).connected;
     title.classList.toggle('is-online', !!online);
     if (view) {
       const crumbs = [store.project?.name ?? '', ...view.crumbs()];
@@ -153,7 +158,8 @@ function portalContent(): HTMLElement {
       h('div', { style: 'display:flex;flex-direction:column;gap:8px' },
         h('div', { className: 'panel-subheader', style: 'background:none;padding:0' }, 'Démarrer'),
         action('open', 'Ouvrir le projet existant', A.openProjectCmd),
-        action('newFile', 'Créer un projet', A.newProjectCmd)),
+        action('newFile', 'Créer un projet', A.newProjectCmd),
+        action('branch', "Récupérer un projet depuis un dépôt d'équipe", () => void V.cloneCmd())),
       h('div', { style: 'max-width:520px;line-height:1.6;color:var(--muted)' },
         h('div', { className: 'panel-subheader', style: 'background:none;padding:0' }, 'Premiers pas'),
         h('ol', { style: 'padding-left:18px;margin:4px 0' },
@@ -161,7 +167,8 @@ function portalContent(): HTMLElement {
           h('li', null, 'Configurer les modules d\'E/S dans la configuration des appareils.'),
           h('li', null, 'Déclarer les variables API (%I, %Q, %M) et écrire le programme SCL dans « Main [OB1] ».'),
           h('li', null, 'Compiler, puis « Charger dans l\'appareil ».'),
-          h('li', null, 'Passer en ligne et visualiser (lunettes) ou forcer les variables.')))));
+          h('li', null, 'Passer en ligne et visualiser (lunettes) ou forcer les variables.'),
+          h('li', null, "Archiver des versions et synchroniser avec l'équipe (carte des tâches « Versions »).")))));
 }
 
 export function editorBar(): HTMLElement {
@@ -193,14 +200,17 @@ export function editorBar(): HTMLElement {
     } else {
       status.append(store.project ? `Projet ${store.project.name}${store.dirty ? ' (modifié)' : ''}` : t.noProject);
     }
+    const vc = V.statusText();
+    if (vc) status.append(h('span', { className: 'vc-status-bar', title: 'Gestion de versions', onclick: () => V.openHistoryCmd() }, svg(icons.branch), vc));
   };
-  store.on((topic) => { if (['editors', 'online', 'project'].includes(topic)) render(); });
+  store.on((topic) => { if (['editors', 'online', 'project', 'git'].includes(topic)) render(); });
   render();
   return bar;
 }
 
 function labelOf(ref: EditorRef): string {
   if (ref.kind === 'overview') return t.overview;
+  if (ref.kind === 'history') return 'Historique des versions';
   const d = store.device(ref.deviceId);
   switch (ref.kind) {
     case 'block': {

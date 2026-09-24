@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('studioHost', {
   platform: process.platform,
   invoke: (method: string, args: unknown[]) => ipcRenderer.invoke('api', method, args),
   openFile: (kind: string) => ipcRenderer.invoke('files.open', kind),
-  saveFile: (path: string | null, text: string, suggestedName: string) => ipcRenderer.invoke('files.save', path, text, suggestedName),
+  pickPath: (kind: string, suggested?: string) => ipcRenderer.invoke('files.pick', kind, suggested),
   setDirty: (dirty: boolean) => ipcRenderer.send('app.dirty', dirty),
   setTitle: (title: string) => ipcRenderer.send('app.title', title),
   quit: () => ipcRenderer.send('app.quit'),

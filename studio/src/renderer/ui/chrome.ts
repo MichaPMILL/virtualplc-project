@@ -5,6 +5,7 @@ import { host } from '../host.ts';
 import { icons, type IconName } from '../icons.ts';
 import { t } from '../i18n.ts';
 import { store } from '../store.ts';
+import * as V from '../versioning.ts';
 
 interface Item {
   label: string;
@@ -32,10 +33,17 @@ const MENUS: Array<[string, Entry[]]> = [
   [t.menuProject, [
     { label: t.newProject, icon: 'newFile', run: A.newProjectCmd, shortcut: `${mod}N` },
     { label: t.openProject, icon: 'open', run: A.openProjectCmd, shortcut: `${mod}O` },
+    { label: "Récupérer depuis un dépôt d'équipe...", icon: 'branch', run: () => void V.cloneCmd() },
     { label: t.closeProject, run: A.closeProjectCmd, enabled: hasProject, shortcut: `${mod}W` },
     'sep',
     { label: t.saveProject, icon: 'save', run: () => void A.saveProjectCmd(), enabled: hasProject, shortcut: `${mod}S` },
     { label: t.saveAs, run: () => void A.saveProjectCmd(true), enabled: hasProject, shortcut: `${mod}Shift+S` },
+    'sep',
+    { label: 'Archiver une version...', icon: 'archive', run: () => void V.archiveCmd(), enabled: hasProject },
+    { label: "Synchroniser avec l'équipe", icon: 'sync', run: () => void V.syncCmd(), enabled: hasProject },
+    { label: 'Historique des versions', icon: 'history', run: V.openHistoryCmd, enabled: hasProject },
+    { label: "Dépôt de l'équipe...", run: () => void V.remoteCmd(), enabled: () => hasProject() && V.isRepo() },
+    { label: 'Activer la gestion de versions...', run: () => void V.enableVersioningCmd(), enabled: () => hasProject() && !V.isRepo() },
     'sep',
     { label: t.importSource, icon: 'source', run: A.importSourceCmd, enabled: hasProject },
     ...(host.kind === 'electron' ? ['sep' as const, { label: t.exit, run: () => window.close() }] : []),
@@ -74,6 +82,7 @@ const MENUS: Array<[string, Entry[]]> = [
     { label: t.onlineDiag, icon: 'diag', run: () => { const d = A.currentDevice(); if (d) A.openEditor({ kind: 'online', deviceId: d.id }); }, enabled: hasProject, shortcut: `${mod}D` },
   ]],
   [t.menuOptions, [
+    { label: 'Identité pour la gestion de versions...', run: () => void V.identityDialog(store.git?.user).then(() => V.refreshGit()), enabled: V.isRepo },
     { label: t.settings, run: () => void A.aboutCmd() },
   ]],
   [t.menuHelp, [
@@ -154,6 +163,8 @@ export function toolbar(): HTMLElement {
     tbtn('newFile', t.newProject, A.newProjectCmd, () => true),
     tbtn('open', t.openProject, A.openProjectCmd, () => true),
     tbtn('save', `${t.saveProject} (${mod}S)`, () => void A.saveProjectCmd()),
+    tbtn('archive', 'Archiver une version', () => void V.archiveCmd()),
+    tbtn('sync', "Synchroniser avec l'équipe", () => void V.syncCmd()),
     h('span', { className: 'sep' }),
     tbtn('cut', t.cut, () => document.execCommand('cut'), () => true),
     tbtn('copy', t.copy, () => document.execCommand('copy'), () => true),

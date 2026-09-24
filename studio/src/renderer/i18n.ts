@@ -17,7 +17,7 @@ export const t = {
   accessibleDevices: 'Appareils accessibles...', settings: 'Paramètres', about: 'À propos de VirtualPLC Studio', help: 'Aide en ligne',
   // Panels
   projectTree: 'Arborescence du projet', devices: 'Appareils', detailsView: 'Vue détaillée',
-  taskCards: 'Cartes des tâches', instructions: 'Instructions', onlineTools: 'Outils en ligne', tasks: 'Tâches',
+  taskCards: 'Cartes des tâches', instructions: 'Instructions', onlineTools: 'Outils en ligne', versions: 'Versions', tasks: 'Tâches',
   basicInstructions: 'Instructions de base', favorites: 'Favoris',
   properties: 'Propriétés', info: 'Info', diagnostics: 'Diagnostic', general: 'Général', compileTab: 'Compiler', crossRef: 'Références croisées',
   portalView: 'Vue du portail', overview: "Vue d'ensemble",

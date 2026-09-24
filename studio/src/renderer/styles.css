@@ -316,3 +316,23 @@ body.online .editorbar .status.conn { background: var(--online-light); color: #5
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-track { background: #f0f2f4; }
 ::-webkit-scrollbar-thumb { background: #c3cad2; border: 3px solid #f0f2f4; border-radius: 6px; }
+
+/* ---------------------------------------------------------------- version management */
+.operator .button { height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; white-space: normal; }
+.vc-changes { padding: 4px 0; max-height: 260px; overflow: auto; }
+.vc-change { display: flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; white-space: nowrap; cursor: default; }
+.vc-change:hover { background: var(--hover, #e8f0f8); }
+.vc-change .label { overflow: hidden; text-overflow: ellipsis; }
+.vc-status { display: inline-block; width: 14px; text-align: center; font-size: 10px; font-weight: 700; border-radius: 2px; color: #fff; }
+.vc-status.sM { background: #1a73c9; } .vc-status.sA, .vc-status.sN { background: #1a9e5e; } .vc-status.sD { background: #d0342c; }
+.vc-status.sR { background: #7b5cc4; } .vc-status.sU { background: #e08a00; }
+.vc-conflict { border-color: #e08a00; } .vc-conflict .op-title { background: #fff1c2; }
+.vc-detail { border-top: 1px solid var(--border); padding: 8px 12px; background: var(--panel-alt); min-height: 110px; }
+.vc-status-bar { display: inline-flex; align-items: center; gap: 4px; margin-left: 12px; padding-left: 10px; border-left: 1px solid var(--border-light); cursor: pointer; }
+.diff { flex: 1; overflow: auto; font: 12px/1.45 var(--mono, Consolas, monospace); background: #fff; border: 1px solid var(--border-light); }
+.diff-file { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font: 600 12px var(--font); background: var(--panel-alt); border-top: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); position: sticky; top: 0; }
+.diff-line { white-space: pre; padding: 0 8px; }
+.diff-line.add { background: #e3f6e9; color: #0e5a31; }
+.diff-line.del { background: #fbe4e2; color: #8a1c16; }
+.diff-line.hunk { color: #7a8591; background: #f3f6f9; }
+.vc-merge td { color: var(--muted); font-style: italic; }

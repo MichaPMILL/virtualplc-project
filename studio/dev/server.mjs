@@ -13,6 +13,8 @@ const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 
 createServer(async (req, res) => {
   try {
+    // Only this machine, by its loopback name (protects against DNS rebinding)
+    if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(req.headers.host ?? '')) throw new Error('forbidden host');
     if (req.method === 'POST' && req.url?.startsWith('/api/')) {
       if (req.headers['content-type'] !== 'application/json') throw new Error('JSON expected');
       let body = '';

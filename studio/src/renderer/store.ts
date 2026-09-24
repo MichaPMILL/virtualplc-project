@@ -1,6 +1,7 @@
 // Application state. Components subscribe to change notifications.
 import type { Block, Device, Project, ProjectDiagnostic, SymbolNode, TagTable, WatchTable } from '../../../sdk/src/browser.ts';
 import type { CompileSummary } from '../backend/backend.ts';
+import type { GitStatus } from '../backend/git.ts';
 
 export type EditorRef =
   | { kind: 'overview' }
@@ -9,7 +10,8 @@ export type EditorRef =
   | { kind: 'tagTable'; deviceId: string; tableId: string }
   | { kind: 'allTags'; deviceId: string }
   | { kind: 'block'; deviceId: string; blockId: string }
-  | { kind: 'watch'; deviceId: string; tableId: string };
+  | { kind: 'watch'; deviceId: string; tableId: string }
+  | { kind: 'history' };
 
 export interface Message {
   severity: 'error' | 'warning' | 'info' | 'ok';
@@ -35,11 +37,17 @@ export interface OnlineState {
 }
 
 type Listener = (topic: Topic) => void;
-export type Topic = 'project' | 'editors' | 'selection' | 'online' | 'messages' | 'compile' | 'monitor' | 'layout';
+export type Topic = 'project' | 'editors' | 'selection' | 'online' | 'messages' | 'compile' | 'monitor' | 'layout' | 'git';
 
 class Store {
   project: Project | null = null;
   filePath: string | null = null;
+  /** 'folder': one file per object (versionable with Git); 'file': single .vplcproj file */
+  fileLayout: 'folder' | 'file' | null = null;
+  /** Folder of a folder project */
+  projectDir: string | null = null;
+  /** Version management state of the project folder */
+  git: GitStatus | null = null;
   dirty = false;
   editors: EditorRef[] = [];
   active: EditorRef | null = null;

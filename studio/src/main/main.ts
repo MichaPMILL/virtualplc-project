@@ -11,6 +11,7 @@ let dirty = false;
 const FILTERS = {
   project: [{ name: 'Projet VirtualPLC', extensions: ['vplcproj'] }, { name: 'Projet VirtualPLC 1.x (JSON)', extensions: ['json'] }],
   scl: [{ name: 'Source externe SCL', extensions: ['scl', 'txt'] }],
+  zip: [{ name: 'Archive ZIP', extensions: ['zip'] }],
 };
 
 function createWindow(): void {
@@ -83,16 +84,20 @@ ipcMain.handle('files.open', async (_e, kind: keyof typeof FILTERS) => {
   return { path, name: basename(path), text: await readFile(path, 'utf8') };
 });
 
-ipcMain.handle('files.save', async (_e, path: string | null, text: string, suggestedName: string) => {
+ipcMain.handle('files.pick', async (_e, kind: 'openProject' | 'saveProject' | 'folder' | 'zip', suggested?: string) => {
   if (!win) return null;
-  let target = path;
-  if (!target) {
-    const r = await dialog.showSaveDialog(win, { defaultPath: suggestedName, filters: FILTERS.project });
-    if (r.canceled || !r.filePath) return null;
-    target = r.filePath.endsWith('.vplcproj') ? r.filePath : `${r.filePath}.vplcproj`;
+  if (kind === 'openProject') {
+    const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: FILTERS.project });
+    return r.canceled ? null : r.filePaths[0] ?? null;
   }
-  await writeFile(target, text, 'utf8');
-  return target;
+  if (kind === 'folder') {
+    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], defaultPath: suggested });
+    return r.canceled ? null : r.filePaths[0] ?? null;
+  }
+  const r = await dialog.showSaveDialog(win, { defaultPath: suggested, filters: kind === 'zip' ? FILTERS.zip : FILTERS.project });
+  if (r.canceled || !r.filePath) return null;
+  const ext = kind === 'zip' ? '.zip' : '.vplcproj';
+  return r.filePath.endsWith(ext) ? r.filePath : `${r.filePath}${ext}`;
 });
 
 ipcMain.on('app.dirty', (_e, value: boolean) => {

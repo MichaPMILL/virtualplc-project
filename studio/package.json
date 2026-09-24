@@ -12,7 +12,8 @@
     "start": "node build.mjs && electron .",
     "web": "node build.mjs && node dev/server.mjs",
     "typecheck": "tsc --noEmit",
-    "dist": "node build.mjs && electron-builder"
+    "dist": "node build.mjs && electron-builder",
+    "test": "node --test test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

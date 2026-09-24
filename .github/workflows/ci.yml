@@ -71,3 +71,5 @@ jobs:
           npm ci
           npx tsc --noEmit
           npm run build
+          git config --global user.name CI && git config --global user.email ci@example.invalid
+          npm test

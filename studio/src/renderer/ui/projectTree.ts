@@ -149,6 +149,7 @@ function projectNodes(): NodeSpec[] {
           children: () => deviceNodes(d),
         };
       }),
+      { key: 'history', label: 'Historique des versions', icon: 'history', depth: 1, open: { kind: 'history' } },
     ],
   }];
 }

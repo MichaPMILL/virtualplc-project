@@ -5,6 +5,7 @@ import {
 } from '../../../sdk/src/browser.ts';
 import type { CompileSummary, MonitorValue } from '../backend/backend.ts';
 import { call, host } from './host.ts';
+import { refreshGit } from './versioning.ts';
 import { t } from './i18n.ts';
 import { sameEditor, store, type EditorRef } from './store.ts';
 import {
@@ -31,9 +32,9 @@ export function closeEditor(ref: EditorRef): void {
 }
 
 /** Closes editors whose object no longer exists. */
-function pruneEditors(): void {
+export function pruneEditors(): void {
   store.editors = store.editors.filter((e) => {
-    if (e.kind === 'overview') return true;
+    if (e.kind === 'overview' || e.kind === 'history') return true;
     const d = store.project?.devices.find((x) => x.id === e.deviceId);
     if (!d) return false;
     if (e.kind === 'block') return d.blocks.some((b) => b.id === e.blockId);
@@ -71,13 +72,16 @@ async function confirmDiscard(): Promise<boolean> {
   return confirmDialog(t.appName, `Le projet « ${store.project.name} » a été modifié.\nVoulez-vous abandonner les modifications ?`, 'Abandonner', t.cancel);
 }
 
-function setProject(p: Parameters<typeof saveProject>[0] | null, path: string | null): void {
+function setProject(p: Parameters<typeof saveProject>[0] | null, path: string | null, where: { layout?: 'folder' | 'file' | null; dir?: string | null } = {}): void {
   for (const id of store.online.keys()) void call('disconnect', id).catch(() => undefined);
   store.online.clear();
   store.compile.clear();
   store.monitoring = false;
   store.project = p;
   store.filePath = path;
+  store.fileLayout = where.layout ?? null;
+  store.projectDir = where.dir ?? null;
+  store.git = null;
   store.dirty = false;
   store.editors = p ? [{ kind: 'overview' }] : [];
   store.active = store.editors[0] ?? null;
@@ -90,6 +94,26 @@ function setProject(p: Parameters<typeof saveProject>[0] | null, path: string | 
   store.emit('messages');
   updateTitle();
   if (p) store.addMessage({ severity: 'info', text: `Le projet ${p.name} a été ouvert.` });
+  store.emit('git');
+  void refreshGit();
+}
+
+/** Opens a project from a path on this computer (manifest, single file or folder). */
+export async function openProjectPath(path: string): Promise<void> {
+  try {
+    const r = await call('projectOpen', path);
+    const p = loadProject(r.json);
+    const legacy = !r.json.includes('"virtualplc-project"');
+    if (legacy) p.name = r.path.split(/[/\\]/).pop()!.replace(/\.[^.]+$/, '');
+    setProject(p, legacy ? null : r.path, legacy ? {} : { layout: r.layout, dir: r.dir });
+    if (legacy) {
+      store.dirty = true;
+      updateTitle();
+      store.addMessage({ severity: 'warning', text: `Projet VirtualPLC 1.x converti : vérifiez les adresses des modules d'E/S dans la configuration des appareils, puis enregistrez le projet.` });
+    }
+  } catch (e) {
+    await alertDialog(t.appName, (e as Error).message, 'error');
+  }
 }
 
 export async function newProjectCmd(): Promise<void> {
@@ -108,32 +132,38 @@ export async function newProjectCmd(): Promise<void> {
 
 export async function openProjectCmd(): Promise<void> {
   if (!(await confirmDiscard())) return;
-  const file = await host.openFile('project');
-  if (!file) return;
-  try {
-    const p = loadProject(file.text);
-    const legacy = !file.text.includes('"virtualplc-project"');
-    if (legacy) p.name = file.name.replace(/\.[^.]+$/, '');
-    setProject(p, legacy ? null : file.path);
-    if (legacy) {
-      store.dirty = true;
-      updateTitle();
-      store.addMessage({ severity: 'warning', text: `Projet VirtualPLC 1.x converti : vérifiez les adresses des modules d'E/S dans la configuration des appareils, puis enregistrez le projet.` });
-    }
-  } catch (e) {
-    await alertDialog(t.appName, (e as Error).message, 'error');
-  }
+  const path = await host.pickPath('openProject');
+  if (path) await openProjectPath(path);
 }
 
+/**
+ * Saves the project. New projects (and "Enregistrer sous") use the folder layout: one file
+ * per block and table, which Git can compare and merge.
+ */
 export async function saveProjectCmd(saveAs = false): Promise<boolean> {
   if (!store.project) return false;
-  const text = saveProject(store.project);
-  const path = await host.saveFile(saveAs ? null : store.filePath, text, `${store.project.name}.vplcproj`);
-  if (!path) return false;
-  store.filePath = host.kind === 'electron' ? path : store.filePath ?? path;
+  store.project.modified = new Date().toISOString();
+  const json = JSON.stringify(store.project);
+  try {
+    let r;
+    if (!saveAs && store.filePath && store.fileLayout) {
+      r = await call('projectSave', store.filePath, json, store.fileLayout);
+    } else {
+      const chosen = await host.pickPath('saveProject', `${store.project.name}.vplcproj`);
+      if (!chosen) return false;
+      r = await call('projectSaveAs', chosen, json, store.project.name);
+    }
+    store.filePath = r.path;
+    store.fileLayout = r.layout;
+    store.projectDir = r.dir;
+  } catch (e) {
+    await alertDialog(t.saveProject, (e as Error).message, 'error');
+    return false;
+  }
   store.dirty = false;
   store.emit('project');
   store.addMessage({ severity: 'ok', text: `Le projet ${store.project.name} a été enregistré.` });
+  void refreshGit();
   return true;
 }
 
@@ -184,7 +214,7 @@ export async function importSourceCmd(): Promise<void> {
 
 export function currentDevice(): Device | undefined {
   const a = store.active;
-  const id = a && a.kind !== 'overview' ? a.deviceId : store.selection?.deviceId;
+  const id = a && 'deviceId' in a ? a.deviceId : store.selection?.deviceId;
   return store.device(id);
 }
 

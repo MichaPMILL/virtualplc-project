@@ -53,6 +53,24 @@ npm run web          # same UI in a browser on http://127.0.0.1:8123 (developmen
 npm run dist         # installers: .dmg / NSIS .exe / AppImage + .deb (in studio/release)
 ```
 
+### Team work and archiving (Git)
+
+Projects are saved as a **folder with one file per object** (`<Project>.vplcproj` manifest,
+`devices/<PLC>/blocks/<Block>.json` + `.scl` code, `tags/`, `watch/`), so Git can compare
+and merge the work of several engineers. The Studio drives the `git` tool installed on the
+workstation (menu *Projet*, toolbar, task card *Versions*):
+
+- **Activer la gestion de versions**: creates the repository and archives a first version.
+- **Archiver une version**: saves the project and records it with a comment (author, date).
+- **Synchroniser avec l'équipe**: receives the others' versions, merges them, sends yours.
+  Objects changed on both sides are listed; pick *Ma version* or *Version de l'équipe* for each.
+- **Historique des versions**: compare with the current project or the previous version,
+  restore a version, set a mark (e.g. `V1.0` for a commissioning), export a version as `.zip`.
+- **Récupérer depuis un dépôt d'équipe**: first copy of a shared project (GitLab, Gitea,
+  GitHub, Azure DevOps, or a bare repository on a network share).
+
+Authentication uses the workstation's Git credentials (Git Credential Manager, SSH keys).
+
 ## Features
 
 - **SCL language**: `IF/ELSIF/ELSE`, `CASE`, `FOR ... BY`, `WHILE`, `REPEAT`, `EXIT`, `RETURN`,

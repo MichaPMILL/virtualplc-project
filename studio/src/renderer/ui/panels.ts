@@ -5,6 +5,7 @@ import { clear, h, svg } from '../dom.ts';
 import { icons, type IconName } from '../icons.ts';
 import { t } from '../i18n.ts';
 import { store } from '../store.ts';
+import { versionsCard } from '../versioning.ts';
 
 // ---------------------------------------------------------------------------
 // Inspector
@@ -222,7 +223,7 @@ const INSTRUCTIONS: Array<[string, IconName, Instruction[]]> = [
 ];
 
 export function taskCards(): HTMLElement {
-  let card: 'instructions' | 'online' = 'instructions';
+  let card: 'instructions' | 'online' | 'versions' = 'instructions';
   const open = new Set<string>(['Temporisations', 'Compteurs', 'Contrôle du programme']);
   const body = h('div', { className: 'panel-body' });
   const header = h('div', { className: 'panel-header onlineable' });
@@ -231,11 +232,11 @@ export function taskCards(): HTMLElement {
 
   const render = () => {
     clear(vtabs);
-    for (const [k, label] of [['instructions', t.instructions], ['online', t.onlineTools]] as const) {
+    for (const [k, label] of [['instructions', t.instructions], ['online', t.onlineTools], ['versions', t.versions]] as const) {
       vtabs.append(h('div', { className: `vtab${card === k ? ' active' : ''}`, onclick: () => { card = k; render(); } }, label));
     }
     clear(header);
-    header.append(card === 'instructions' ? t.instructions : t.onlineTools, h('span', { className: 'spacer' }),
+    header.append({ instructions: t.instructions, online: t.onlineTools, versions: t.versions }[card], h('span', { className: 'spacer' }),
       h('button', { className: 'tbtn', title: 'Réduire', onclick: () => { store.layout.tasks = false; store.emit('layout'); } }, '▸'));
     clear(body);
     if (card === 'instructions') {
@@ -252,6 +253,8 @@ export function taskCards(): HTMLElement {
             ondblclick: () => window.dispatchEvent(new CustomEvent('studio:insert-instruction', { detail: it })),
           }, svg(icons[it.fb ? (it.fb.includes('TRIG') ? 'logic' : it.fb.startsWith('CT') ? 'counter' : 'timer') : icon]), h('b', null, it.name), h('span', { className: 'desc' }, it.desc))) : [])));
       }
+    } else if (card === 'versions') {
+      versionsCard(body);
     } else {
       const d = A.currentDevice();
       if (!d) return;
@@ -283,7 +286,16 @@ export function taskCards(): HTMLElement {
         })())));
     }
   };
-  store.on((topic) => { if (card === 'online' && ['online', 'compile', 'editors'].includes(topic)) render(); });
+  store.on((topic) => {
+    if (card === 'online' && ['online', 'compile', 'editors'].includes(topic)) render();
+    if (card === 'versions' && ['git', 'project'].includes(topic) && !body.contains(document.activeElement)) render();
+  });
+  window.addEventListener('studio:show-card', (e) => {
+    card = (e as CustomEvent).detail;
+    store.layout.tasks = true;
+    store.emit('layout');
+    render();
+  });
   render();
   return panel;
 }
