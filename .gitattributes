@@ -1,0 +1,4 @@
+* text=auto eol=lf
+/public/assets/ace/** linguist-vendored -diff
+/tests export-ignore
+/.github export-ignore

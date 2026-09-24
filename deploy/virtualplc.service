@@ -1,0 +1,30 @@
+# systemd unit for the VirtualPLC runtime.
+# Install: cp deploy/virtualplc.service /etc/systemd/system/ && systemctl enable --now virtualplc
+[Unit]
+Description=VirtualPLC runtime (SCL soft-PLC)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/virtualplc
+ExecStart=/usr/bin/php /opt/virtualplc/bin/virtualplc run
+Environment=VPLC_DATA_DIR=/opt/virtualplc/var
+Environment=VPLC_LOG_LEVEL=info
+# Environment=VPLC_FAULT_OUTPUTS=off
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/virtualplc/var
+
+[Install]
+WantedBy=multi-user.target

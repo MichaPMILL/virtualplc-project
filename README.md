@@ -1,87 +1,269 @@
-# virtualplc-project 🏭
+# VirtualPLC
 
-**A lightweight, educational Structured Text (SCL / IEC 61131-3) Parser & Interpreter written in pure PHP.**
+**A soft-PLC written in PHP: Structured Text (SCL / IEC 61131-3) runtime, Modbus TCP I/O, and a web IDE.**
 
-This project demonstrates how to build a language core for industrial automation logic. It parses SCL (Structured Control Language) code into an Abstract Syntax Tree (AST) and executes it within a PHP environment, complete with simulated hardware bindings (Modbus/IO).
+[![CI](https://github.com/MichaPMILL/virtualplc-project/actions/workflows/ci.yml/badge.svg)](https://github.com/MichaPMILL/virtualplc-project/actions/workflows/ci.yml)
 
-> **Note:** This project is for **educational purposes** only. It is designed to teach compiler theory (Lexing/Parsing/Interpreting) in the context of OT (Operational Technology). Do not use for safety-critical industrial control.
+VirtualPLC runs SCL programs cyclically like a real PLC, reads and writes remote
+Modbus TCP I/O modules (e.g. Waveshare relay boards), and exposes every program
+variable to HMIs/SCADA through its own Modbus TCP server.
 
-## ✨ Features
+> [!WARNING]
+> VirtualPLC is **not a safety PLC**. It runs on a general-purpose OS, has no
+> certified timing guarantees and must **never** be used for safety functions
+> (emergency stops, personnel protection, ...). Use certified safety hardware
+> for those, and treat VirtualPLC as supervisory/automation logic only.
 
-* **Recursive Descent Parser:** Handles complex nested structures.
-* **Operator Precedence:** Correctly evaluates logic (`AND` > `OR`), comparisons, and math.
-* **Control Flow:** Supports `IF / ELSE IF / ELSE`, `WHILE`, and `FOR` loops.
-* **Custom Blocks:** Define and call custom subroutines (`BLOCK name ... END_BLOCK`).
-* **Hardware Abstraction:** Hooks for reading/writing to external hardware (e.g., Modbus memory maps).
-* **Data Types:** Strong typing for `INT` and `BOOL`.
-* **Modbus TCP:** You can use Modbus I/O Modules such as WaveShare modules.
+## Features
 
-## 🚀 Quick Start
+- **SCL language**: `IF/ELSIF/ELSE`, `CASE`, `FOR ... BY`, `WHILE`, `REPEAT`, `EXIT`, `RETURN`,
+  `AND/OR/XOR/NOT`, `MOD`, comparisons `= <> < <= > >=`, `BOOL` and `INT` (16-bit, wrap-around),
+  hex/binary literals (`16#FF`, `2#1010`), `//`, `(* *)` and `/* */` comments, reusable `BLOCK`s.
+- **Static checks before running**: undeclared variables, unknown functions, writes to inputs,
+  unknown devices... reported with the line number *in the block you edited*.
+- **Real PLC scan semantics**: inputs read once per scan, outputs written once at the end of the
+  scan and only when they change (no relay chatter), watchdog, cyclic FC (like OB1).
+- **Robust I/O**: timeouts, automatic reconnection with backoff, outputs re-sent after a
+  reconnection, `DEVICE_OK()` to react to a lost module.
+- **Modbus TCP server for HMIs**: FC 1/2/3/4/5/6/15/16, exception responses, several clients,
+  tag name discovery.
+- **Hot reload**: deploying from the IDE reloads the program without restarting the service;
+  a broken program puts the runtime in `FAULT` (automatic restart) instead of crashing it.
+- **Web IDE**: tag table, hardware configuration, block editor with completion, build errors,
+  live monitoring and online value changes, runtime status (RUN/FAULT, scan time, I/O state).
+  Works offline (no CDN), optional API token.
+- **Operations**: systemd unit, Docker image, structured logs on stderr, status file,
+  automatic backups of the last 20 deployed programs.
 
-### 1. Installation
+## Architecture
 
-Simply clone the repo or copy the `SCLCore.php` file into your project.
+```
+ Browser (IDE) ──HTTP/JSON──> public/api.php ──writes──> var/project.scl ─┐
+                                   │   ▲                                   │ hot reload
+                        commands   │   │ status.json                       ▼
+                                   └──►var/◄───────────────── bin/virtualplc run (runtime)
+                                                                │        │
+                                         Modbus TCP client  ◄───┘        └──► Modbus TCP server
+                                         (remote I/O modules)                 (HMI / SCADA, :5020)
+```
+
+| Path                   | Content                                                     |
+|------------------------|-------------------------------------------------------------|
+| `src/Scl`              | Lexer, parser, analyzer and interpreter                     |
+| `src/Modbus`           | Modbus TCP client and server                                |
+| `src/Runtime`          | Scan loop, I/O process image, device reconnection           |
+| `src/Project`          | Web IDE project (JSON) → SCL compiler and validation        |
+| `src/Http`             | JSON API                                                    |
+| `public/`              | **Web root** (IDE + API). Nothing else must be exposed.     |
+| `bin/virtualplc`       | CLI: `run`, `check`, `compile`                              |
+| `var/`                 | Runtime data (project, program, status, backups) - not versioned |
+| `examples/`            | Example project (server room supervision)                   |
+
+## Quick start
+
+Requirements: PHP ≥ 8.1 with `ctype` and `json` (`pcntl` recommended), Composer.
 
 ```bash
 git clone https://github.com/MichaPMILL/virtualplc-project
+cd virtualplc-project
+composer install --no-dev
 
+# 1. Start the runtime (foreground)
+bin/virtualplc run
+
+# 2. In another terminal, serve the IDE (development only)
+php -S 127.0.0.1:8000 -t public
 ```
-Then with your favorite webserver, exploit the index.php. 
 
-### 2. Launch
+Open http://127.0.0.1:8000, then **Import** `examples/project.json`, adapt the IP of the I/O
+module and click **Deploy**.
 
-Simply use the following command :
+### Docker
+
 ```bash
-php daemon.php
+echo "VPLC_API_TOKEN=$(openssl rand -hex 32)" > .env
+docker compose up -d
 ```
 
-## Control Flow
+IDE on http://localhost:8080 (the token is asked on first access), Modbus HMI server on port 5020.
 
-**If / Elsif / Else:**
+### Production install (systemd + Apache)
 
-```iecst
-IF InputA = TRUE AND InputA = TRUE THEN
-    Alarm := TRUE;
-ELSE IF InputC = FALSE THEN
-    Warning := TRUE;
-ELSE
-    Status := 1;
-END_IF;
-
+```bash
+sudo git clone https://github.com/MichaPMILL/virtualplc-project /opt/virtualplc
+cd /opt/virtualplc && sudo composer install --no-dev --classmap-authoritative
+sudo chown -R www-data:www-data var
+sudo cp deploy/virtualplc.service /etc/systemd/system/ && sudo systemctl enable --now virtualplc
+sudo cp deploy/apache-vhost.conf /etc/apache2/sites-available/virtualplc.conf   # edit the token!
+journalctl -u virtualplc -f
 ```
 
-**Loops:**
+The web server and the runtime must share the `var/` directory (same user, or same group
+with write access).
+
+## Configuration
+
+Everything is configured through environment variables:
+
+| Variable                | Default   | Description                                                        |
+|-------------------------|-----------|--------------------------------------------------------------------|
+| `VPLC_DATA_DIR`         | `./var`   | Project, program, status, command and backup files                 |
+| `VPLC_API_TOKEN`        | *(empty)* | Token required by the API (`Authorization: Bearer ...`). **Set it in production.** |
+| `VPLC_MODBUS_ENABLED`   | `1`       | Start the Modbus TCP server for HMIs                               |
+| `VPLC_MODBUS_BIND`      | `0.0.0.0` | Bind address of the Modbus server (`127.0.0.1` to restrict)        |
+| `VPLC_MODBUS_PORT`      | `5020`    | Port of the Modbus server                                          |
+| `VPLC_CYCLE_MS`         | `100`     | Scan cycle time when the FC returns                                |
+| `VPLC_WATCHDOG_MS`      | `5000`    | Max time without yielding (loop without `WAIT`) before a fault; `0` disables |
+| `VPLC_IO_TIMEOUT_MS`    | `1000`    | Connect/read timeout for I/O modules                               |
+| `VPLC_RESTART_DELAY_MS` | `5000`    | Delay before restarting after a runtime fault                      |
+| `VPLC_FAULT_OUTPUTS`    | `hold`    | Outputs on fault/stop: `hold` (keep) or `off` (drive to FALSE)     |
+| `VPLC_LOG_LEVEL`        | `info`    | `debug`, `info`, `warning`, `error`                                |
+
+## Language reference
+
+A program has up to five kinds of sections, generated by the IDE from the project:
 
 ```iecst
-WHILE Running = TRUE DO
-    Count := Count + 1;
+HARDWARE
+    Io := CONNECT('192.168.1.50', 502, 1);   // host, port, Modbus unit id
+END_HARDWARE
+
+VAR
+    Enable  : BOOL;
+    Speed   : INT := 10;          // optional initial value
+    Button  : Io.INPUT.0;         // discrete input 0 of the module
+    Lamp    : Io.OUTPUT.3;        // coil 3 of the module
+END_VAR
+
+DB                                // runs once, at start-up
+    Enable := TRUE;
+END_DB
+
+BLOCK Lighting                    // reusable block, called as Lighting();
+    IF NOT DEVICE_OK(Io) THEN
+        LOG('I/O module offline');
+        RETURN;
+    END_IF;
+    Lamp := Enable AND Button;
+END_BLOCK
+
+FC                                // main program, executed every scan
+    Lighting();
+END_FC
+```
+
+### Scan cycle
+
+The FC runs cyclically, every `VPLC_CYCLE_MS`. Programs written as an explicit loop remain
+supported: each `WAIT(ms)` ends the current scan (outputs flushed, HMI served) and waits.
+
+```iecst
+WHILE SystemOn DO
+    Lighting();
+    WAIT(100);
 END_WHILE;
-
-FOR I := 1 TO 10 DO
-    Total := Total + I;
-END_FOR;
-
 ```
 
-**Example Code**
-The example code provided is in project.scl and project.json. You can import the JSON directly on the Web interfae.
+A loop that never calls `WAIT` is stopped by the watchdog (`FAULT`).
 
+### Statements
 
-## 🧠 Architecture
+```iecst
+IF a > 10 THEN ... ELSIF a > 5 THEN ... ELSE ... END_IF;
+// "ELSE IF" on a single line is accepted as an alias of ELSIF (one END_IF).
+CASE Mode OF
+    0:       Motor := FALSE;
+    1, 2:    Motor := TRUE;
+    10..20:  Alarm := TRUE;
+ELSE
+    Alarm := FALSE;
+END_CASE;
+FOR i := 10 TO 0 BY -2 DO ... END_FOR;     // FOR counters are implicitly INT
+WHILE cond DO ... END_WHILE;
+REPEAT ... UNTIL cond END_REPEAT;
+EXIT;     // leave the innermost loop
+RETURN;   // leave the current block
+```
 
-The core logic is split into three classes within `SCLCore.php`:
+Identifiers are case-insensitive. `INT` is 16-bit signed (wraps like a real PLC) and `/`
+is an integer division. `AND`/`OR`/`XOR`/`NOT` are logical on `BOOL` and bitwise on `INT`.
 
-1. **`Lexer`**: Scans the input string and converts it into a stream of tokens (`T_IF`, `T_ID`, `T_INT`, etc.).
-2. **`Parser`**: Consumes tokens to build an **Abstract Syntax Tree (AST)**.
-3. **`Interpreter`**: Traverses the AST recursively. It maintains a memory array for variables and executes the logic node by node.
+### Built-in functions
 
-## 🔌 Hardware Hooks
+| Function                     | Description                                             |
+|------------------------------|---------------------------------------------------------|
+| `CONNECT(host, port, unit)`  | Declares a Modbus TCP I/O module (HARDWARE section)     |
+| `DEVICE_OK(device)`          | `TRUE` when the module answered during the current scan |
+| `DISCONNECT_ALL()`           | Flushes outputs and closes the I/O connections          |
+| `WAIT(ms)`                   | Ends the current scan and waits                         |
+| `LOG(text, ...)`             | Writes to the runtime log                               |
+| `ABS(x)`, `MIN(a, b, ...)`, `MAX(a, b, ...)`, `LIMIT(min, x, max)` | Math                |
 
-You can hook the interpreter to real-world I/O (like a Modbus Server) using the hardware handler:
+### I/O behaviour
 
-## 🤝 Contributing
+- Inputs of a module are read at most once per scan. If a module is offline, its inputs keep
+  their last value: test `DEVICE_OK()` when that matters.
+- Outputs are written at the end of the scan, only when they changed, and re-sent after a
+  reconnection.
 
-Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
+## Modbus server (HMI / SCADA)
 
-## 📄 License
-BSD3 License
+Every variable is exposed at the address equal to its position in the tag table
+(the **REG** number in the IDE):
+
+| Variable                       | Modbus table                          |
+|--------------------------------|---------------------------------------|
+| `BOOL` bound to an input       | Discrete input (1x), read-only        |
+| other `BOOL`                   | Coil (0x), read/write                 |
+| `INT`                          | Holding register (4x), read/write, and input register (3x) |
+
+Tag names can be read from input registers `1000 + n × 10` (10 registers, 2 ASCII chars each).
+
+Modbus TCP has no authentication: bind the server to a trusted interface
+(`VPLC_MODBUS_BIND`) or firewall port 5020.
+
+## CLI
+
+```bash
+bin/virtualplc run                        # start the runtime
+bin/virtualplc check examples/project.scl # syntax + semantic check (CI friendly)
+bin/virtualplc compile examples/project.json > program.scl
+```
+
+## HTTP API
+
+All endpoints are `api.php?action=...`, JSON in and out. `POST` requires
+`Content-Type: application/json`. When `VPLC_API_TOKEN` is set, send
+`Authorization: Bearer <token>` (except for `health`).
+
+| Action     | Method | Description                                              |
+|------------|--------|----------------------------------------------------------|
+| `health`   | GET    | Liveness probe                                           |
+| `load`     | GET    | Current project                                          |
+| `save`     | POST   | Save the project (drafts allowed, not deployed)          |
+| `validate` | POST   | Compile without deploying (`422` + `errors` on failure)  |
+| `deploy`   | POST   | Validate, save and deploy (`422` + `errors` on failure)  |
+| `status`   | GET    | Runtime state, variables, scan time, devices, last error |
+| `write`    | POST   | `{"tag": "Name", "value": true}` - applied at next scan  |
+
+## Development
+
+```bash
+composer install
+composer test            # unit + integration tests (spawns a simulated I/O module)
+composer lint
+```
+
+## Security checklist
+
+- Set `VPLC_API_TOKEN` and serve the IDE over HTTPS (reverse proxy) if it leaves localhost.
+- Expose only `public/` through the web server.
+- Restrict the Modbus server with `VPLC_MODBUS_BIND` / a firewall.
+- Run the runtime as an unprivileged user (the provided systemd unit does).
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+## License
+
+BSD 3-Clause, see [LICENSE](LICENSE). The bundled Ace editor (`public/assets/ace`) is
+BSD-licensed by Ajax.org B.V.

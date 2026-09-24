@@ -1,0 +1,31 @@
+# docker compose up -d   ->  IDE on http://localhost:8080, Modbus HMI server on :5020
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      VPLC_API_TOKEN: ${VPLC_API_TOKEN:?Set VPLC_API_TOKEN in .env}
+    volumes:
+      - plc-data:/app/var
+
+  runtime:
+    build: .
+    command: ["virtualplc", "run"]
+    user: www-data
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+    # Host networking lets the runtime reach Modbus I/O modules on the plant LAN
+    # and exposes the Modbus TCP server (5020) directly.
+    network_mode: host
+    environment:
+      VPLC_DATA_DIR: /app/var
+      VPLC_MODBUS_PORT: "5020"
+      VPLC_LOG_LEVEL: info
+    volumes:
+      - plc-data:/app/var
+
+volumes:
+  plc-data:

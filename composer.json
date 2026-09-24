@@ -1,0 +1,36 @@
+{
+    "name": "michapmill/virtualplc",
+    "description": "Soft-PLC runtime for Structured Text (SCL / IEC 61131-3) written in PHP, with Modbus TCP I/O and a web IDE.",
+    "type": "project",
+    "license": "BSD-3-Clause",
+    "keywords": ["plc", "scl", "structured-text", "iec-61131-3", "modbus", "interpreter"],
+    "require": {
+        "php": ">=8.1",
+        "ext-ctype": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "suggest": {
+        "ext-pcntl": "Graceful shutdown of the runtime on SIGTERM/SIGINT"
+    },
+    "autoload": {
+        "psr-4": {
+            "VirtualPLC\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "VirtualPLC\\Tests\\": "tests/"
+        }
+    },
+    "bin": ["bin/virtualplc"],
+    "scripts": {
+        "test": "phpunit",
+        "lint": "find src public bin tests -name '*.php' -o -name virtualplc | xargs -n1 php -l"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

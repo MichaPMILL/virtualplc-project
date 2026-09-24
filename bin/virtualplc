@@ -1,0 +1,101 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use VirtualPLC\Project\ProjectCompiler;
+use VirtualPLC\Project\ProjectException;
+use VirtualPLC\Runtime\Runtime;
+use VirtualPLC\Scl\Analyzer;
+use VirtualPLC\Scl\Interpreter;
+use VirtualPLC\Scl\Parser;
+use VirtualPLC\Scl\SclException;
+use VirtualPLC\Support\Config;
+use VirtualPLC\Support\Logger;
+use VirtualPLC\Version;
+
+if (PHP_SAPI !== 'cli') {
+    exit(1);
+}
+
+$autoload = null;
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $candidate) {
+    if (is_file($candidate)) {
+        $autoload = $candidate;
+        break;
+    }
+}
+if ($autoload === null) {
+    fwrite(STDERR, "Dependencies missing: run 'composer install' first.\n");
+    exit(1);
+}
+require $autoload;
+
+$usage = <<<TXT
+VirtualPLC {VERSION} - SCL soft-PLC runtime
+
+Usage:
+  virtualplc run                        Start the runtime (foreground, stop with Ctrl+C / SIGTERM)
+  virtualplc check <file.scl>           Check a program for syntax and semantic errors
+  virtualplc compile <project.json>     Validate a web IDE project and print the generated SCL
+  virtualplc --version | --help
+
+Configuration is read from environment variables (VPLC_*), see README.md.
+
+TXT;
+
+$command = $argv[1] ?? '--help';
+
+try {
+    switch ($command) {
+        case 'run':
+            $config = Config::fromEnvironment();
+            $logger = new Logger(Logger::levelFromName($config->logLevel), STDERR, 'runtime');
+            exit((new Runtime($config, $logger))->run());
+
+        case 'check':
+            $file = $argv[2] ?? null;
+            if ($file === null || !is_file($file)) {
+                fwrite(STDERR, "Usage: virtualplc check <file.scl>\n");
+                exit(2);
+            }
+            $program = Parser::parseSource((string) file_get_contents($file));
+            (new Analyzer([...Runtime::FUNCTIONS, ...(new Interpreter())->functionNames()]))->analyze($program);
+            fwrite(STDOUT, sprintf("OK: %d variables, %d blocks\n", count($program->vars), count($program->blocks)));
+            exit(0);
+
+        case 'compile':
+            $file = $argv[2] ?? null;
+            if ($file === null || !is_file($file)) {
+                fwrite(STDERR, "Usage: virtualplc compile <project.json>\n");
+                exit(2);
+            }
+            $project = json_decode((string) file_get_contents($file), true, 64, JSON_THROW_ON_ERROR);
+            fwrite(STDOUT, (new ProjectCompiler())->compile($project)->source);
+            exit(0);
+
+        case '--version':
+        case '-V':
+            fwrite(STDOUT, 'VirtualPLC ' . Version::VERSION . "\n");
+            exit(0);
+
+        case '--help':
+        case '-h':
+        case 'help':
+            fwrite(STDOUT, str_replace('{VERSION}', Version::VERSION, $usage));
+            exit(0);
+
+        default:
+            fwrite(STDERR, "Unknown command '{$command}'.\n\n" . str_replace('{VERSION}', Version::VERSION, $usage));
+            exit(2);
+    }
+} catch (SclException $e) {
+    fwrite(STDERR, "Error: {$e->getMessage()}\n");
+    exit(1);
+} catch (ProjectException $e) {
+    fwrite(STDERR, "Invalid project:\n  - " . implode("\n  - ", $e->errors) . "\n");
+    exit(1);
+} catch (\Throwable $e) {
+    fwrite(STDERR, 'Fatal: ' . $e->getMessage() . "\n");
+    exit(1);
+}

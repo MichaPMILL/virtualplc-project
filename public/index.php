@@ -1,3 +1,9 @@
+<?php
+// Security headers for the IDE page (the page itself is static).
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: no-referrer');
+?>
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -5,12 +11,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VirtualPLC Studio</title>
     
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ext-language_tools.min.js"></script>
+    <!-- All assets are served locally: the IDE works on air-gapped networks. -->
+    <script src="assets/ace/ace.js"></script>
+    <script src="assets/ace/ext-language_tools.js"></script>
 
     <style>
         /* --- THEME VARIABLES (Dark Default) --- */
@@ -44,8 +47,8 @@
 
             --radius-sm: 4px;
             --radius-md: 6px;
-            --font-ui: 'Inter', system-ui, sans-serif;
-            --font-code: 'JetBrains Mono', monospace;
+            --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            --font-code: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, 'Liberation Mono', monospace;
             
             --editor-font-size: 14px;
         }
@@ -557,10 +560,61 @@
         let liveInterval = null;
         let aceEditor = null;
         let isDirty = false;
+        let suppressDirty = false;
+        let projectLoaded = false; // guards against overwriting the server project with an empty one
         let modalCallback = null;
         let ctxTargetIndex = null;
         let dragSrcEl = null;
         let settings = { fontSize: 14, theme: 'dark' };
+
+        // --- SECURITY HELPERS ---
+        // Every user/project-provided string must go through esc() before being put in HTML.
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        // --- API CLIENT ---
+        // Sends the API token (if one is configured server-side) and asks for it on 401.
+        const TOKEN_KEY = 'virtualplc.apiToken';
+        function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+        function setToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {} }
+
+        async function api(action, body = undefined, retried = false, interactive = true) {
+            const opts = { method: body === undefined ? 'GET' : 'POST', headers: {}, cache: 'no-store' };
+            const token = getToken();
+            if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+            if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+
+            const res = await fetch('api.php?action=' + encodeURIComponent(action), opts);
+            if (res.status === 401 && !retried && interactive) {
+                const newToken = await askToken();
+                if (newToken) { setToken(newToken); return api(action, body, true); }
+            }
+            let data = null;
+            try { data = await res.json(); } catch (e) { /* non-JSON error page */ }
+            if (!res.ok) {
+                const err = new Error((data && data.error) || ('HTTP ' + res.status));
+                err.status = res.status; err.details = (data && data.errors) || [];
+                throw err;
+            }
+            return data;
+        }
+
+        // Concurrent 401s share a single prompt.
+        let tokenPrompt = null;
+        function askToken() {
+            if (!tokenPrompt) tokenPrompt = promptToken().finally(() => { tokenPrompt = null; });
+            return tokenPrompt;
+        }
+        function promptToken() {
+            return new Promise(resolve => {
+                showPrompt("API token required", (val) => resolve(val.trim()));
+                const input = document.getElementById('modal-input');
+                input.type = 'password'; input.placeholder = 'VPLC_API_TOKEN';
+                const prevClose = closeModal;
+                closeModal = function() { closeModal = prevClose; prevClose(); resolve(''); };
+            });
+        }
 
         // --- INIT ---
         window.onload = function() {
@@ -574,12 +628,15 @@
             initAce();
             initResizer();
             loadProject();
+            pollRuntimeStatus();
+            setInterval(pollRuntimeStatus, 2000);
             
             document.addEventListener('click', () => document.getElementById('ctx-menu').classList.remove('visible'));
         };
 
         // --- ACE EDITOR ---
         function initAce() {
+            ace.config.set('basePath', 'assets/ace');
             ace.require("ace/ext/language_tools");
             const snippetManager = ace.require("ace/snippets").snippetManager;
             aceEditor = ace.edit("editor");
@@ -597,6 +654,7 @@
                 { content: "IF ${1:condition} THEN\n\t${2:statement};\nELSE\n\t${3:statement};\nEND_IF;", name: "IF_ELSE", tabTrigger: "ifelse" },
                 { content: "WHILE ${1:condition} DO\n\t${2:statement};\nEND_WHILE;", name: "WHILE", tabTrigger: "while" },
                 { content: "FOR ${1:i} := ${2:0} TO ${3:10} DO\n\t${4:statement};\nEND_FOR;", name: "FOR", tabTrigger: "for" },
+                { content: "REPEAT\n\t${1:statement};\nUNTIL ${2:condition}\nEND_REPEAT;", name: "REPEAT", tabTrigger: "repeat" },
                 { content: "CASE ${1:var} OF\n\t${2:1}: ${3:statement};\nELSE\n\t${4:statement};\nEND_CASE;", name: "CASE", tabTrigger: "case" }
             ];
             snippetManager.register(snippets, "pascal");
@@ -615,6 +673,7 @@
                 const val = aceEditor.getValue();
                 if (currentContext === 'fc') project.fc = val;
                 else if (project.blocks[currentContext]) project.blocks[currentContext].code = val;
+                if (suppressDirty) return;
                 
                 if(!isDirty) {
                     isDirty = true;
@@ -674,7 +733,7 @@
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(project, null, 2));
             const downloadAnchorNode = document.createElement('a');
             downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "openplc_project.json");
+            downloadAnchorNode.setAttribute("download", "virtualplc_project.json");
             document.body.appendChild(downloadAnchorNode);
             downloadAnchorNode.click(); downloadAnchorNode.remove();
             log("Project exported to JSON.", "success");
@@ -687,7 +746,7 @@
                 try {
                     const json = JSON.parse(e.target.result);
                     if (json.hardware && json.blocks) {
-                        project = json; renderAll(); nav('hw'); saveProject();
+                        project = json; projectLoaded = true; renderAll(); nav('hw'); saveProject();
                         log("Project imported successfully.", "success"); showToast("Project Imported", "success");
                     } else { throw new Error("Invalid Project File"); }
                 } catch (err) { showToast("Import Failed: " + err.message, "error"); }
@@ -697,88 +756,113 @@
 
         // --- API & ACTIONS ---
         async function loadProject() {
-            log("Loading Project...", "info");
+            if (isDirty && !confirm("Discard unsaved changes and reload the project from the server?")) return;
+            log("Loading project...", "info");
             setStatus("Loading...");
             try {
-                const res = await fetch('api.php?action=load');
-                const data = await res.json();
-                if(data && typeof data === 'object') project = { ...project, ...data };
+                const data = await api('load');
+                if (data && typeof data === 'object') project = { ...project, ...data };
+                projectLoaded = true;
                 renderAll();
-                log("Project Loaded.", "success");
+                markClean();
+                log("Project loaded.", "success");
                 setStatus("Ready");
             } catch (err) {
-                log("Failed to load project. Starting new session.", "warn");
+                log("Failed to load project: " + err.message, "error");
                 renderAll();
-                setStatus("Ready (Local)");
+                setStatus("Ready (local only)");
             }
         }
 
+        function markClean() {
+            isDirty = false;
+            document.getElementById('crumb-title').innerText = currentContextName;
+            document.querySelectorAll('.modified').forEach(el => el.classList.remove('modified'));
+        }
+
+        function confirmOverwrite() {
+            return projectLoaded || confirm("The project could not be loaded from the server. Overwrite the server project with the one in this editor?");
+        }
+
         async function saveProject() {
+            if (!confirmOverwrite()) return;
             setStatus("Saving...");
             try {
-                const res = await fetch('api.php?action=save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(project) });
-                const resp = await res.json();
-                if(resp.status === 'success') {
-                    setStatus("Ready");
-                    showToast("Project saved successfully", "success");
-                    log("Project saved.", "success");
-                    isDirty = false;
-                    document.getElementById('crumb-title').innerText = currentContextName;
-                    document.querySelectorAll('.modified').forEach(el => el.classList.remove('modified'));
-                } else {
-                    throw new Error(resp.message);
-                }
+                await api('save', project);
+                projectLoaded = true;
+                setStatus("Ready");
+                showToast("Project saved", "success");
+                log("Project saved.", "success");
+                markClean();
             } catch (e) {
-                setStatus("Save Failed");
-                showToast("Save Failed: " + e.message, "error");
-                log("Save Error: " + e.message, "error");
+                setStatus("Save failed");
+                showToast("Save failed: " + e.message, "error");
+                log("Save error: " + e.message, "error");
             }
         }
 
         async function deploy() {
-            // Simulated Build
-            setStatus("Compiling...");
+            if (!confirmOverwrite()) return;
+            setStatus("Building...");
             document.getElementById('console-out').innerHTML = '';
-            const app = document.getElementById('app-container');
-            app.classList.remove('terminal-closed');
-            
-            const steps = [
-                { msg: "Clicked on Deploy Button...", type: "info", delay: 100 },
-                { msg: "Going to send to backend, you know ?", type: "info", delay: 400 }
-            ];
-
-            for (const step of steps) {
-                log(step.msg, step.type);
-                await new Promise(r => setTimeout(r, 400));
-            }
+            document.getElementById('app-container').classList.remove('terminal-closed');
+            log("Validating and compiling project...", "info");
 
             try {
-                log("Uploading to Runtime...", "warn");
-                const res = await fetch('api.php?action=deploy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(project) });
-                const resp = await res.json();
-                if(resp.status === 'success') {
-                    log("Build Successful. Runtime Restarted.", "success");
-                    setStatus("Ready");
-                    showToast("Deployment Complete", "success");
-                    setTimeout(loadProject, 1000); 
-                } else {
-                    throw new Error(resp.error);
-                }
+                const resp = await api('deploy', project);
+                projectLoaded = true;
+                markClean();
+                log("Build successful, program handed to the runtime.", "success");
+                if (!resp.runtime_online) log("Runtime is not running: start it with 'bin/virtualplc run' (or the systemd service).", "warn");
+                setStatus("Deployed");
+                showToast("Deployment complete", "success");
             } catch (e) {
-                log("Build Failed: " + e.message, "error");
-                setStatus("Build Failed");
+                log("Build failed: " + e.message, "error");
+                (e.details || []).forEach(d => log("  " + d, "error"));
+                setStatus("Build failed");
+                showToast("Build failed (see output)", "error");
             }
         }
 
-        async function forceVar(tagName, value) {
-            if(!liveInterval) return;
-            log(`Forcing ${tagName} to ${value}...`, "info");
+        async function forceVar(index, value) {
+            if (!liveInterval) return;
+            const tag = project.vars[index] && project.vars[index].name;
+            if (!tag) return;
+            log(`Writing ${tag} := ${value}...`, "info");
             try {
-                const res = await fetch('api.php?action=write', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ tag: tagName, value: value }) });
-                const json = await res.json();
-                if(json.status === 'success') showToast(`${tagName} updated`, "success");
-            } catch(e) { showToast("Failed to write value", "error"); }
+                await api('write', { tag: tag, value: value });
+                showToast(`${tag} := ${value}`, "success");
+            } catch (e) { showToast("Write failed: " + e.message, "error"); log("Write failed: " + e.message, "error"); }
         }
+
+        // --- RUNTIME STATUS (status bar) ---
+        async function pollRuntimeStatus() {
+            const el = document.getElementById('connection-indicator');
+            let color = '#ef4444', text = 'Runtime: offline', title = 'The runtime process is not running';
+            try {
+                const st = await api('status', undefined, false, false);
+                const devices = st.devices || [];
+                const down = devices.filter(d => !d.online);
+                if (st.state === 'RUN') {
+                    color = down.length ? '#eab308' : '#10b981';
+                    text = `RUN · scan ${st.scan ? st.scan.last_ms : '?'} ms` + (down.length ? ` · ${down.length}/${devices.length} I/O offline` : '');
+                    title = devices.map(d => `${d.device}: ${d.online ? 'online' : 'OFFLINE (' + d.error + ')'}`).join('\n') || 'No I/O devices';
+                } else if (st.state === 'FAULT') {
+                    color = '#ef4444';
+                    text = 'FAULT';
+                    title = st.error ? (st.error.line ? `Line ${st.error.line}: ` : '') + st.error.message : 'Fault';
+                    if (lastFault !== title) { lastFault = title; log("Runtime fault: " + title, "error"); }
+                } else if (st.state === 'IDLE') {
+                    color = '#a1a1aa'; text = 'IDLE · no program deployed'; title = '';
+                }
+                if (st.state !== 'FAULT') lastFault = null;
+            } catch (e) {
+                if (e.status === 401) { text = 'Runtime: unauthorized'; title = 'Invalid API token'; }
+            }
+            el.title = title;
+            el.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:${color}; margin-right:6px; display:inline-block"></span> ${esc(text)}`;
+        }
+        let lastFault = null;
 
         // --- NAVIGATION ---
         function nav(view, el = null, blockIdx = null) {
@@ -812,7 +896,9 @@
                 
                 currentContext = view === 'fc' ? 'fc' : blockIdx;
                 if(view === 'block') renderBlockTree();
+                suppressDirty = true;
                 aceEditor.setValue(view === 'fc' ? (project.fc || "") : (project.blocks[blockIdx].code || ""), -1);
+                suppressDirty = false;
                 aceEditor.resize();
                 
                 dynamicActions.innerHTML = `<button class="btn btn-secondary" onclick="formatCode()"><svg style="width:16px;height:16px;fill:currentColor" viewBox="0 0 24 24"><path d="M21 10V21H16V20H15V19H14V17H13V15H11V14H9V12H8V10H21M4 3H18V9H17V8H16V7H15V5H14V3H4Z"/></svg> Format</button>`;
@@ -826,24 +912,25 @@
             const tbody = document.querySelector('#hw-table tbody');
             let html = ''; if(!project.hardware) project.hardware = [];
             project.hardware.forEach((h, i) => {
-                html += `<tr><td><input type="text" value="${h.name}" onchange="validateName(this); project.hardware[${i}].name=this.value"></td>
-                    <td><input type="text" class="text-mono" value="${h.ip}" oninput="project.hardware[${i}].ip=this.value"></td>
-                    <td><input type="number" class="text-mono" value="${h.port}" oninput="project.hardware[${i}].port=this.value"></td>
-                    <td><input type="number" class="text-mono" value="${h.slave}" oninput="project.hardware[${i}].slave=this.value"></td>
-                    <td><button class="btn-icon" onclick="project.hardware.splice(${i},1); renderHW()" title="Delete">${ICONS.trash}</button></td></tr>`;
+                html += `<tr><td><input type="text" value="${esc(h.name)}" onchange="validateName(this); project.hardware[${i}].name=this.value; markDirty()"></td>
+                    <td><input type="text" class="text-mono" value="${esc(h.ip)}" oninput="project.hardware[${i}].ip=this.value.trim(); markDirty()"></td>
+                    <td><input type="number" min="1" max="65535" class="text-mono" value="${esc(h.port)}" oninput="project.hardware[${i}].port=Number(this.value); markDirty()"></td>
+                    <td><input type="number" min="0" max="255" class="text-mono" value="${esc(h.slave)}" oninput="project.hardware[${i}].slave=Number(this.value); markDirty()"></td>
+                    <td><button class="btn-icon" onclick="project.hardware.splice(${i},1); markDirty(); renderHW()" title="Delete">${ICONS.trash}</button></td></tr>`;
             });
             tbody.innerHTML = html;
         }
 
     function renderVars(liveData = null) {
             const tbody = document.querySelector('#vars-table tbody');
-            const devOpts = (project.hardware || []).map(h => `<option value="${h.name}">${h.name}</option>`).join('');
+            const devOpts = (v) => (project.hardware || []).map(h => `<option value="${esc(h.name)}" ${h.name === v.device ? 'selected' : ''}>${esc(h.name)}</option>`).join('');
             let html = ''; if(!project.vars) project.vars = [];
 
             
             
             project.vars.forEach((v, i) => {
                 const isBind = v.mode === 'binding';
+                const isInput = isBind && v.io === 'INPUT';
                 let displayVal = '<span style="color:var(--text-faint)">-</span>';
                 let dotClass = 'live-dot';
 
@@ -853,15 +940,15 @@
                 if (memory && memory.hasOwnProperty(v.name)) {
                     let val = memory[v.name];
                     if (val === true || val === '1' || val === 'TRUE' || val === 1) { 
-                        if(liveInterval) displayVal = `<span class="force-val" onclick="forceVar('${v.name}', 0)" style="color:var(--status-success); font-weight:600; cursor:pointer">TRUE</span>`;
+                        if(liveInterval && !isInput) displayVal = `<span class="force-val" onclick="forceVar(${i}, false)" title="Click to write FALSE" style="color:var(--status-success); font-weight:600; cursor:pointer">TRUE</span>`;
                         else displayVal = '<span style="color:var(--status-success); font-weight:600">TRUE</span>';
                         dotClass += ' active'; 
                     }
                     else if (val === false || val === '0' || val === 'FALSE' || val === 0) { 
-                         if(liveInterval) displayVal = `<span class="force-val" onclick="forceVar('${v.name}', 1)" style="color:var(--text-muted); cursor:pointer">FALSE</span>`;
+                         if(liveInterval && !isInput) displayVal = `<span class="force-val" onclick="forceVar(${i}, true)" title="Click to write TRUE" style="color:var(--text-muted); cursor:pointer">FALSE</span>`;
                          else displayVal = '<span style="color:var(--text-muted)">FALSE</span>';
                     }
-                    else { displayVal = `<span class="text-mono" style="color:var(--syntax-int)">${val}</span>`; }
+                    else { displayVal = `<span class="text-mono" style="color:var(--syntax-int)">${esc(val)}</span>`; }
                 }
 
                 // --- 2. AUTO-MAPPING BADGE (Now global for the row) ---
@@ -870,24 +957,24 @@
                 const details = !isBind ? 
                     `<div class="flex-row">
                         <span class="badge ${v.type==='BOOL'?'badge-bool':'badge-int'}">${v.type}</span>
-                        <select onchange="project.vars[${i}].type=this.value" style="width:auto; color:var(--text-muted); margin-left:8px">
+                        <select onchange="project.vars[${i}].type=this.value; markDirty(); renderVars()" style="width:auto; color:var(--text-muted); margin-left:8px">
                             <option value="BOOL" ${v.type=='BOOL'?'selected':''}>BOOL</option>
                             <option value="INT" ${v.type=='INT'?'selected':''}>INT</option>
                         </select>
                     </div>` : 
                     `<div class="flex-row">
-                        <select onchange="project.vars[${i}].device=this.value">${devOpts}</select>
-                        <select onchange="project.vars[${i}].io=this.value" style="width:80px; color:${v.io=='INPUT'?'#dcdcaa':'#9cdcfe'}">
+                        <select onchange="project.vars[${i}].device=this.value; markDirty()">${devOpts(v)}</select>
+                        <select onchange="project.vars[${i}].io=this.value; markDirty(); renderVars()" style="width:80px; color:${v.io=='INPUT'?'#dcdcaa':'#9cdcfe'}">
                             <option value="INPUT" ${v.io=='INPUT'?'selected':''}>IN</option>
                             <option value="OUTPUT" ${v.io=='OUTPUT'?'selected':''}>OUT</option>
                         </select>
                         <span style="color:var(--text-faint)">@</span>
-                        <input type="number" class="text-mono" value="${v.addr}" oninput="project.vars[${i}].addr=this.value" style="width:50px">
+                        <input type="number" min="0" max="65535" class="text-mono" value="${esc(v.addr)}" oninput="project.vars[${i}].addr=Number(this.value); markDirty()" style="width:60px">
                     </div>`;
 
                 html += `<tr>
                     <td style="text-align:center"><div class="${dotClass}"></div></td>
-                    <td><input type="text" class="text-mono" value="${v.name}" onchange="validateName(this); project.vars[${i}].name=this.value; saveProject();"></td>
+                    <td><input type="text" class="text-mono" value="${esc(v.name)}" onchange="validateName(this); project.vars[${i}].name=this.value; markDirty()"></td>
                     <td>
                         <select onchange="updateVarMode(${i}, this.value)" style="color:${isBind?'var(--accent-primary)':'inherit'}">
                             <option value="simple" ${!isBind?'selected':''}>Internal Memory</option>
@@ -895,7 +982,7 @@
                         </select>
                     </td>
                     <td><div class="flex-row">${details} ${mbBadge}</div></td> <td class="text-mono">${displayVal}</td>
-                    <td><button class="btn-icon" onclick="project.vars.splice(${i},1); renderVars()">${ICONS.trash}</button></td>
+                    <td><button class="btn-icon" onclick="project.vars.splice(${i},1); markDirty(); renderVars()" title="Delete">${ICONS.trash}</button></td>
                 </tr>`;
             });
             tbody.innerHTML = html;
@@ -905,7 +992,7 @@
             const tbody = document.querySelector('#db-table tbody');
             let html = ''; if(!project.db) project.db = [];
             project.db.forEach((d, i) => {
-                html += `<tr><td><input type="text" class="text-mono" value="${d.name}" onchange="validateName(this); project.db[${i}].name=this.value"></td><td><input type="text" class="text-mono" value="${d.val}" oninput="project.db[${i}].val=this.value"></td><td><button class="btn-icon" onclick="project.db.splice(${i},1); renderDB()">${ICONS.trash}</button></td></tr>`;
+                html += `<tr><td><input type="text" class="text-mono" value="${esc(d.name)}" onchange="validateName(this); project.db[${i}].name=this.value; markDirty()"></td><td><input type="text" class="text-mono" value="${esc(d.val)}" oninput="project.db[${i}].val=this.value; markDirty()"></td><td><button class="btn-icon" onclick="project.db.splice(${i},1); markDirty(); renderDB()" title="Delete">${ICONS.trash}</button></td></tr>`;
             });
             tbody.innerHTML = html;
         }
@@ -918,7 +1005,7 @@
             }
             let html = ''; 
             project.blocks.forEach((b, i) => {
-                html += `<div class="tree-item ${currentContext === i ? 'active' : ''}" draggable="true" data-idx="${i}" onclick="nav('block', this, ${i})"><span class="tree-icon">${ICONS.file}</span><span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${b.name}</span><button class="tree-delete" onclick="removeBlock(event, ${i})" title="Delete Block">${ICONS.trash}</button></div>`;
+                html += `<div class="tree-item ${currentContext === i ? 'active' : ''}" draggable="true" data-idx="${i}" onclick="nav('block', this, ${i})"><span class="tree-icon">${ICONS.file}</span><span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(b.name)}</span><button class="tree-delete" onclick="removeBlock(event, ${i})" title="Delete Block">${ICONS.trash}</button></div>`;
             });
             container.innerHTML = html;
             addDnDHandlers();
@@ -929,8 +1016,9 @@
         function promptNewBlock() {
             showPrompt("Enter New Block Name", (name) => {
                 if(/^[a-zA-Z_]\w*$/.test(name)) {
-                    project.blocks.push({name: name, code: "(* Logic for " + name + " *)"});
-                    renderBlockTree(); log(`Created block: ${name}`, "info");
+                    if (project.blocks.some(b => b.name.toUpperCase() === name.toUpperCase())) { showToast("A block with this name already exists", "error"); return; }
+                    project.blocks.push({name: name, code: "(* Logic for " + name + " *)\n"});
+                    markDirty(); renderBlockTree(); log(`Created block: ${name}`, "info");
                 } else { showToast("Invalid Name (Use A-Z, 0-9, _)", "error"); }
             });
         }
@@ -989,19 +1077,29 @@
             if (action === 'open') nav('block', null, ctxTargetIndex);
             else if (action === 'rename') {
                 showPrompt(`Rename ${block.name}`, (newName) => {
-                    if (/^[a-zA-Z_]\w*$/.test(newName)) { block.name = newName; renderBlockTree(); } 
+                    if (/^[a-zA-Z_]\w*$/.test(newName)) { block.name = newName; markDirty(); renderBlockTree(); } 
                     else showToast("Invalid Name", "error");
                 });
             } else if (action === 'duplicate') {
-                project.blocks.push({ name: block.name + '_Copy', code: block.code }); renderBlockTree();
+                project.blocks.push({ name: block.name + '_Copy', code: block.code }); markDirty(); renderBlockTree();
             } else if (action === 'delete') removeBlock({stopPropagation:()=>{}}, ctxTargetIndex);
         }
 
         // --- UTILS ---
-        function addHw() { project.hardware.push({name:'New_Device', ip:'127.0.0.1', port:502, slave:1}); renderHW(); }
-        function addVar() { project.vars.push({name:'New_Tag', mode:'simple', type:'BOOL', device:'', io:'OUTPUT', addr:0}); renderVars(); }
-        function addDb() { project.db.push({name:'Init_Val', val:'0'}); renderDB(); }
-        function updateVarMode(i, mode) { project.vars[i].mode = mode; if (mode === 'binding' && project.hardware.length) project.vars[i].device = project.hardware[0].name; renderVars(); }
+        function uniqueName(base, list) { let n = base, k = 1; while (list.some(x => x.name === n)) n = base + '_' + (k++); return n; }
+        function addHw() { project.hardware.push({name: uniqueName('Device', project.hardware), ip:'192.168.1.10', port:502, slave:1}); markDirty(); renderHW(); }
+        function addVar() { project.vars.push({name: uniqueName('Tag', project.vars), mode:'simple', type:'BOOL', device:'', io:'OUTPUT', addr:0}); markDirty(); renderVars(); }
+        function addDb() { project.db.push({name: (project.vars[0] || {name: 'Tag'}).name, val:'FALSE'}); markDirty(); renderDB(); }
+        function updateVarMode(i, mode) {
+            project.vars[i].mode = mode;
+            if (mode === 'binding') { project.vars[i].type = 'BOOL'; if (project.hardware.length && !project.vars[i].device) project.vars[i].device = project.hardware[0].name; }
+            markDirty(); renderVars();
+        }
+        function markDirty() {
+            if (isDirty) return;
+            isDirty = true;
+            document.getElementById('crumb-title').innerText = currentContextName + " ●";
+        }
         function validateName(input) {
             if(!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(input.value)) { input.style.borderColor = 'var(--status-error)'; showToast("Invalid Identifier", "error"); } 
             else input.style.borderColor = 'var(--border-strong)';
@@ -1010,14 +1108,21 @@
         function log(msg, type='info') {
             const consoleDiv = document.getElementById('console-out');
             const time = new Date().toLocaleTimeString('en-US', {hour12:false});
-            consoleDiv.innerHTML += `<div class="log-${type}"><span style="opacity:0.5; font-size:11px">[${time}]</span> ${msg}</div>`;
+            const line = document.createElement('div');
+            line.className = 'log-' + type;
+            const stamp = document.createElement('span');
+            stamp.style.cssText = 'opacity:0.5; font-size:11px';
+            stamp.textContent = `[${time}] `;
+            line.append(stamp, document.createTextNode(msg));
+            consoleDiv.appendChild(line);
+            while (consoleDiv.childElementCount > 1000) consoleDiv.firstChild.remove();
             consoleDiv.scrollTop = consoleDiv.scrollHeight;
         }
         function showToast(msg, type = 'info') {
             const container = document.getElementById('toast-container');
             const el = document.createElement('div'); el.className = `toast toast-${type}`;
             let icon = type === 'success' ? '<svg style="width:16px;height:16px;fill:var(--status-success)" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' : (type==='error'?'<svg style="width:16px;height:16px;fill:var(--status-error)" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>':'<svg style="width:16px;height:16px;fill:var(--status-info)" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2z"/></svg>');
-            el.innerHTML = `${icon} <span>${msg}</span>`; container.appendChild(el);
+            el.innerHTML = `${icon} <span>${esc(msg)}</span>`; container.appendChild(el);
             setTimeout(() => { el.style.animation = 'fadeOut 0.3s forwards'; setTimeout(() => el.remove(), 300); }, 3000);
         }
         function toggleTerminal() {
@@ -1033,10 +1138,9 @@
             document.querySelector('.live-dot').classList.add('active'); log("Live Monitor Started", "info");
             liveInterval = setInterval(async () => {
                 try {
-                    const res = await fetch('api.php?action=status'); const liveData = await res.json();
-                    document.getElementById('connection-indicator').innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:#10b981; margin-right:6px"></span> System: Online`;
-                    if(document.getElementById('view-vars').classList.contains('active')) renderVars(liveData); 
-                } catch(e) { document.getElementById('connection-indicator').innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:#ef4444; margin-right:6px"></span> System: Offline`; }
+                    const liveData = await api('status', undefined, false, false);
+                    if (document.getElementById('view-vars').classList.contains('active')) renderVars(liveData.online ? liveData : null);
+                } catch(e) { /* status bar reports connectivity */ }
             }, 1000);
         }
         function stopLiveMode() {
@@ -1070,8 +1174,8 @@
         }
 
         function applySettings() {
-            const size = document.getElementById('setting-font').value;
-            settings.fontSize = parseInt(size);
+            const size = Math.min(32, Math.max(8, parseInt(document.getElementById('setting-font').value, 10) || 14));
+            settings.fontSize = size;
             document.documentElement.style.setProperty('--editor-font-size', size + 'px');
             aceEditor.setFontSize(size + 'px');
             closeModal();
