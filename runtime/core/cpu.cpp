@@ -82,6 +82,7 @@ const char* Cpu::loadImage(size_t length) {
     if (!vm_.load(&program_, arena_, arenaCapacity_, &host_)) return "cannot load program";
     vm_.setWatchdog(watchdogMs_);
     modules_ = platform_.configureIo(program_);
+    setupDataLogs();
     state_ = STOP;
     char msg[96];
     snprintf(msg, sizeof msg, "Program '%s' loaded (%08lx)", program_.name, static_cast<unsigned long>(program_.id));
@@ -163,12 +164,103 @@ uint32_t Cpu::loop() {
     }
     applyForces(uint8_t(Area::Q), q, qsize);
     platform_.writeOutputs(q, qsize);
+    if (logCount_) processDataLogs(now);
 
     scans_++;
     scanUs_ = platform_.micros() - t0;
     if (scanUs_ > maxScanUs_) maxScanUs_ = scanUs_;
     uint32_t spent = platform_.millis() - now;
     return spent >= cycle ? 0 : cycle - spent;
+}
+
+// ---------------------------------------------------------------------------
+// Traceability (data logs)
+// ---------------------------------------------------------------------------
+
+void Cpu::setupDataLogs() {
+    logCount_ = 0;
+    logDropped_ = 0;
+    if (program_.datalogs.size == 0) return;
+#if VPLC_MAX_DATALOGS > 0
+    if (!platform_.configureDataLogs(program_)) {
+        log("Data logs (traceability) are not supported by this CPU: they are ignored");
+        return;
+    }
+    DataLogReader reader(program_.datalogs);
+    DataLogInfo info;
+    while (logCount_ < VPLC_MAX_DATALOGS && reader.next(info)) {
+        LogTrigger& t = dataLogs_[logCount_++];
+        t = LogTrigger();
+        t.kind = info.trigger;
+        t.area = info.edgeArea;
+        t.offset = info.edgeOffset;
+        t.bit = info.edgeBit;
+        t.periodMs = info.periodMs;
+        t.nextDue = platform_.millis() + info.periodMs;
+    }
+#else
+    log("Data logs (traceability) are not supported by this CPU: they are ignored");
+#endif
+}
+
+bool Cpu::requestDataLog(uint16_t log) {
+    if (log >= logCount_) return false;
+    dataLogs_[log].pending = true;
+    return true;
+}
+
+// End of scan: captures the records of the triggered data logs
+void Cpu::processDataLogs(uint32_t now) {
+#if VPLC_MAX_DATALOGS > 0
+    DataLogReader reader(program_.datalogs);
+    DataLogInfo info;
+    for (uint16_t k = 0; k < logCount_ && reader.next(info); k++) {
+        LogTrigger& t = dataLogs_[k];
+        bool fire = t.pending;
+        if (t.kind == DataLogInfo::EDGE) {
+            uint32_t size;
+            uint8_t* area = vm_.area(t.area, size);
+            bool v = area && t.offset < size && (t.bit == 0xFF ? area[t.offset] != 0 : ((area[t.offset] >> (t.bit & 7)) & 1));
+            if (v && !t.lastEdge) fire = true;
+            t.lastEdge = v;
+        } else if (t.kind == DataLogInfo::PERIOD && int32_t(now - t.nextDue) >= 0) {
+            fire = true;
+            t.nextDue += t.periodMs;
+            if (int32_t(now - t.nextDue) >= 0) t.nextDue = now + t.periodMs;  // never catch up
+        }
+        t.pending = false;
+        if (!fire) continue;
+        // Snapshot of the columns
+        uint32_t len = 0;
+        uint8_t pos = 0;
+        const uint8_t* cursor = nullptr;
+        DataLogColumn c;
+        bool ok = true;
+        while (info.column(pos, cursor, c)) {
+            uint32_t size;
+            uint8_t* area = vm_.area(c.area, size);
+            uint32_t n = c.bit != 0xFF ? 1 : c.size;
+            if (!area || len + n > sizeof record_ || uint64_t(c.offset) + (c.bit != 0xFF ? 1 : c.size) > size) {
+                ok = false;
+                break;
+            }
+            if (c.bit != 0xFF) record_[len] = (area[c.offset] >> (c.bit & 7)) & 1;
+            else memcpy(record_ + len, area + c.offset, n);
+            len += n;
+        }
+        int64_t ns = 0;
+        if (!platform_.clock(false, ns)) ns = 0;
+        if (!ok || !platform_.dataLog(k, ns, record_, len)) {
+            if (logDropped_++ == 0 || (logDropped_ & 1023) == 0) {
+                char msg[160];
+                snprintf(msg, sizeof msg, "Data log '%s': record lost (%lu so far)", info.name, static_cast<unsigned long>(logDropped_));
+                log(msg);
+            }
+        }
+    }
+#else
+    (void)now;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +499,37 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
         case Command::CMD_UNFORCE_ALL:
             forceCount_ = 0;
             break;
+        case Command::CMD_DATALOG_READ: {
+            // u16 log, u16 count, u64 before (optional)
+            if (len < 4) { fail(Status::ST_BAD_REQUEST, "log and count expected"); break; }
+            uint64_t before = len >= 12 ? (uint64_t(rd32le(p + 8)) << 32) | rd32le(p + 4) : 0;
+            n = uint32_t(platform_.dataLogRead(rd16le(p), rd16le(p + 2), before, reinterpret_cast<char*>(payload), cap));
+            break;
+        }
+        case Command::CMD_DATALOG_TEST:
+            if (len < 2) { fail(Status::ST_BAD_REQUEST, "log expected"); break; }
+            n = uint32_t(platform_.dataLogTest(rd16le(p), reinterpret_cast<char*>(payload), cap));
+            break;
+        case Command::CMD_SET_SECRET: {
+            // u8+key, u16+value (the value is never logged nor returned)
+            char key[160] = {0};
+            char value[256] = {0};
+            if (len < 1 || p[0] + 3u > len) { fail(Status::ST_BAD_REQUEST, "key expected"); break; }
+            uint8_t kn = p[0];
+            memcpy(key, p + 1, kn < sizeof key - 1 ? kn : sizeof key - 1);
+            uint16_t vn = rd16le(p + 1 + kn);
+            if (uint32_t(3 + kn + vn) > len || vn >= sizeof value) { fail(Status::ST_BAD_REQUEST, "value too long"); break; }
+            memcpy(value, p + 3 + kn, vn);
+            const char* err = platform_.setSecret(key, value);
+            memset(value, 0, sizeof value);
+            if (err) fail(Status::ST_ERROR, err);
+            else {
+                char msg[200];
+                snprintf(msg, sizeof msg, "Credentials of %s changed", key);
+                log(msg);
+            }
+            break;
+        }
         case Command::CMD_LOGS:
             n = uint32_t(logsJson(len >= 4 ? rd32le(p) : 0, reinterpret_cast<char*>(payload), cap));
             break;

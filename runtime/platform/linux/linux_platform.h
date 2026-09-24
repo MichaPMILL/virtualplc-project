@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "cpu.h"
+#include "datalog/datalog.h"
 #include "modbus.h"
 #include "profinet/pn_controller.h"
 #include "profinet/pn_device.h"
@@ -35,6 +36,13 @@ public:
     void readInputs(uint8_t* image, uint32_t size) override;
     void writeOutputs(const uint8_t* image, uint32_t size) override;
     void drainMessages(void (*record)(void* ctx, const char* message), void* ctx) override;
+    bool configureDataLogs(const Program& program) override;
+    bool dataLog(uint16_t log, int64_t timeNs, const uint8_t* values, uint32_t length) override;
+    size_t dataLogRead(uint16_t log, uint16_t count, uint64_t before, char* out, size_t cap) override;
+    size_t dataLogTest(uint16_t log, char* out, size_t cap) override;
+    const char* setSecret(const char* key, const char* value) override;
+    /** Name of the CPU (recorded with the traceability records) */
+    void setPlcName(const std::string& name) { plcName_ = name; }
 
 private:
     struct Module {
@@ -63,6 +71,8 @@ private:
 
     std::string dataDir_;
     std::string gpioChip_;
+    std::string plcName_ = "PLC_1";
+    std::unique_ptr<DataLogger> dataLogger_;
     std::vector<Module> modules_;
     // PROFINET: this CPU as IO-Device, and / or IO-Controller of remote devices
     std::unique_ptr<pn::Device> pnDevice_;

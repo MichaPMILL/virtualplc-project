@@ -20,7 +20,7 @@ struct Program {
     uint32_t dataSize = 0;
     uint16_t iSize = 0, qSize = 0, mSize = 0;
     uint16_t stackCells = 0, callDepth = 0, cycleMs = 10;
-    Blob code, consts, init, funcs, lines, ioconf, syms, dbs;
+    Blob code, consts, init, funcs, lines, ioconf, syms, dbs, datalogs;
     // Communication services (SERVICES section)
     struct Services {
         bool opcua = false, opcuaWrite = true, opcuaAnonymous = true;
@@ -85,6 +85,54 @@ public:
     uint16_t count() const { return count_; }
     // Reads the next module; false at the end or on malformed data.
     bool next(IoModuleInfo& m);
+
+private:
+    const uint8_t* p_;
+    const uint8_t* end_;
+    uint16_t count_ = 0, read_ = 0;
+};
+
+// Traceability: data logs of the DATALOGS section (see docs/bytecode.md)
+struct DataLogColumn {
+    char name[64] = {0};
+    uint8_t area = 0, bit = 0xFF, type = 0;
+    uint32_t offset = 0;
+    uint16_t size = 0;
+};
+
+struct DataLogInfo {
+    enum Trigger : uint8_t { PROGRAM = 0, EDGE = 1, PERIOD = 2 };
+    enum DbKind : uint8_t { NONE = 0, POSTGRESQL = 1, MYSQL = 2 };
+    char name[64] = {0};
+    uint8_t trigger = PROGRAM;
+    uint8_t edgeArea = 0, edgeBit = 0xFF;
+    uint32_t edgeOffset = 0;
+    uint32_t periodMs = 0;
+    uint16_t retentionDays = 0;
+    // Columns are read one by one (the section can hold many)
+    uint8_t columnCount = 0;
+    const uint8_t* columns = nullptr;
+    const uint8_t* columnsEnd = nullptr;
+    // Remote database
+    uint8_t dbKind = NONE;
+    char host[128] = {0};
+    uint16_t port = 0;
+    char database[64] = {0};
+    char table[64] = {0};
+    char user[64] = {0};
+    uint8_t tls = 2;  // 0 disable, 1 require, 2 verify
+
+    // Iterates over the columns: `pos` starts at 0
+    bool column(uint8_t& pos, const uint8_t*& cursor, DataLogColumn& out) const;
+    // Bytes of one record (bits take one byte)
+    uint32_t recordSize() const;
+};
+
+class DataLogReader {
+public:
+    explicit DataLogReader(const Blob& section);
+    uint16_t count() const { return count_; }
+    bool next(DataLogInfo& log);
 
 private:
     const uint8_t* p_;

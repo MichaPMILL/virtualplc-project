@@ -17,7 +17,7 @@ export { formatTemporal, parseTemporal, parseDurationNs, TEMPORAL_PREFIXES, type
 export type { PlcValue } from './values.ts';
 export { DeviceClient, DeviceError, isSerialPort, isSimulatorHost } from './device.ts';
 export { setSimulatorWasm, SimulatedCpu, simulator } from './simulator.ts';
-export type { DeviceInfo, DeviceState, LogEntry } from './device.ts';
+export type { DataLogStatus, DeviceInfo, DeviceState, LogEntry } from './device.ts';
 export * from './project.ts';
 export * from './projectFiles.ts';
 export { ioLinkTags, parseIodd, parseXml } from './iodd.ts';
@@ -31,3 +31,5 @@ export type { SimaticMlImport } from './simaticml.ts';
 export { generateGsdml, parseGsdml, pnModuleIdent, pnSubmodules, PN_MODULE_SIZES } from './gsdml.ts';
 export type { GsdDap, GsdDevice, GsdModule, GsdRecord, GsdSubmodule } from './gsdml.ts';
 export { BAUD_RATES, DEFAULT_BAUD } from './serial.ts';
+export { DEFAULT_DB_PORT, MAX_DATALOGS, resolveDataLogs, secretKey, tagSymbol, traceCanonical, traceGenesis, verifyTrace } from './datalog.ts';
+export type { DataLog, DataLogColumn, DataLogDestination, DataLogImage, DataLogTrigger, TlsMode, TraceKind, TraceRecord, TraceVerification } from './datalog.ts';

@@ -170,6 +170,7 @@ export interface ImageInput {
   symbols?: HmiSymbol[];
   dbs?: DbEntry[];
   services?: ServicesConfig;
+  dataLogs?: import('./datalog.ts').DataLogImage[];
 }
 
 /** Serialises a program image (see docs/bytecode.md). */
@@ -212,6 +213,27 @@ export function buildImage(p: ImageInput): Uint8Array {
     section(Section.DBS, (w) => {
       w.u16(p.dbs!.length);
       for (const d of p.dbs!) w.u16(d.number).u32(d.offset).u32(d.size).str8(d.name);
+    });
+  }
+  if (p.dataLogs?.length) {
+    section(Section.DATALOGS, (w) => {
+      w.u16(p.dataLogs!.length);
+      for (const l of p.dataLogs!) {
+        w.str8(l.name);
+        const t = l.trigger;
+        if (t.kind === 'edge') w.u8(1).u8(AREA[t.area]).u32(t.offset).u8(t.bit);
+        else if (t.kind === 'period') w.u8(2).u32(t.ms);
+        else w.u8(0);
+        w.u16(l.retentionDays).u8(l.columns.length);
+        for (const c of l.columns) w.str8(c.name).u8(AREA[c.area]).u32(c.offset).u8(c.bit ?? 0xff).u8(c.type).u16(c.size);
+        const d = l.destination;
+        if (!d) {
+          w.u8(0);
+        } else {
+          w.u8(d.kind === 'postgresql' ? 1 : 2).str8(d.host).u16(d.port).str8(d.database).str8(d.table).str8(d.user)
+            .u8({ disable: 0, require: 1, verify: 2 }[d.tls]);
+        }
+      }
     });
   }
   if (p.services) {

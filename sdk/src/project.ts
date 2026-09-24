@@ -7,6 +7,7 @@ import { TYPE_DISPLAY, type Elementary } from './types.ts';
 import { formatTemporal, type TemporalType } from './literals.ts';
 import type { TypeRef, Expr, Method, TextRange, VarDecl } from './ast.ts';
 import { ladderToScl, LadderError, ladElementFor, type LadNetwork } from './ladder.ts';
+import type { DataLog } from './datalog.ts';
 
 export const PROJECT_FORMAT = 'virtualplc-project';
 export const PROJECT_VERSION = 1;
@@ -156,6 +157,8 @@ export interface Device {
   types: DataTypeDef[];
   /** Interfaces (object-oriented programming) */
   interfaces?: InterfaceDef[];
+  /** Traceability: data logs written by the CPU to its database */
+  dataLogs?: DataLog[];
   /** OPC UA server and S7 communication (HMI / SCADA access) */
   services?: ServicesConfig;
 }
@@ -535,13 +538,14 @@ export interface ProjectDiagnostic extends Diagnostic {
   /** Line in the block's code editor (1-based), when the error is in the code */
   codeLine?: number;
   /** "Interface" when the error is in the block interface / declarations */
-  location?: 'code' | 'interface' | 'tags' | 'type';
+  location?: 'code' | 'interface' | 'tags' | 'type' | 'datalog';
   /** LAD blocks: network (0-based) and element of the error */
   network?: number;
   element?: string;
   /** Error in a method (codeLine / location relative to the method) */
   methodId?: string;
   interfaceId?: string;
+  dataLogId?: string;
 }
 
 export interface ProjectCompileResult extends Omit<CompileResult, 'diagnostics'> {
@@ -638,11 +642,19 @@ export function compileDevice(project: Project, device: Device): ProjectCompileR
       hmi: hmiAccess(device),
       dbNumbers: Object.fromEntries(device.blocks.filter((b) => b.type === 'DB').map((b) => [b.name, b.number])),
       services: device.services,
+      dataLogs: device.dataLogs,
     });
   const byFile = new Map(sources.map((s) => [s.file.toUpperCase(), s]));
   const diagnostics: ProjectDiagnostic[] = [...pre, ...result.diagnostics.map((d) => {
     const src = d.file ? byFile.get(d.file.toUpperCase()) : undefined;
     const pd: ProjectDiagnostic = { ...d };
+    if (d.file === '#datalogs') {
+      const name = /^Data log '([^']*)'/.exec(d.message)?.[1];
+      pd.dataLogId = device.dataLogs?.find((l) => l.name === name)?.id;
+      pd.location = 'datalog';
+      pd.file = 'Traçabilité';
+      return pd;
+    }
     const method = d.line ? src?.methods?.find((m) => d.line! >= m.line && d.line! <= m.endLine) : undefined;
     if (src?.interfaceId) {
       pd.interfaceId = src.interfaceId;

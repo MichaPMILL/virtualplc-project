@@ -875,6 +875,11 @@ bool Vm::sys(uint8_t fn, uint8_t argc, bool& suspend) {
             a[0].i = host_ ? host_->moduleOk(uint16_t(a[0].i)) : 0;
             return true;
         }
+        case SysFn::SYS_DATALOG_WRITE: {
+            if (argc != 1) return false;
+            a[0].i = host_ ? host_->dataLogRequest(uint16_t(a[0].i)) : 0;
+            return true;
+        }
         case SysFn::SYS_DEVICE_DIAG: {
             if (argc != 1) return false;
             a[0].i = host_ ? host_->moduleDiag(uint16_t(a[0].i)) : 0;

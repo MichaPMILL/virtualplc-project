@@ -38,6 +38,19 @@
 #define VPLC_MAX_CALL_DEPTH 32
 #endif
 
+// Traceability: data logs per program and bytes of one record (0 = no data logs)
+#ifndef VPLC_MAX_DATALOGS
+#if defined(ARDUINO)
+#define VPLC_MAX_DATALOGS 0
+#else
+#define VPLC_MAX_DATALOGS 16
+#endif
+#endif
+
+#ifndef VPLC_DATALOG_RECORD
+#define VPLC_DATALOG_RECORD 2048
+#endif
+
 #ifndef VPLC_MAX_STACK
 #define VPLC_MAX_STACK 256
 #endif

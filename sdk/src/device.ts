@@ -44,6 +44,24 @@ export interface LogEntry {
   msg: string;
 }
 
+/** State and latest records of a data log (DATALOG_READ) */
+export interface DataLogStatus {
+  name?: string;
+  plc?: string;
+  epoch?: number;
+  records?: number;
+  pending?: number;
+  destination?: string;
+  connected?: boolean;
+  forwarded?: number;
+  lastSync?: string;
+  password?: boolean;
+  error?: string;
+  columns?: string[];
+  /** [record id, time (ISO), ...values, chain (16 first hex digits), forwarded] */
+  rows?: Array<Array<string | number | boolean | null>>;
+}
+
 export class DeviceError extends Error {
   readonly status: number;
 
@@ -195,6 +213,36 @@ export class DeviceClient {
     const p = Buffer.alloc(4);
     p.writeUInt32LE(from);
     return JSON.parse((await this.request(Command.LOGS, p)).toString('utf8'));
+  }
+
+  /** Traceability: state and latest records of a data log (newest first; `before` = record id). */
+  async dataLogRead(log: number, count = 20, before = 0): Promise<DataLogStatus> {
+    const p = Buffer.alloc(12);
+    p.writeUInt16LE(log, 0);
+    p.writeUInt16LE(count, 2);
+    p.writeUInt32LE(before % 2 ** 32, 4);
+    p.writeUInt32LE(Math.floor(before / 2 ** 32), 8);
+    return JSON.parse((await this.request(Command.DATALOG_READ, p)).toString('utf8'));
+  }
+
+  /** Traceability: connects now to the database of the data log (state as dataLogRead). */
+  async dataLogTest(log: number): Promise<DataLogStatus> {
+    const p = Buffer.alloc(2);
+    p.writeUInt16LE(log, 0);
+    return JSON.parse((await this.request(Command.DATALOG_TEST, p)).toString('utf8'));
+  }
+
+  /** Stores credentials on the CPU (database password): they never leave the CPU again. */
+  async setSecret(key: string, value: string): Promise<void> {
+    const k = Buffer.from(key, 'utf8');
+    const v = Buffer.from(value, 'utf8');
+    if (k.length > 255 || v.length > 255) throw new Error('Key or value too long');
+    const p = Buffer.alloc(3 + k.length + v.length);
+    p.writeUInt8(k.length, 0);
+    k.copy(p, 1);
+    p.writeUInt16LE(v.length, 1 + k.length);
+    v.copy(p, 3 + k.length);
+    await this.request(Command.SET_SECRET, p);
   }
 
   /** Downloads a program image (the CPU goes to STOP; call start() afterwards). */

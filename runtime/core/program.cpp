@@ -83,6 +83,7 @@ const char* parseProgram(const uint8_t* image, size_t len, Program& out) {
             case Section::SEC_LINES: out.lines = b; break;
             case Section::SEC_IOCONF: out.ioconf = b; break;
             case Section::SEC_SYMS: out.syms = b; break;
+            case Section::SEC_DATALOGS: out.datalogs = b; break;
             case Section::SEC_DBS: out.dbs = b; break;
             case Section::SEC_SERVICES:
                 if (size >= 6) {
@@ -242,6 +243,102 @@ bool IoModuleReader::next(IoModuleInfo& m) {
     }
     read_++;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Data logs
+// ---------------------------------------------------------------------------
+
+namespace {
+// Copies a u8-length string; false when the data is truncated
+bool str8(const uint8_t*& p, const uint8_t* end, char* out, size_t cap) {
+    if (p >= end) return false;
+    uint8_t n = *p++;
+    if (size_t(end - p) < n) return false;
+    size_t copy = n < cap - 1 ? n : cap - 1;
+    memcpy(out, p, copy);
+    out[copy] = 0;
+    p += n;
+    return true;
+}
+}  // namespace
+
+DataLogReader::DataLogReader(const Blob& section) : p_(section.data), end_(section.data + section.size) {
+    if (section.size >= 2) {
+        count_ = rd16le(p_);
+        p_ += 2;
+    } else {
+        p_ = end_;
+    }
+}
+
+bool DataLogReader::next(DataLogInfo& log) {
+    if (read_ >= count_ || p_ >= end_) return false;
+    log = DataLogInfo();
+    auto need = [&](size_t n) { return size_t(end_ - p_) >= n; };
+    if (!str8(p_, end_, log.name, sizeof log.name) || !need(1)) return false;
+    log.trigger = *p_++;
+    if (log.trigger == DataLogInfo::EDGE) {
+        if (!need(6)) return false;
+        log.edgeArea = p_[0];
+        log.edgeOffset = rd32le(p_ + 1);
+        log.edgeBit = p_[5];
+        p_ += 6;
+    } else if (log.trigger == DataLogInfo::PERIOD) {
+        if (!need(4)) return false;
+        log.periodMs = rd32le(p_);
+        p_ += 4;
+    }
+    if (!need(3)) return false;
+    log.retentionDays = rd16le(p_);
+    log.columnCount = p_[2];
+    p_ += 3;
+    log.columns = p_;
+    for (uint8_t k = 0; k < log.columnCount; k++) {
+        if (!need(1)) return false;
+        uint8_t n = *p_;
+        if (!need(1 + size_t(n) + 9)) return false;
+        p_ += 1 + n + 9;
+    }
+    log.columnsEnd = p_;
+    if (!need(1)) return false;
+    log.dbKind = *p_++;
+    if (log.dbKind != DataLogInfo::NONE) {
+        if (!str8(p_, end_, log.host, sizeof log.host) || !need(2)) return false;
+        log.port = rd16le(p_);
+        p_ += 2;
+        if (!str8(p_, end_, log.database, sizeof log.database) || !str8(p_, end_, log.table, sizeof log.table)
+            || !str8(p_, end_, log.user, sizeof log.user) || !need(1)) {
+            return false;
+        }
+        log.tls = *p_++;
+    }
+    read_++;
+    return true;
+}
+
+bool DataLogInfo::column(uint8_t& pos, const uint8_t*& cursor, DataLogColumn& out) const {
+    if (pos == 0) cursor = columns;
+    if (pos >= columnCount || !cursor || cursor >= columnsEnd) return false;
+    out = DataLogColumn();
+    if (!str8(cursor, columnsEnd, out.name, sizeof out.name) || size_t(columnsEnd - cursor) < 9) return false;
+    out.area = cursor[0];
+    out.offset = rd32le(cursor + 1);
+    out.bit = cursor[5];
+    out.type = cursor[6];
+    out.size = rd16le(cursor + 7);
+    cursor += 9;
+    pos++;
+    return true;
+}
+
+uint32_t DataLogInfo::recordSize() const {
+    uint32_t total = 0;
+    uint8_t pos = 0;
+    const uint8_t* cursor = nullptr;
+    DataLogColumn c;
+    while (column(pos, cursor, c)) total += c.bit != 0xFF ? 1 : c.size;
+    return total;
 }
 
 }  // namespace vplc

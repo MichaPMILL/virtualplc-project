@@ -10,6 +10,7 @@
 //   devices/<Device>/watch/<Table>.json   watch table
 //   devices/<Device>/types/<Type>.json    PLC data type (UDT)
 //   devices/<Device>/interfaces/<Name>.json  interface (method prototypes)
+//   devices/<Device>/datalogs/<Name>.json    traceability data log
 //   .gitattributes, .gitignore
 //
 // The manifest carries no modification date: Git keeps the history, and a date that
@@ -18,6 +19,7 @@ import {
   normalizeBlock, normalizeMethod, PROJECT_FORMAT, PROJECT_VERSION,
   type Block, type DataTypeDef, type Device, type InterfaceDef, type Project, type TagTable, type WatchTable,
 } from './project.ts';
+import type { DataLog } from './datalog.ts';
 
 export const MANIFEST_EXT = '.vplcproj';
 
@@ -117,6 +119,8 @@ export function projectToFiles(project: Project): ProjectFiles {
     for (const t of d.watchTables) files[`${dir}/watch/${watchNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'rows']));
     const typeNames = uniqueNames(d.types ?? [], (t) => t.name);
     for (const t of d.types ?? []) files[`${dir}/types/${typeNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'comment', 'members']));
+    const logNames = uniqueNames(d.dataLogs ?? [], (t) => t.name);
+    for (const l of d.dataLogs ?? []) files[`${dir}/datalogs/${logNames.get(l)}.json`] = json(pick(l, ['id', 'name', 'comment', 'trigger', 'columns', 'retentionDays', 'destination']));
     const ifcNames = uniqueNames(d.interfaces ?? [], (t) => t.name);
     for (const t of d.interfaces ?? []) {
       files[`${dir}/interfaces/${ifcNames.get(t)}.json`] = json({
@@ -130,7 +134,7 @@ export function projectToFiles(project: Project): ProjectFiles {
 
 /** Folders written by projectToFiles (files below them that are not in the project any more are stale). */
 export function isManagedPath(path: string): boolean {
-  return /^devices\/[^/]+\/(device\.json|(blocks|tags|watch|types|interfaces)\/[^/]+\.(json|scl)|blocks\/[^/]+\.methods\/[^/]+\.scl)$/.test(path)
+  return /^devices\/[^/]+\/(device\.json|(blocks|tags|watch|types|interfaces|datalogs)\/[^/]+\.(json|scl)|blocks\/[^/]+\.methods\/[^/]+\.scl)$/.test(path)
     || /^[^/]+\.vplcproj$/.test(path);
 }
 
@@ -210,6 +214,13 @@ export function projectFromFiles(files: ProjectFiles): Project {
       return t;
     }).sort((a, b) => a.name.localeCompare(b.name));
     if (interfaces.length) d.interfaces = interfaces;
+    const dataLogs = inDir('datalogs', '.json').map((p) => {
+      const l = parseJson<DataLog>(files, p);
+      l.columns ??= [];
+      l.trigger ??= { kind: 'program' };
+      return l;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    if (dataLogs.length) d.dataLogs = dataLogs;
     devices.push(d);
   }
   if (!devices.length) throw new Error('Invalid project: no devices');

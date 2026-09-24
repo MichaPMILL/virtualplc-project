@@ -63,7 +63,22 @@ private:
         bool moduleDiag(uint16_t index) override { return cpu->platform_.moduleDiag(index); }
         bool alarm(uint16_t module, uint16_t slot, uint16_t kind, uint32_t code) override { return cpu->platform_.alarm(module, slot, kind, code); }
         bool clock(bool local, int64_t& ns) override { return cpu->platform_.clock(local, ns); }
+        bool dataLogRequest(uint16_t log) override { return cpu->requestDataLog(log); }
     };
+
+    // Traceability: triggers of the data logs of the program
+    void setupDataLogs();
+    bool requestDataLog(uint16_t log);
+    void processDataLogs(uint32_t now);
+    struct LogTrigger {
+        uint8_t kind = 0, area = 0, bit = 0xFF;
+        uint32_t offset = 0, periodMs = 0, nextDue = 0;
+        bool lastEdge = false, pending = false;
+    };
+    LogTrigger dataLogs_[VPLC_MAX_DATALOGS > 0 ? VPLC_MAX_DATALOGS : 1];
+    uint16_t logCount_ = 0;
+    uint32_t logDropped_ = 0;
+    uint8_t record_[VPLC_MAX_DATALOGS > 0 ? VPLC_DATALOG_RECORD : 1];
 
     Platform& platform_;
     Host host_;

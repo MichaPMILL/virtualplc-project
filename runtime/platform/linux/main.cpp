@@ -254,6 +254,7 @@ int main(int argc, char** argv) {
     LinuxPlatform platform(opt.dataDir, opt.gpioChip);
     Cpu cpu(platform, programBuffer.data(), programBuffer.size(), arena.data(), arena.size());
     cpu.setName(opt.name.c_str());
+    platform.setPlcName(opt.name);
     cpu.setPassword(opt.password.c_str());
     cpu.setWatchdog(opt.watchdogMs);
 

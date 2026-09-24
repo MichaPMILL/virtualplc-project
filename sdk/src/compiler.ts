@@ -10,6 +10,7 @@ import {
 import { buildImage, HMI_STRING, HMI_TIME, type DbEntry, type FunctionEntry, type HmiSymbol, type IoModuleConfig, type LineEntry, type ServicesConfig } from './image.ts';
 import type { SymbolNode } from './symbols.ts';
 import { civilFromDays } from './literals.ts';
+import { resolveDataLogs, type DataLog } from './datalog.ts';
 
 export const COMPILER_VERSION = '0.1.0';
 
@@ -41,6 +42,8 @@ export interface CompileOptions {
   dbNumbers?: Record<string, number>;
   /** OPC UA / S7 servers of the CPU. */
   services?: ServicesConfig;
+  /** Traceability: data logs written by the CPU to its database */
+  dataLogs?: DataLog[];
 }
 
 export interface CompileResult {
@@ -180,7 +183,7 @@ const STD_PARAMS: Record<string, string[] | null> = {
   ASIN: ['IN'], ACOS: ['IN'], ATAN: ['IN'], TRUNC: ['IN'], ROUND: ['IN'], CEIL: ['IN'], FLOOR: ['IN'], FRAC: ['IN'],
   EXPT: ['IN1', 'IN2'], MIN: null, MAX: null, LIMIT: ['MN', 'IN', 'MX'], SEL: ['G', 'IN0', 'IN1'], MUX: null,
   NORM_X: ['MIN', 'VALUE', 'MAX'], SCALE_X: ['MIN', 'VALUE', 'MAX'], SHL: ['IN', 'N'], SHR: ['IN', 'N'],
-  CONCAT: null, LEN: ['IN'], LOG: null, WAIT: ['MS'], MILLIS: [], DEVICE_OK: ['MODULE'], DEVICE_DIAG: ['MODULE'], PN_ALARM: ['MODULE', 'SLOT', 'KIND', 'CODE'],
+  CONCAT: null, LEN: ['IN'], LOG: null, DATALOG_WRITE: ['NAME'], WAIT: ['MS'], MILLIS: [], DEVICE_OK: ['MODULE'], DEVICE_DIAG: ['MODULE'], PN_ALARM: ['MODULE', 'SLOT', 'KIND', 'CODE'],
   RD_SYS_T: null, RD_LOC_T: null,
 };
 const NS_PER_DAY = 86_400_000_000_000n;
@@ -2143,6 +2146,8 @@ class Compiler {
         return T.INT;
       case 'MILLIS':
         return T.elem('UDINT');
+      case 'DATALOG_WRITE':
+        return T.BOOL;
       case 'DEVICE_OK':
       case 'DEVICE_DIAG':
       case 'PN_ALARM':
@@ -2424,6 +2429,16 @@ class Compiler {
       case 'MILLIS':
         this.emit(Op.SYS, SysFn.MILLIS, 0);
         return;
+      case 'DATALOG_WRITE': {
+        // DATALOG_WRITE('Name'): records the columns of the data log now; FALSE if the queue is full
+        const a = args[0];
+        const name = a.kind === 'string' ? a.value : a.kind === 'var' ? a.name : null;
+        const index = name === null ? -1 : (this.options.dataLogs ?? []).findIndex((l) => l.name.toUpperCase() === name.toUpperCase());
+        if (index < 0) throw this.err(`DATALOG_WRITE: unknown data log${name ? ` '${name}'` : ''} (see Traçabilité in the device)`, e.line);
+        this.pushInt(index);
+        this.emit(Op.SYS, SysFn.DATALOG_WRITE, 1);
+        return;
+      }
       case 'DEVICE_OK':
       case 'DEVICE_DIAG':
       case 'PN_ALARM': {
@@ -2848,6 +2863,9 @@ class Compiler {
     }
     const hmiSymbols = this.hmiSymbols();
     const dbs = this.dbTable();
+    const logs = resolveDataLogs(this.options.dataLogs ?? [], this.symbols);
+    for (const message of logs.errors) this.diagnostics.push({ severity: 'error', message, file: '#datalogs' });
+    if (logs.errors.length) return this.result();
     const image = buildImage({
       name: this.options.name ?? 'program',
       compilerVersion: COMPILER_VERSION,
@@ -2868,6 +2886,7 @@ class Compiler {
       symbols: hmiSymbols,
       dbs,
       services: this.options.services,
+      dataLogs: logs.images,
     });
     const crc = new DataView(image.buffer, image.byteOffset + image.length - 4, 4).getUint32(0, true);
     return {

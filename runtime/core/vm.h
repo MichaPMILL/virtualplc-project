@@ -29,6 +29,8 @@ public:
     virtual bool alarm(uint16_t module, uint16_t slot, uint16_t kind, uint32_t code) { (void)module; (void)slot; (void)kind; (void)code; return false; }
     // Date and time in ns since 1970-01-01 (UTC, or local time); false if the device has no clock.
     virtual bool clock(bool local, int64_t& ns) { (void)local; ns = 0; return false; }
+    // DATALOG_WRITE: records the data log at the end of the scan; false if not possible
+    virtual bool dataLogRequest(uint16_t log) { (void)log; return false; }
 };
 
 struct Fault {

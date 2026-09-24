@@ -157,6 +157,7 @@ enum class SysFn : uint8_t {
     SYS_CLOCK = 4,
     SYS_DEVICE_DIAG = 5,
     SYS_PN_ALARM = 6,
+    SYS_DATALOG_WRITE = 7,
 };
 
 enum class Trap : uint8_t {
@@ -186,6 +187,7 @@ enum class Section : uint8_t {
     SEC_SYMS = 10,
     SEC_DBS = 11,
     SEC_SERVICES = 12,
+    SEC_DATALOGS = 13,
 };
 
 enum class IoModule : uint8_t {
@@ -214,6 +216,9 @@ enum class Command : uint8_t {
     CMD_LOGS = 12,
     CMD_UPLOAD = 13,
     CMD_AUTH = 14,
+    CMD_DATALOG_READ = 15,
+    CMD_SET_SECRET = 16,
+    CMD_DATALOG_TEST = 17,
 };
 
 enum class Status : uint8_t {

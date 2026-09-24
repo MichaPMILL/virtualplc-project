@@ -310,6 +310,7 @@ export const SysFn = {
   CLOCK: 4,
   DEVICE_DIAG: 5,
   PN_ALARM: 6,
+  DATALOG_WRITE: 7,
 } as const;
 
 export const Trap = {
@@ -339,6 +340,7 @@ export const Section = {
   SYMS: 10,
   DBS: 11,
   SERVICES: 12,
+  DATALOGS: 13,
 } as const;
 
 export const IoModule = {
@@ -367,6 +369,9 @@ export const Command = {
   LOGS: 12,
   UPLOAD: 13,
   AUTH: 14,
+  DATALOG_READ: 15,
+  SET_SECRET: 16,
+  DATALOG_TEST: 17,
 } as const;
 
 export const Status = {

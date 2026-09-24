@@ -103,10 +103,17 @@ if(UNIX)
     platform/linux/profinet/pn_stack.cpp
     platform/linux/profinet/pn_lldp.cpp
     platform/linux/profinet/pn_device.cpp
-    platform/linux/profinet/pn_controller.cpp)
+    platform/linux/profinet/pn_controller.cpp
+    platform/linux/datalog/net.cpp
+    platform/linux/datalog/postgres.cpp
+    platform/linux/datalog/mysql.cpp
+    platform/linux/datalog/datalog.cpp)
   target_include_directories(vplc-cpu PRIVATE platform/linux)
   find_package(Threads REQUIRED)
-  target_link_libraries(vplc-cpu vplc_core m Threads::Threads)
+  # Traceability: local SQLite database (public domain) and TLS / hashes with OpenSSL (Apache 2.0)
+  find_package(SQLite3 REQUIRED)
+  find_package(OpenSSL REQUIRED)
+  target_link_libraries(vplc-cpu vplc_core m Threads::Threads SQLite::SQLite3 OpenSSL::SSL OpenSSL::Crypto)
   target_compile_options(vplc-cpu PRIVATE -Wall -Wextra)
   if(VPLC_OPCUA)
     target_sources(vplc-cpu PRIVATE platform/linux/opcua.cpp)

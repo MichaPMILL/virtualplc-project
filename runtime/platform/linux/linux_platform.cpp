@@ -32,7 +32,38 @@ LinuxPlatform::LinuxPlatform(std::string dataDir, std::string gpioChip)
     mkdir(dataDir_.c_str(), 0755);
 }
 
-LinuxPlatform::~LinuxPlatform() { closeModules(); }
+LinuxPlatform::~LinuxPlatform() {
+    dataLogger_.reset();
+    closeModules();
+}
+
+// ---------------------------------------------------------------------------
+// Traceability (datalog/)
+// ---------------------------------------------------------------------------
+
+bool LinuxPlatform::configureDataLogs(const Program& program) {
+    if (!dataLogger_) dataLogger_ = std::make_unique<DataLogger>(dataDir_, [this](const std::string& m) { note(m); });
+    return dataLogger_->configure(program, plcName_);
+}
+
+bool LinuxPlatform::dataLog(uint16_t log, int64_t timeNs, const uint8_t* values, uint32_t length) {
+    return dataLogger_ && dataLogger_->push(log, timeNs, values, length);
+}
+
+size_t LinuxPlatform::dataLogRead(uint16_t log, uint16_t count, uint64_t before, char* out, size_t cap) {
+    if (!dataLogger_) return size_t(snprintf(out, cap, "{\"error\":\"no data log\"}"));
+    return dataLogger_->read(log, count, before, out, cap);
+}
+
+size_t LinuxPlatform::dataLogTest(uint16_t log, char* out, size_t cap) {
+    if (!dataLogger_) return size_t(snprintf(out, cap, "{\"error\":\"no data log\"}"));
+    return dataLogger_->test(log, out, cap);
+}
+
+const char* LinuxPlatform::setSecret(const char* key, const char* value) {
+    if (!dataLogger_) dataLogger_ = std::make_unique<DataLogger>(dataDir_, [this](const std::string& m) { note(m); });
+    return dataLogger_->setSecret(key, value);
+}
 
 const char* LinuxPlatform::deviceType() {
 #if defined(__aarch64__) || defined(__arm__)
