@@ -44,7 +44,7 @@ jobs:
       - name: Generated ISA files are up to date
         run: node tools/gen-isa.mjs --check
       - name: Tools for the serial link tests and the WebAssembly CPU
-        run: sudo apt-get update && sudo apt-get install -y socat clang lld wasi-libc libclang-rt-18-dev-wasm32
+        run: sudo apt-get update && sudo apt-get install -y socat clang lld wasi-libc libclang-rt-18-dev-wasm32 libsqlite3-dev libssl-dev
       - name: Build runtime
         run: cmake -S runtime -B runtime/build -DCMAKE_BUILD_TYPE=Release && cmake --build runtime/build -j
       - name: Build the simulated CPU (WebAssembly)

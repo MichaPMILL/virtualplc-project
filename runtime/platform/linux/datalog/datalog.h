@@ -30,7 +30,7 @@ public:
     bool configure(const Program& program, const std::string& plcName);
     // Called by the CPU thread: queues a record (false if the queue is full)
     bool push(uint16_t log, int64_t timeNs, const uint8_t* values, uint32_t length);
-    size_t read(uint16_t log, uint16_t count, uint64_t before, char* out, size_t cap);
+    size_t read(uint16_t log, uint16_t count, uint64_t before, bool full, char* out, size_t cap);
     size_t test(uint16_t log, char* out, size_t cap);
     const char* setSecret(const char* key, const char* value);
 
@@ -80,6 +80,7 @@ private:
     void forward(Log* log);
     bool forwardOnce(Log& log, db::Client& client, sqlite3* local, std::string& err);
     std::string password(const std::string& key);
+    db::Identity identity_;
     void loadSecrets();
 
     std::string dir_;

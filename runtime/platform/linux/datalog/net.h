@@ -39,4 +39,18 @@ std::string base64(const std::string& raw);
 std::string unbase64(const std::string& text);
 std::string randomBytes(size_t n);
 
+// Identity of the CPU: Ed25519 key pair in a PEM file (created on first use, mode 0600)
+class Identity {
+public:
+    ~Identity();
+    bool load(const std::string& path, std::string& err);
+    std::string sign(const std::string& message) const;  // raw 64 bytes
+    std::string publicKey() const { return publicKey_; }  // raw 32 bytes
+    bool ok() const { return key_ != nullptr; }
+
+private:
+    struct evp_pkey_st* key_ = nullptr;
+    std::string publicKey_;
+};
+
 }  // namespace vplc::db

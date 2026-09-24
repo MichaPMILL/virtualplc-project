@@ -500,10 +500,11 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
             forceCount_ = 0;
             break;
         case Command::CMD_DATALOG_READ: {
-            // u16 log, u16 count, u64 before (optional)
+            // u16 log, u16 count, u64 before (optional), u8 flags (bit 0: full rows)
             if (len < 4) { fail(Status::ST_BAD_REQUEST, "log and count expected"); break; }
             uint64_t before = len >= 12 ? (uint64_t(rd32le(p + 8)) << 32) | rd32le(p + 4) : 0;
-            n = uint32_t(platform_.dataLogRead(rd16le(p), rd16le(p + 2), before, reinterpret_cast<char*>(payload), cap));
+            bool full = len >= 13 && (p[12] & 1);
+            n = uint32_t(platform_.dataLogRead(rd16le(p), rd16le(p + 2), before, full, reinterpret_cast<char*>(payload), cap));
             break;
         }
         case Command::CMD_DATALOG_TEST:

@@ -136,6 +136,9 @@ std::string DataLogger::chain(const std::string& previous, const std::string& ca
 
 DataLogger::DataLogger(std::string dir, std::function<void(const std::string&)> note) : dir_(std::move(dir)), note_(std::move(note)) {
     loadSecrets();
+    mkdir(dir_.c_str(), 0750);
+    std::string err;
+    if (!identity_.load(dir_ + "/identity.pem", err)) note_("Traceability: " + err + " (records are not signed)");
 }
 
 DataLogger::~DataLogger() {
@@ -269,7 +272,7 @@ bool DataLogger::prepareLocal(Log& log, std::string& err) {
     }
     std::string trigger = log.table + "_" + std::to_string(log.epoch) + "_immutable";
     std::string sql = "BEGIN; CREATE TABLE " + q(log.table) + " (id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ns INTEGER NOT NULL" + cols +
-                      ", chain TEXT NOT NULL, synced INTEGER NOT NULL DEFAULT 0);"
+                      ", chain TEXT NOT NULL, sig TEXT NOT NULL, synced INTEGER NOT NULL DEFAULT 0);"
                       "CREATE INDEX " + q(log.table + "_" + std::to_string(log.epoch) + "_pending") + " ON " + q(log.table) + " (synced, id);"
                       // records are written once: only the forwarding flag may change
                       "CREATE TRIGGER " + q(trigger) + " BEFORE UPDATE OF ts_ns, chain" + guarded + " ON " + q(log.table) +
@@ -393,7 +396,7 @@ void DataLogger::writeBatch(std::deque<Record>& batch) {
         }
         // id first (the chain covers it): next id of the AUTOINCREMENT table
         sqlite3_stmt* st = nullptr;
-        std::string sql = "INSERT INTO " + q(log.table) + " (ts_ns" + cols + ", chain) VALUES (?" + marks + ", ?)";
+        std::string sql = "INSERT INTO " + q(log.table) + " (ts_ns" + cols + ", chain, sig) VALUES (?" + marks + ", ?, ?)";
         if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &st, nullptr) != SQLITE_OK) {
             err = sqlite3_errmsg(db_);
             ok = false;
@@ -420,6 +423,9 @@ void DataLogger::writeBatch(std::deque<Record>& batch) {
             }
         }
         sqlite3_bind_text(st, i++, c.c_str(), -1, SQLITE_TRANSIENT);
+        // Ed25519 signature of the chain value: proves the record comes from this CPU
+        std::string sig = identity_.ok() ? db::toHex(identity_.sign(c)) : std::string();
+        sqlite3_bind_text(st, i++, sig.c_str(), -1, SQLITE_TRANSIENT);
         int rc = sqlite3_step(st);
         sqlite3_int64 got = sqlite3_last_insert_rowid(db_);
         sqlite3_finalize(st);
@@ -486,12 +492,14 @@ void DataLogger::forward(Log* log) {
                                       " VARCHAR(64) NOT NULL, " + client->ident("log") + " VARCHAR(64) NOT NULL, " + client->ident("epoch") +
                                       " BIGINT NOT NULL, " + client->ident("record_id") + " BIGINT NOT NULL, " + client->ident("ts") + " " +
                                       client->timestampType() + " NOT NULL, " + client->ident("ts_ns") + " BIGINT NOT NULL" + cols + ", " +
-                                      client->ident("chain") + " CHAR(64) NOT NULL, PRIMARY KEY (" + client->ident("plc") + ", " +
+                                      client->ident("chain") + " CHAR(64) NOT NULL, " + client->ident("sig") + " CHAR(128) NOT NULL, PRIMARY KEY (" +
+                                      client->ident("plc") + ", " +
                                       client->ident("log") + ", " + client->ident("epoch") + ", " + client->ident("record_id") + "))",
                                   err);
                 std::vector<std::string> names = {"plc", "log", "epoch", "record_id", "ts", "ts_ns"};
                 for (const Column& c : log->columns) names.push_back(c.name);
                 names.push_back("chain");
+                names.push_back("sig");
                 if (ok) ok = client->prepare(client->insertIgnore(log->remoteTable, names), names.size(), err);
                 if (!ok) client->close();
             }
@@ -536,7 +544,7 @@ bool DataLogger::forwardOnce(Log& log, db::Client& client, sqlite3* local, std::
     const int LIMIT = 500;
     std::string cols;
     for (const Column& c : log.columns) cols += ", " + q(c.name);
-    std::string sql = "SELECT id, ts_ns" + cols + ", chain FROM " + q(log.table) + " WHERE synced = 0 ORDER BY id LIMIT " + std::to_string(LIMIT);
+    std::string sql = "SELECT id, ts_ns" + cols + ", chain, sig FROM " + q(log.table) + " WHERE synced = 0 ORDER BY id LIMIT " + std::to_string(LIMIT);
     sqlite3_stmt* st = nullptr;
     if (sqlite3_prepare_v2(local, sql.c_str(), -1, &st, nullptr) != SQLITE_OK) {
         err = std::string("SQLite: ") + sqlite3_errmsg(local);
@@ -557,6 +565,7 @@ bool DataLogger::forwardOnce(Log& log, db::Client& client, sqlite3* local, std::
         v = Value(); v.kind = Value::INT; v.i = ns; row.push_back(v);
         for (size_t k = 0; k < log.columns.size(); k++) row.push_back(columnValue(st, int(k + 2), log.columns[k].kind));
         row.push_back(columnValue(st, int(log.columns.size() + 2), Value::TEXT));
+        row.push_back(columnValue(st, int(log.columns.size() + 3), Value::TEXT));
         rows.push_back(std::move(row));
         ids.push_back(id);
     }
@@ -588,7 +597,7 @@ bool DataLogger::forwardOnce(Log& log, db::Client& client, sqlite3* local, std::
 // Protocol: latest records and state
 // ---------------------------------------------------------------------------
 
-size_t DataLogger::read(uint16_t index, uint16_t count, uint64_t before, char* out, size_t cap) {
+size_t DataLogger::read(uint16_t index, uint16_t count, uint64_t before, bool full, char* out, size_t cap) {
     std::string j;
     if (index >= logs_.size()) {
         j = "{\"error\":\"unknown data log\"}";
@@ -605,7 +614,8 @@ size_t DataLogger::read(uint16_t index, uint16_t count, uint64_t before, char* o
         int64_t records = scalar("SELECT COUNT(*) FROM " + q(log.table));
         int64_t pending = log.dbKind ? scalar("SELECT COUNT(*) FROM " + q(log.table) + " WHERE synced = 0") : 0;
         j = "{\"name\":" + jsonString(log.name) + ",\"plc\":" + jsonString(plc_) + ",\"epoch\":" + std::to_string(log.epoch) +
-            ",\"records\":" + std::to_string(records) + ",\"pending\":" + std::to_string(pending);
+            ",\"records\":" + std::to_string(records) + ",\"pending\":" + std::to_string(pending) +
+            ",\"publicKey\":" + jsonString(db::toHex(identity_.publicKey()));
         {
             std::lock_guard<std::mutex> lock(stateMutex_);
             if (log.dbKind) {
@@ -626,20 +636,31 @@ size_t DataLogger::read(uint16_t index, uint16_t count, uint64_t before, char* o
         }
         j += ",\"columns\":[";
         for (size_t k = 0; k < log.columns.size(); k++) j += (k ? "," : "") + jsonString(log.columns[k].name);
+        j += "],\"kinds\":[";
+        static const char* KINDS[] = {"null", "bool", "int", "real", "text"};
+        for (size_t k = 0; k < log.columns.size(); k++) j += std::string(k ? "," : "") + "\"" + KINDS[log.columns[k].kind] + "\"";
         j += "],\"rows\":[";
         std::string cols;
         for (const Column& c : log.columns) cols += ", " + q(c.name);
-        std::string sql = "SELECT id, ts_ns" + cols + ", chain, synced FROM " + q(log.table) +
+        std::string sql = "SELECT id, ts_ns" + cols + ", chain, synced, sig FROM " + q(log.table) +
                           (before ? " WHERE id < " + std::to_string(before) : std::string()) + " ORDER BY id DESC LIMIT " + std::to_string(count);
         sqlite3_stmt* st = nullptr;
         bool first = true;
         if (count && sqlite3_prepare_v2(reader_, sql.c_str(), -1, &st, nullptr) == SQLITE_OK) {
             while (sqlite3_step(st) == SQLITE_ROW) {
-                std::string row = "[" + std::to_string(sqlite3_column_int64(st, 0)) + "," + jsonString(db::utcText(sqlite3_column_int64(st, 1)) + "Z");
+                int64_t ns = sqlite3_column_int64(st, 1);
+                std::string row = "[" + std::to_string(sqlite3_column_int64(st, 0)) + "," +
+                                  (full ? jsonString(std::to_string(ns)) : jsonString(db::utcText(ns) + "Z"));
                 for (size_t k = 0; k < log.columns.size(); k++) row += "," + jsonValue(columnValue(st, int(k + 2), log.columns[k].kind));
                 const unsigned char* ch = sqlite3_column_text(st, int(log.columns.size() + 2));
-                row += "," + jsonString(ch ? std::string(reinterpret_cast<const char*>(ch)).substr(0, 16) : "");
-                row += std::string(",") + (sqlite3_column_int(st, int(log.columns.size() + 3)) ? "true" : "false") + "]";
+                std::string chainText = ch ? reinterpret_cast<const char*>(ch) : "";
+                row += "," + jsonString(full ? chainText : chainText.substr(0, 16));
+                row += std::string(",") + (sqlite3_column_int(st, int(log.columns.size() + 3)) ? "true" : "false");
+                if (full) {
+                    const unsigned char* sg = sqlite3_column_text(st, int(log.columns.size() + 4));
+                    row += "," + jsonString(sg ? reinterpret_cast<const char*>(sg) : "");
+                }
+                row += "]";
                 if (j.size() + row.size() + 8 > cap) break;
                 j += (first ? "" : ",") + row;
                 first = false;
@@ -658,7 +679,7 @@ size_t DataLogger::test(uint16_t index, char* out, size_t cap) {
         logs_[index]->testRequested = true;
         forwardCv_.notify_all();
     }
-    return read(index, 0, 0, out, cap);
+    return read(index, 0, 0, false, out, cap);
 }
 
 // ---------------------------------------------------------------------------

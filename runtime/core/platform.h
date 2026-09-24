@@ -44,15 +44,16 @@ public:
         (void)log; (void)timeNs; (void)values; (void)length;
         return false;
     }
-    // Latest records (JSON: columns, rows, forwarding state), `before` = record id (0 = newest)
-    virtual size_t dataLogRead(uint16_t log, uint16_t count, uint64_t before, char* out, size_t cap) {
-        (void)log; (void)count; (void)before;
+    // Latest records (JSON: columns, rows, forwarding state), `before` = record id (0 = newest);
+    // full: rows with the time in ns and the whole hash chain (traceability certificates)
+    virtual size_t dataLogRead(uint16_t log, uint16_t count, uint64_t before, bool full, char* out, size_t cap) {
+        (void)log; (void)count; (void)before; (void)full;
         return cap > 2 ? size_t(snprintf(out, cap, "{\"error\":\"data logs are not supported by this CPU\"}")) : 0;
     }
     // Credentials of a database (key = "kind://user@host:port/db"); nullptr on success
     virtual const char* setSecret(const char* key, const char* value) { (void)key; (void)value; return "not supported by this CPU"; }
     // Connects to the database of data log `log` and reports the result (JSON)
-    virtual size_t dataLogTest(uint16_t log, char* out, size_t cap) { return dataLogRead(log, 0, 0, out, cap); }
+    virtual size_t dataLogTest(uint16_t log, char* out, size_t cap) { return dataLogRead(log, 0, 0, false, out, cap); }
 };
 
 }  // namespace vplc

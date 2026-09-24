@@ -43,7 +43,7 @@ window, task cards, online mode in orange, *Charger dans l'appareil*, *Visualisa
 on/off*, *Forcer*), so an automation engineer finds everything where they expect it.
 
 ```bash
-# CPU on a Linux box / Raspberry Pi
+# CPU on a Linux box / Raspberry Pi (Debian / Raspberry Pi OS: apt install cmake g++ libsqlite3-dev libssl-dev)
 cmake -S runtime -B runtime/build -DCMAKE_BUILD_TYPE=Release && cmake --build runtime/build -j
 runtime/build/vplc-cpu --data /var/lib/virtualplc     # see deploy/vplc-cpu.service
 

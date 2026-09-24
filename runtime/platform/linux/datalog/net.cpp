@@ -8,6 +8,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/x509v3.h>
 #include <poll.h>
@@ -246,6 +247,63 @@ std::string unbase64(const std::string& text) {
     if (text.size() > 1 && text[text.size() - 2] == '=') pad++;
     out.resize(size_t(n) - pad);
     return out;
+}
+
+Identity::~Identity() {
+    if (key_) EVP_PKEY_free(key_);
+}
+
+bool Identity::load(const std::string& path, std::string& err) {
+    FILE* f = fopen(path.c_str(), "r");
+    if (f) {
+        key_ = PEM_read_PrivateKey(f, nullptr, nullptr, nullptr);
+        fclose(f);
+        if (!key_) {
+            err = "invalid key file " + path;
+            return false;
+        }
+    } else {
+        EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
+        if (!ctx || EVP_PKEY_keygen_init(ctx) <= 0 || EVP_PKEY_keygen(ctx, &key_) <= 0) {
+            EVP_PKEY_CTX_free(ctx);
+            err = sslError("cannot create the Ed25519 key");
+            return false;
+        }
+        EVP_PKEY_CTX_free(ctx);
+        std::string tmp = path + ".tmp";
+        int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+        FILE* out = fd >= 0 ? fdopen(fd, "w") : nullptr;
+        bool ok = out && PEM_write_PrivateKey(out, key_, nullptr, nullptr, 0, nullptr, nullptr) == 1;
+        if (out) {
+            fflush(out);
+            fsync(fileno(out));
+            fclose(out);
+        }
+        if (!ok || rename(tmp.c_str(), path.c_str()) != 0) {
+            err = "cannot write the key file " + path;
+            return false;
+        }
+    }
+    unsigned char pub[32];
+    size_t len = sizeof pub;
+    if (EVP_PKEY_get_raw_public_key(key_, pub, &len) != 1 || len != 32) {
+        err = "the key of " + path + " is not an Ed25519 key";
+        EVP_PKEY_free(key_);
+        key_ = nullptr;
+        return false;
+    }
+    publicKey_.assign(reinterpret_cast<char*>(pub), 32);
+    return true;
+}
+
+std::string Identity::sign(const std::string& message) const {
+    unsigned char sig[64];
+    size_t len = sizeof sig;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    bool ok = EVP_DigestSignInit(ctx, nullptr, nullptr, nullptr, key_) == 1 &&
+              EVP_DigestSign(ctx, sig, &len, reinterpret_cast<const unsigned char*>(message.data()), message.size()) == 1;
+    EVP_MD_CTX_free(ctx);
+    return ok ? std::string(reinterpret_cast<char*>(sig), len) : std::string();
 }
 
 std::string randomBytes(size_t n) {

@@ -38,7 +38,7 @@ public:
     void drainMessages(void (*record)(void* ctx, const char* message), void* ctx) override;
     bool configureDataLogs(const Program& program) override;
     bool dataLog(uint16_t log, int64_t timeNs, const uint8_t* values, uint32_t length) override;
-    size_t dataLogRead(uint16_t log, uint16_t count, uint64_t before, char* out, size_t cap) override;
+    size_t dataLogRead(uint16_t log, uint16_t count, uint64_t before, bool full, char* out, size_t cap) override;
     size_t dataLogTest(uint16_t log, char* out, size_t cap) override;
     const char* setSecret(const char* key, const char* value) override;
     /** Name of the CPU (recorded with the traceability records) */

@@ -10,7 +10,8 @@ import { existsSync, mkdtempSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compile, DeviceClient, secretKey, verifyTrace, type DataLog, type TraceKind } from '../src/index.ts';
+import { compile, DeviceClient, keyFingerprint, secretKey, traceCanonical, verifyTrace, verifyTraceCertificate, type DataLog, type TraceKind } from '../src/index.ts';
+import { createHash } from 'node:crypto';
 
 const CPU = new URL('../../runtime/build/vplc-cpu', import.meta.url).pathname;
 const skip = existsSync(CPU) ? false : 'build runtime/ first';
@@ -97,6 +98,34 @@ test('traceability: local records, triggers, hash chain', { skip }, async () => 
     const periodic = await client.dataLogRead(2, 50);
     assert.ok(periodic.records! >= 10 && periodic.records! <= 17, `periodic ${periodic.records}`);
     assert.equal(products.plc, 'Line1');
+    assert.deepEqual(products.kinds, ['int', 'real', 'bool', 'text']);
+
+    // Certificate for a customer: chain + Ed25519 signatures of the CPU
+    await client.stop();
+    const cert = await client.traceCertificate(0);
+    assert.equal(cert.records.length, (await client.dataLogRead(0, 0)).records);
+    assert.equal(cert.records[0].recordId, '1');
+    const fp = await keyFingerprint(cert.publicKey);
+    assert.deepEqual(await verifyTraceCertificate(JSON.parse(JSON.stringify(cert)), fp), { ok: true, verified: cert.records.length, fingerprint: fp });
+    // another CPU key: rejected
+    const other = await verifyTraceCertificate(cert, '0000 0000 0000 0000 0000 0000 0000 0000');
+    assert.equal(other.ok, false);
+    // a record changed and the chain recomputed by a forger: the signature does not match
+    const forged = structuredClone(cert);
+    forged.records[3].values[0] = 12345;
+    let previous = forged.records[2].chain;
+    for (const rec of forged.records.slice(3)) {
+      rec.chain = createHash('sha256').update(`${previous}|${traceCanonical(rec, forged.kinds)}`).digest('hex');
+      previous = rec.chain;
+    }
+    const check = await verifyTraceCertificate(forged, fp);
+    assert.equal(check.ok, false);
+    assert.match(check.reason!, /not signed by this CPU/);
+    // a partial certificate (latest records) still verifies from the previous chain value
+    const partial = await client.traceCertificate(0, 3);
+    assert.equal(partial.records.length, 3);
+    assert.ok(partial.previous);
+    assert.equal((await verifyTraceCertificate(partial, fp)).ok, true);
   });
 });
 
@@ -139,11 +168,11 @@ for (const kind of ['postgresql', 'mysql'] as const) {
       }
       assert.equal(st.pending, 0, JSON.stringify(st));
       const q = (c: string) => (kind === 'postgresql' ? `"${c}"` : `\`${c}\``);
-      const rows = sql(`SELECT ${q('record_id')}, ${q('ts_ns')}, ${q('count')}, ${q('temp')}, ${q('even')}, ${q('lot')}, ${q('chain')}, ${q('plc')}, ${q('epoch')} FROM ${q(table)} ORDER BY ${q('record_id')}`);
+      const rows = sql(`SELECT ${q('record_id')}, ${q('ts_ns')}, ${q('count')}, ${q('temp')}, ${q('even')}, ${q('lot')}, ${q('chain')}, ${q('plc')}, ${q('epoch')}, ${q('sig')} FROM ${q(table)} ORDER BY ${q('record_id')}`);
       assert.equal(rows.length, st.records, 'every record forwarded exactly once');
       const kinds: TraceKind[] = ['int', 'real', 'bool', 'text'];
-      const records = rows.map((x) => ({ recordId: x[0], tsNs: x[1], values: [x[2], Number(x[3]), x[4] === 't' || x[4] === '1', x[5]], chain: x[6] }));
-      const good = await verifyTrace({ plc: rows[0][7], log: 'Products', epoch: rows[0][8], kinds, records });
+      const records = rows.map((x) => ({ recordId: x[0], tsNs: x[1], values: [x[2], Number(x[3]), x[4] === 't' || x[4] === '1', x[5]], chain: x[6], sig: x[9] }));
+      const good = await verifyTrace({ plc: rows[0][7], log: 'Products', epoch: rows[0][8], kinds, records, publicKey: st.publicKey });
       assert.deepEqual(good, { ok: true, verified: rows.length });
       // someone changes a value in the database: detected
       const tampered = records.map((x, i) => (i === 2 ? { ...x, values: [x.values[0], 999.5, x.values[2], x.values[3]] } : x));

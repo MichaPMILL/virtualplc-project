@@ -155,6 +155,8 @@ export interface TraceRecord {
   tsNs: number | bigint | string;
   values: Array<boolean | number | bigint | string | null>;
   chain: string;
+  /** Ed25519 signature of the chain value by the CPU (hex) */
+  sig?: string;
 }
 
 export interface TraceVerification {
@@ -207,7 +209,12 @@ export async function traceGenesis(plc: string, log: string, epoch: number | big
  */
 export async function verifyTrace(opts: {
   plc: string; log: string; epoch: number | bigint | string; kinds: TraceKind[]; records: TraceRecord[]; previous?: string;
+  /** Public key of the CPU (hex): the signature of every record is checked */
+  publicKey?: string;
 }): Promise<TraceVerification> {
+  const key = opts.publicKey
+    ? await globalThis.crypto.subtle.importKey('raw', hexBytes(opts.publicKey), { name: 'Ed25519' }, false, ['verify'])
+    : null;
   let previous = opts.previous ?? await traceGenesis(opts.plc, opts.log, opts.epoch);
   let expectedId = opts.previous === undefined ? 1n : null;
   let verified = 0;
@@ -220,9 +227,63 @@ export async function verifyTrace(opts: {
     if (c !== r.chain.trim().toLowerCase()) {
       return { ok: false, verified, brokenAt: String(id), reason: `record ${id} was altered (or a record before it)` };
     }
+    if (key) {
+      const sig = r.sig?.trim() ?? '';
+      const valid = sig.length === 128
+        && await globalThis.crypto.subtle.verify({ name: 'Ed25519' }, key, hexBytes(sig), new TextEncoder().encode(c));
+      if (!valid) return { ok: false, verified, brokenAt: String(id), reason: `record ${id} is not signed by this CPU` };
+    }
     previous = c;
     expectedId = id + 1n;
     verified++;
   }
   return { ok: true, verified };
+}
+
+function hexBytes(hex: string): Uint8Array<ArrayBuffer> {
+  const clean = hex.trim().toLowerCase();
+  const out = new Uint8Array(new ArrayBuffer(clean.length >> 1));
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(2 * i, 2), 16);
+  return out;
+}
+
+/** Fingerprint of a CPU public key, to be checked by the customer: "3f9a 12c0 …" (SHA-256, 16 bytes) */
+export async function keyFingerprint(publicKeyHex: string): Promise<string> {
+  const hash = await sha256Hex(publicKeyHex.trim().toLowerCase());
+  return hash.slice(0, 32).match(/..../g)!.join(' ');
+}
+
+/**
+ * Traceability certificate: records of a data log with their hash chain and the signatures of
+ * the CPU. Given to a customer, it proves the records were written by that CPU and not changed.
+ */
+export interface TraceCertificate {
+  format: 'virtualplc-trace';
+  version: 1;
+  plc: string;
+  log: string;
+  epoch: number;
+  columns: string[];
+  kinds: TraceKind[];
+  publicKey: string;
+  /** Chain of the record before the first one (absent: the records start at record 1) */
+  previous?: string;
+  created: string;
+  records: TraceRecord[];
+}
+
+export interface CertificateVerification extends TraceVerification {
+  fingerprint?: string;
+}
+
+/** Verifies a certificate; `fingerprint` (from the producer) authenticates the CPU key */
+export async function verifyTraceCertificate(cert: TraceCertificate, fingerprint?: string): Promise<CertificateVerification> {
+  if (cert?.format !== 'virtualplc-trace' || cert.version !== 1) return { ok: false, verified: 0, reason: 'not a VirtualPLC traceability certificate' };
+  if (!cert.publicKey) return { ok: false, verified: 0, reason: 'the certificate has no CPU public key' };
+  const fp = await keyFingerprint(cert.publicKey);
+  if (fingerprint !== undefined && fp.replace(/\s/g, '') !== fingerprint.replace(/\s/g, '').toLowerCase()) {
+    return { ok: false, verified: 0, fingerprint: fp, reason: 'the CPU key is not the expected one (fingerprint mismatch)' };
+  }
+  const r = await verifyTrace({ plc: cert.plc, log: cert.log, epoch: cert.epoch, kinds: cert.kinds, records: cert.records, previous: cert.previous, publicKey: cert.publicKey });
+  return { ...r, fingerprint: fp };
 }

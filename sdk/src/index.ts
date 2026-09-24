@@ -31,5 +31,5 @@ export type { SimaticMlImport } from './simaticml.ts';
 export { generateGsdml, parseGsdml, pnModuleIdent, pnSubmodules, PN_MODULE_SIZES } from './gsdml.ts';
 export type { GsdDap, GsdDevice, GsdModule, GsdRecord, GsdSubmodule } from './gsdml.ts';
 export { BAUD_RATES, DEFAULT_BAUD } from './serial.ts';
-export { DEFAULT_DB_PORT, MAX_DATALOGS, resolveDataLogs, secretKey, tagSymbol, traceCanonical, traceGenesis, verifyTrace } from './datalog.ts';
-export type { DataLog, DataLogColumn, DataLogDestination, DataLogImage, DataLogTrigger, TlsMode, TraceKind, TraceRecord, TraceVerification } from './datalog.ts';
+export { DEFAULT_DB_PORT, MAX_DATALOGS, resolveDataLogs, secretKey, tagSymbol, keyFingerprint, traceCanonical, traceGenesis, verifyTrace, verifyTraceCertificate } from './datalog.ts';
+export type { DataLog, DataLogColumn, DataLogDestination, DataLogImage, DataLogTrigger, TlsMode, TraceCertificate, TraceKind, TraceRecord, TraceVerification, CertificateVerification } from './datalog.ts';

@@ -5,6 +5,7 @@ import { Socket } from 'node:net';
 import { crc32 } from './crc32.ts';
 import { BAUD_RATES, DEFAULT_BAUD, isSerialPort, isSimulatorHost } from './serial.ts';
 import { simulator } from './simulator.ts';
+import type { TraceCertificate, TraceRecord } from './datalog.ts';
 
 export { isSerialPort, isSimulatorHost };
 import { Area, Command, PROTOCOL_PORT, Status } from './isa.ts';
@@ -58,7 +59,13 @@ export interface DataLogStatus {
   password?: boolean;
   error?: string;
   columns?: string[];
-  /** [record id, time (ISO), ...values, chain (16 first hex digits), forwarded] */
+  kinds?: Array<'bool' | 'int' | 'real' | 'text'>;
+  /** Ed25519 public key of the CPU (hex) */
+  publicKey?: string;
+  /**
+   * [record id, time (ISO), ...values, chain (16 first hex digits), forwarded];
+   * full rows: [record id, time (ns), ...values, chain, forwarded, signature]
+   */
   rows?: Array<Array<string | number | boolean | null>>;
 }
 
@@ -216,13 +223,53 @@ export class DeviceClient {
   }
 
   /** Traceability: state and latest records of a data log (newest first; `before` = record id). */
-  async dataLogRead(log: number, count = 20, before = 0): Promise<DataLogStatus> {
-    const p = Buffer.alloc(12);
+  async dataLogRead(log: number, count = 20, before = 0, full = false): Promise<DataLogStatus> {
+    const p = Buffer.alloc(13);
+    p.writeUInt8(full ? 1 : 0, 12);
     p.writeUInt16LE(log, 0);
     p.writeUInt16LE(count, 2);
     p.writeUInt32LE(before % 2 ** 32, 4);
     p.writeUInt32LE(Math.floor(before / 2 ** 32), 8);
     return JSON.parse((await this.request(Command.DATALOG_READ, p)).toString('utf8'));
+  }
+
+  /**
+   * Traceability certificate of the latest `max` records of a data log (all of them when they
+   * fit), to give to a customer (verifyTraceCertificate).
+   */
+  async traceCertificate(log: number, max = 1000): Promise<TraceCertificate> {
+    const first = await this.dataLogRead(log, 0, 0, true);
+    if (first.error && !first.columns) throw new Error(first.error);
+    const records: TraceRecord[] = [];
+    let before = 0;
+    let previous: string | undefined;
+    const n = first.columns?.length ?? 0;
+    while (records.length < max) {
+      const page = await this.dataLogRead(log, Math.min(40, max - records.length + 1), before, true);
+      const rows = page.rows ?? [];
+      if (!rows.length) break;
+      for (const row of rows) {
+        const record: TraceRecord = { recordId: String(row[0]), tsNs: String(row[1]), values: row.slice(2, 2 + n) as TraceRecord['values'], chain: String(row[2 + n]), sig: String(row[4 + n] ?? '') };
+        if (records.length === max) {
+          previous = record.chain;
+          break;
+        }
+        records.push(record);
+      }
+      before = Number(rows[rows.length - 1][0]);
+      if (previous !== undefined || before <= 1) break;
+    }
+    records.reverse();
+    if (previous === undefined && records.length && BigInt(records[0].recordId) > 1n) {
+      // records deleted by the retention time: the chain continues from the one before
+      const older = await this.dataLogRead(log, 1, Number(records[0].recordId), true);
+      if (older.rows?.length) previous = String(older.rows[0][2 + n]);
+    }
+    return {
+      format: 'virtualplc-trace', version: 1, plc: first.plc ?? '', log: first.name ?? '', epoch: first.epoch ?? 0,
+      columns: first.columns ?? [], kinds: first.kinds ?? [], publicKey: first.publicKey ?? '',
+      ...(previous !== undefined ? { previous } : {}), created: new Date().toISOString(), records,
+    };
   }
 
   /** Traceability: connects now to the database of the data log (state as dataLogRead). */

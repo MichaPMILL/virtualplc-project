@@ -50,9 +50,9 @@ bool LinuxPlatform::dataLog(uint16_t log, int64_t timeNs, const uint8_t* values,
     return dataLogger_ && dataLogger_->push(log, timeNs, values, length);
 }
 
-size_t LinuxPlatform::dataLogRead(uint16_t log, uint16_t count, uint64_t before, char* out, size_t cap) {
+size_t LinuxPlatform::dataLogRead(uint16_t log, uint16_t count, uint64_t before, bool full, char* out, size_t cap) {
     if (!dataLogger_) return size_t(snprintf(out, cap, "{\"error\":\"no data log\"}"));
-    return dataLogger_->read(log, count, before, out, cap);
+    return dataLogger_->read(log, count, before, full, out, cap);
 }
 
 size_t LinuxPlatform::dataLogTest(uint16_t log, char* out, size_t cap) {
