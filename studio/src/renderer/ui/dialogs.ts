@@ -190,11 +190,11 @@ export function addDeviceDialog(defaultName: string): Promise<{ type: DeviceType
         for (const [k, v] of Object.entries(DEVICE_TYPES) as Array<[DeviceType, (typeof DEVICE_TYPES)[DeviceType]]>) {
           list.append(h('div', { className: `tree` },
             h('div', { className: `node${k === type ? ' selected' : ''}`, style: 'padding-left:12px', onclick: () => { type = k; render(); } },
-              svg(icons.cpu), h('span', { className: 'label' }, `${v.label}  (${v.order})`))));
+              svg(icons.cpu), h('span', { className: 'label' }, v.label))));
         }
         const v = DEVICE_TYPES[type];
         clear(info);
-        info.append(h('span', null, 'Référence :'), h('span', null, v.order), h('span', null, 'Description :'), h('span', null, v.description),
+        info.append(h('span', null, 'Description :'), h('span', null, v.description),
           h('span', null, 'Mémoire programme :'), h('span', null, `${Math.round(v.maxProgram / 1024)} Ko`));
       };
       render();

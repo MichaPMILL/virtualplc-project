@@ -110,7 +110,7 @@ export function deviceEditor(device: Device): EditorView {
     row.append(h('div', { className: `module cpu${selected === -1 ? ' selected' : ''}`, onclick: () => { selected = -1; renderRack(); renderProps(); } },
       h('div', { className: 'm-head' }, device.name),
       h('div', { className: 'm-leds' }, led(s.connected && s.state === 'RUN', 'on-green'), led(s.connected && s.state === 'STOP', 'on-yellow'), led(s.connected && s.state === 'FAULT', 'on-red')),
-      h('div', { className: 'm-body' }, DEVICE_TYPES[device.type].label, h('br'), DEVICE_TYPES[device.type].order, h('br'), h('br'), `IP ${device.connection.host}`),
+      h('div', { className: 'm-body' }, DEVICE_TYPES[device.type].label, h('br'), h('br'), `IP ${device.connection.host}`),
       h('div', { className: 'm-foot' }, `Emplacement 1`)));
     device.io.forEach((m, i) => {
       const ok = s.connected ? s.io?.[i]?.ok : undefined;
@@ -146,7 +146,7 @@ export function deviceEditor(device: Device): EditorView {
         h('h3', null, `${device.name} [${DEVICE_TYPES[device.type].label}]`),
         h('div', { className: 'panel-subheader', style: 'margin:0 -14px 6px' }, t.general),
         field(t.name, textInput(device.name, (v) => { if (v) { device.name = v; touch(); store.emit('editors'); } })),
-        field('Référence', h('input', { value: `${DEVICE_TYPES[device.type].order} (${DEVICE_TYPES[device.type].label})`, disabled: true })),
+        field("Type d'appareil", h('input', { value: DEVICE_TYPES[device.type].label, disabled: true })),
         field(t.comment, (() => { const ta = h('textarea'); ta.value = device.comment ?? ''; ta.onchange = () => { device.comment = ta.value; store.touch(); }; return ta; })()),
         h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, device.type === 'arduino' ? 'Interface USB' : 'Interface PROFINET / Ethernet'),
         field(device.type === 'arduino' ? 'Port série' : t.ipAddress, textInput(device.connection.host, (v) => { device.connection.host = v; touch(); }), device.type === 'arduino' ? 'ex. COM3, /dev/ttyACM0' : 'ex. 192.168.0.10'),

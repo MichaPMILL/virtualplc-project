@@ -36,9 +36,9 @@ function overviewEditor(): EditorView {
         field('Chemin', store.filePath ?? '(non enregistré)')),
       h('div', { className: 'panel-subheader' }, t.devicesNetworks),
       h('table', { className: 'grid' },
-        h('tr', null, h('th', null, 'Appareil'), h('th', null, "Type d'appareil"), h('th', null, 'Référence'), h('th', null, 'Adresse'), h('th', null, 'Blocs'), h('th', null, 'Modules E/S')),
+        h('tr', null, h('th', null, 'Appareil'), h('th', null, "Type d'appareil"), h('th', null, 'Adresse'), h('th', null, 'Blocs'), h('th', null, 'Modules E/S')),
         ...p.devices.map((d) => h('tr', { ondblclick: () => A.openEditor({ kind: 'device', deviceId: d.id }) },
-          h('td', null, svg(icons.cpu), ' ', d.name), h('td', null, DEVICE_TYPES[d.type].label), h('td', null, DEVICE_TYPES[d.type].order),
+          h('td', null, svg(icons.cpu), ' ', d.name), h('td', null, DEVICE_TYPES[d.type].label), 
           h('td', { className: 'mono' }, `${d.connection.host}:${d.connection.port}`), h('td', null, String(d.blocks.length)), h('td', null, String(d.io.length))))),
     );
   };

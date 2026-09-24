@@ -125,7 +125,6 @@ export function inspector(): HTMLElement {
       const c = store.compile.get(d.id);
       el.append(h('h3', null, `${d.name} [${DEVICE_TYPES[d.type].label}]`),
         h('div', { className: 'kv' },
-          h('span', null, 'Référence'), h('span', null, DEVICE_TYPES[d.type].order),
           h('span', null, 'Adresse'), h('span', null, `${d.connection.host}:${d.connection.port}`),
           h('span', null, 'Temps de cycle'), h('span', null, `${d.cpu.cycleMs} ms`),
           h('span', null, 'Blocs'), h('span', null, String(d.blocks.length)),

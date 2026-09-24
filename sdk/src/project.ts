@@ -106,10 +106,10 @@ export interface Project {
   devices: Device[];
 }
 
-export const DEVICE_TYPES: Record<DeviceType, { label: string; order: string; description: string; maxProgram: number; gpio: boolean }> = {
-  linux: { label: 'CPU VirtualPLC Linux', order: '', description: 'Linux PC, Raspberry Pi, industrial PC — Modbus TCP remote I/O, GPIO', maxProgram: 1 << 20, gpio: true },
-  esp32: { label: 'CPU VirtualPLC ESP32', order: '', description: 'ESP32 — Wi-Fi, GPIO, analog inputs', maxProgram: 64 << 10, gpio: true },
-  arduino: { label: 'CPU VirtualPLC Arduino', order: '', description: 'Arduino Mega / Due / Opta / Portenta — USB serial, GPIO', maxProgram: 16 << 10, gpio: true },
+export const DEVICE_TYPES: Record<DeviceType, { label: string; description: string; maxProgram: number; gpio: boolean }> = {
+  linux: { label: 'CPU VirtualPLC Linux', description: 'Linux PC, Raspberry Pi, industrial PC — Modbus TCP remote I/O, GPIO', maxProgram: 1 << 20, gpio: true },
+  esp32: { label: 'CPU VirtualPLC ESP32', description: 'ESP32 — Wi-Fi, GPIO, analog inputs', maxProgram: 64 << 10, gpio: true },
+  arduino: { label: 'CPU VirtualPLC Arduino', description: 'Arduino Mega / Due / Opta / Portenta — USB serial, GPIO', maxProgram: 16 << 10, gpio: true },
 };
 
 let idCounter = 0;
