@@ -148,7 +148,14 @@ export interface Device {
   type: DeviceType;
   comment?: string;
   cpu: { cycleMs: number };
-  connection: { host: string; port: number; /** last user name used to go online (never the password) */ user?: string };
+  connection: {
+    host: string;
+    port: number;
+    /** last user name used to go online (never the password) */
+    user?: string;
+    /** public key of the CPU (hex), pinned at the first encrypted connection */
+    key?: string;
+  };
   io: IoModuleConfig[];
   tagTables: TagTable[];
   blocks: Block[];

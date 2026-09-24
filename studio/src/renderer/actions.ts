@@ -1,6 +1,6 @@
 // Commands of the Studio (menus, toolbar, shortcuts, tree context menus).
 import {
-  blockLabel, DEVICE_TYPES, isSimulatorHost, emptyInterface, newMethod, fixIecInstances, importExternalSource, importSimaticMl, importTagTableXlsx, isSimaticMl, ladId, loadProject, newDevice, newId, newProject, saveProject,
+  blockLabel, DEVICE_TYPES, isSerialPort, isSimulatorHost, keyFingerprint, emptyInterface, newMethod, fixIecInstances, importExternalSource, importSimaticMl, importTagTableXlsx, isSimaticMl, ladId, loadProject, newDevice, newId, newProject, saveProject,
   type Block, type DataTypeDef, type Device, type InterfaceDef, type TagTable,
 } from '../../../sdk/src/browser.ts';
 import type { CompileSummary, MonitorValue } from '../backend/backend.ts';
@@ -605,9 +605,26 @@ async function ensureConnected(device: Device, title: string, action: string, fo
     if (!spec) spec = await connectionDialog(device, title, action);
     if (!spec) return false;
     try {
-      const info = await call('connect', device.id, spec.host, spec.port, spec.password || undefined, spec.user || undefined);
-      if (device.connection.host !== spec.host || device.connection.port !== spec.port || (device.connection.user ?? '') !== spec.user) {
-        device.connection = { host: spec.host, port: spec.port, ...(spec.user ? { user: spec.user } : {}) };
+      // the key pinned for this address (a new address: trust on first use again)
+      const sameHost = device.connection.host === spec.host && device.connection.port === spec.port;
+      const pinned = sameHost ? device.connection.key : undefined;
+      const info = await call('connect', device.id, spec.host, spec.port, spec.password || undefined, spec.user || undefined, pinned);
+      let key = pinned;
+      if (info.key && !pinned) {
+        const fp = await keyFingerprint(info.key);
+        const trust = await confirmDialog(title,
+          `Première liaison chiffrée avec ${info.name} (${spec.host}).\n\nEmpreinte de la clé de la CPU :\n${fp}\n\n` +
+          `Vérifiez qu'elle est identique à celle affichée par la CPU au démarrage (journal : « CPU key fingerprint »). ` +
+          `Elle sera mémorisée dans le projet : toute autre CPU répondant à cette adresse sera refusée.`,
+          'Faire confiance', t.cancel);
+        if (!trust) {
+          await call('disconnect', device.id);
+          return false;
+        }
+        key = info.key;
+      }
+      if (!sameHost || (device.connection.user ?? '') !== spec.user || device.connection.key !== key) {
+        device.connection = { host: spec.host, port: spec.port, ...(spec.user ? { user: spec.user } : {}), ...(key ? { key } : {}) };
         store.touch();
       }
       passwords.set(device.id, { user: spec.user, password: spec.password });
@@ -617,12 +634,29 @@ async function ensureConnected(device: Device, title: string, action: string, fo
       s.role = info.role;
       const who = info.user ? ` en tant que ${info.user} (${ROLE_LABELS[info.role ?? 'viewer']})` : '';
       store.addMessage({ severity: 'info', text: `Connecté à ${info.name} (${info.device}, firmware ${info.firmware}) via ${spec.host}${who}.`, path: device.name });
+      if (!info.key && !isSimulatorHost(spec.host) && !isSerialPort(spec.host)) {
+        store.addMessage({ severity: 'warning', text: `Liaison non chiffrée avec ${info.name} (CPU sans TLS) : à réserver à un réseau isolé.`, path: device.name });
+      }
       if (!info.auth && !isSimulatorHost(spec.host)) {
         store.addMessage({ severity: 'warning', text: `${info.name} n'est pas protégée : tout poste du réseau peut la programmer. Créez des comptes (vplc-cpu --add-user) — voir docs/security.md.`, path: device.name });
       }
       return true;
     } catch (e) {
-      const retry = await confirmDialog(title, `La liaison avec ${spec.host}:${spec.port} n'a pas pu être établie.\n\n${(e as Error).message}\n\nRéessayer avec d'autres paramètres ?`, 'Réessayer', t.cancel);
+      const message = (e as Error).message;
+      if (/not the expected one/.test(message) && device.connection.key) {
+        const reset = await confirmDialog(title,
+          `ATTENTION : la CPU qui répond à ${spec.host} n'a pas la clé mémorisée pour ${device.name}.\n\n` +
+          `Soit la CPU a été remplacée ou réinitialisée, soit un autre appareil usurpe son adresse.\n\n` +
+          `Oubliez la clé mémorisée uniquement si vous êtes certain du remplacement (l'empreinte de la nouvelle clé sera affichée pour vérification).`,
+          'Oublier la clé mémorisée', t.cancel);
+        if (!reset) return false;
+        const { key: _old, ...rest } = device.connection;
+        device.connection = rest;
+        store.touch();
+        store.addMessage({ severity: 'warning', text: `Clé de la CPU oubliée pour ${device.name} (${spec.host}).`, path: device.name });
+        continue;
+      }
+      const retry = await confirmDialog(title, `La liaison avec ${spec.host}:${spec.port} n'a pas pu être établie.\n\n${message}\n\nRéessayer avec d'autres paramètres ?`, 'Réessayer', t.cancel);
       if (!retry) return false;
       spec = null;
     }

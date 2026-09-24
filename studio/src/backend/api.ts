@@ -14,7 +14,7 @@ setSimulatorWasm(join(typeof __dirname === 'string' ? __dirname : dirname(fileUR
 export function createApi(backend = new Backend()) {
   return {
     compile: (projectJson: string, deviceId: string) => backend.compile(projectJson, deviceId),
-    connect: (deviceId: string, host: string, port: number, password?: string, user?: string) => backend.connect(deviceId, host, port, password, user),
+    connect: (deviceId: string, host: string, port: number, password?: string, user?: string, pinnedKey?: string) => backend.connect(deviceId, host, port, password, user, pinnedKey),
     disconnect: (deviceId: string) => backend.disconnect(deviceId),
     state: (deviceId: string) => backend.state(deviceId),
     download: (deviceId: string, startAfter: boolean) => backend.download(deviceId, startAfter),

@@ -59,10 +59,11 @@ export class Backend {
     };
   }
 
-  async connect(deviceId: string, host: string, port: number, password?: string, user?: string): Promise<DeviceInfo> {
+  async connect(deviceId: string, host: string, port: number, password?: string, user?: string, pinnedKey?: string): Promise<DeviceInfo> {
     await this.disconnect(deviceId);
     const client = new DeviceClient(host, port);
     client.timeoutMs = 4000;
+    if (pinnedKey) client.pinnedKey = pinnedKey;
     const info = await client.connect(password || undefined, user || undefined);
     this.sessions.set(deviceId, { client, info });
     return info;

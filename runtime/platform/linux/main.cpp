@@ -37,6 +37,7 @@
 #include "modbus.h"
 #include "protocol.h"
 #include "s7.h"
+#include "security/tls.h"
 #ifdef VPLC_WITH_OPCUA
 #include "opcua.h"
 #endif
@@ -85,6 +86,7 @@ struct Options {
     std::string hmiUser, hmiPassword;
     std::string serial;  // serial device for the device protocol (e.g. /dev/ttyGS0), with speed
     int serialBaud = 115200;
+    bool tlsRequired = false;  // refuse the plain device protocol on the network
     std::string addUser;  // --add-user NAME: create or replace a user (password on stdin), then exit
     int addRole = 4;
 };
@@ -108,6 +110,7 @@ void usage() {
         "  --hmi-user NAME       OPC UA user name (with --hmi-password-file)\n"
         "  --hmi-password-file F OPC UA password (first line of F)\n"
         "  --serial DEV[:BAUD]   also serve the Studio on a serial link (e.g. /dev/ttyGS0:115200)\n"
+        "  --tls-required        refuse unencrypted Studio connections on the network\n"
         "  --add-user NAME       create or replace a user (password read on stdin) and exit\n"
         "  --role ROLE           role of --add-user: viewer, operator, engineer, admin (default)\n",
         VPLC_FIRMWARE_VERSION, unsigned(PROTOCOL_PORT));
@@ -119,6 +122,7 @@ bool parse(int argc, char** argv, Options& o) {
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
         const char* v = nullptr;
         if (a == "--stopped") { o.stopped = true; continue; }
+        if (a == "--tls-required") { o.tlsRequired = true; continue; }
         if (a == "--help" || a == "-h") { usage(); exit(0); }
         if (!(v = next())) { fprintf(stderr, "Missing value for %s\n", a.c_str()); return false; }
         if (a == "--data") o.dataDir = v;
@@ -233,7 +237,28 @@ struct Client {
     std::unique_ptr<FrameParser> parser;  // device protocol
     std::vector<uint8_t> buffer;          // Modbus receive buffer
     std::unique_ptr<S7Session> s7;
+    SSL* ssl = nullptr;         // device protocol over TLS
+    bool detected = false;      // first byte seen (TLS ClientHello or plain frame)
+    bool plainRefused = false;  // plain connection to a CPU with --tls-required
 };
+
+// Device protocol: send over TLS or plain TCP
+bool sendDevice(Client& c, const uint8_t* data, size_t len) {
+    if (!c.ssl) return sendAll(c.fd, data, len);
+    while (len) {
+        int n = SSL_write(c.ssl, data, int(len));
+        if (n > 0) {
+            data += n;
+            len -= size_t(n);
+            continue;
+        }
+        int e = SSL_get_error(c.ssl, n);
+        if (e != SSL_ERROR_WANT_WRITE && e != SSL_ERROR_WANT_READ) return false;
+        pollfd p{c.fd, short(e == SSL_ERROR_WANT_WRITE ? POLLOUT : POLLIN), 0};
+        if (poll(&p, 1, 1000) <= 0) return false;
+    }
+    return true;
+}
 
 struct Listener {
     int fd = -1;
@@ -318,6 +343,16 @@ int main(int argc, char** argv) {
     cpu.setPassword(opt.password.c_str());
     cpu.setWatchdog(opt.watchdogMs);
 
+    // TLS with the identity key of the CPU (pinned by the Studio)
+    sec::TlsServer tls;
+    {
+        std::string err;
+        char msg[200];
+        if (tls.init(opt.dataDir, opt.name, err)) snprintf(msg, sizeof msg, "TLS enabled, CPU key fingerprint %s%s", tls.fingerprint().c_str(), opt.tlsRequired ? " (TLS required)" : "");
+        else snprintf(msg, sizeof msg, "TLS unavailable: %s", err.c_str());
+        platform.log(msg);
+    }
+
     std::vector<Listener> listeners;
     listeners.push_back({listenOn(opt.listen, opt.port), Kind::DEVICE, opt.port});
     if (listeners[0].fd < 0) {
@@ -343,10 +378,14 @@ int main(int argc, char** argv) {
 
     std::vector<Client> clients;
     auto closeClient = [&](int fd) {
-        close(fd);
         for (size_t k = 0; k < clients.size(); k++) {
-            if (clients[k].fd == fd) { clients.erase(clients.begin() + long(k)); break; }
+            if (clients[k].fd == fd) {
+                if (clients[k].ssl) SSL_free(clients[k].ssl);
+                clients.erase(clients.begin() + long(k));
+                break;
+            }
         }
+        close(fd);
     };
 
     // S7 communication server: follows the CPU properties of the loaded program
@@ -467,6 +506,49 @@ int main(int argc, char** argv) {
             if (!(fds[k].revents & (POLLIN | POLLHUP | POLLERR))) continue;
             Client& c = clients[k - base];
             uint8_t buf[4096];
+            if (c.kind == Kind::DEVICE && !c.detected) {
+                uint8_t first = 0;
+                ssize_t pk = recv(c.fd, &first, 1, MSG_PEEK);
+                if (pk <= 0) {
+                    if (pk < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+                    closed.push_back(c.fd);
+                    continue;
+                }
+                c.detected = true;
+                if (first == 0x16 && tls.ready()) c.ssl = tls.wrap(c.fd);  // TLS handshake record
+                else if (opt.tlsRequired) c.plainRefused = true;
+            }
+            if (c.ssl) {
+                if (!SSL_is_init_finished(c.ssl)) {
+                    int r = SSL_accept(c.ssl);
+                    if (r <= 0) {
+                        int e = SSL_get_error(c.ssl, r);
+                        if (e != SSL_ERROR_WANT_READ && e != SSL_ERROR_WANT_WRITE) closed.push_back(c.fd);
+                        continue;
+                    }
+                }
+                bool drop = false;
+                for (;;) {
+                    int n = SSL_read(c.ssl, buf, sizeof buf);
+                    if (n <= 0) {
+                        int e = SSL_get_error(c.ssl, n);
+                        if (e != SSL_ERROR_WANT_READ && e != SSL_ERROR_WANT_WRITE) drop = true;
+                        break;
+                    }
+                    for (int b = 0; b < n && !drop; b++) {
+                        FrameParser::Result r = c.parser->feed(buf[b]);
+                        if (r == FrameParser::ERROR) drop = true;
+                        else if (r == FrameParser::FRAME) {
+                            size_t len = cpu.handle(c.session, c.parser->command(), c.parser->sequence(), c.parser->payload(),
+                                                    c.parser->length(), response);
+                            if (!sendDevice(c, response, len)) drop = true;
+                        }
+                    }
+                    if (drop || SSL_pending(c.ssl) == 0) break;
+                }
+                if (drop) closed.push_back(c.fd);
+                continue;
+            }
             ssize_t n = recv(c.fd, buf, sizeof buf, 0);
             if (n <= 0) {
                 if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
@@ -491,8 +573,15 @@ int main(int argc, char** argv) {
                         break;
                     }
                     if (r == FrameParser::FRAME) {
-                        size_t len = cpu.handle(c.session, c.parser->command(), c.parser->sequence(), c.parser->payload(),
-                                                c.parser->length(), response);
+                        size_t len;
+                        if (c.plainRefused) {
+                            static const char refused[] = "this CPU requires an encrypted connection (TLS): update the Studio";
+                            len = encodeResponse(response, c.parser->command(), c.parser->sequence(), uint8_t(Status::ST_UNAUTHORIZED),
+                                                 reinterpret_cast<const uint8_t*>(refused), sizeof refused - 1);
+                        } else {
+                            len = cpu.handle(c.session, c.parser->command(), c.parser->sequence(), c.parser->payload(),
+                                             c.parser->length(), response);
+                        }
                         if (!sendAll(c.fd, response, len)) { closed.push_back(c.fd); break; }
                     }
                 }
@@ -504,7 +593,10 @@ int main(int argc, char** argv) {
 
     platform.log("Shutting down: outputs off");
     cpu.stop();
-    for (Client& c : clients) close(c.fd);
+    for (Client& c : clients) {
+        if (c.ssl) SSL_free(c.ssl);
+        close(c.fd);
+    }
     for (const Listener& l : listeners) close(l.fd);
     if (s7.fd >= 0) close(s7.fd);
     return 0;

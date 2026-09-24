@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from '
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compile, DeviceClient, verifyAudit, type AuditRecord } from '../src/index.ts';
+import { compile, DeviceClient, keyFingerprint, verifyAudit, type AuditRecord } from '../src/index.ts';
 
 const CPU = new URL('../../runtime/build/vplc-cpu', import.meta.url).pathname;
 const skip = existsSync(CPU) ? false : 'build runtime/ first';
@@ -144,6 +144,53 @@ test('security: single CPU password keeps working (admin role)', { skip }, async
     const audit = await c.auditRead();
     assert.ok(audit.records.some((a) => a.user === 'admin' && a.action === 'stop'));
     c.close();
+  } finally {
+    cpu.kill();
+  }
+});
+
+test('security: TLS with the CPU key pinned, plain link refused with --tls-required', { skip }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vplc-sec-'));
+  const port = await freePort();
+  const cpu = spawn(CPU, ['--data', dir, '--listen', '127.0.0.1', '--port', String(port), '--tls-required'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  cpu.stdout!.on('data', (d) => (output += d));
+  cpu.stderr!.on('data', (d) => (output += d));
+  try {
+    let c: DeviceClient | null = null;
+    for (let i = 0; !c; i++) {
+      try {
+        c = await login(port);
+      } catch (e) {
+        if (i > 50) throw e;
+        await sleep(100);
+      }
+    }
+    assert.equal(c.encrypted, true);
+    const key = c.peerKey!;
+    assert.match(key, /^[0-9a-f]{64}$/);
+    // the fingerprint printed by the CPU at startup is the one of the key seen by the client
+    assert.ok(output.includes(`CPU key fingerprint ${await keyFingerprint(key)}`), output);
+    // the key is the one that signs the audit trail
+    await c.stop();
+    assert.equal((await c.auditRead()).key, key);
+    c.close();
+
+    const plain = new DeviceClient('127.0.0.1', port);
+    plain.tls = 'off';
+    await assert.rejects(plain.connect(), /requires an encrypted connection/);
+    plain.close();
+
+    const pinned = new DeviceClient('127.0.0.1', port);
+    pinned.pinnedKey = key;
+    await pinned.connect();
+    assert.equal(pinned.encrypted, true);
+    pinned.close();
+
+    const wrong = new DeviceClient('127.0.0.1', port);
+    wrong.pinnedKey = 'ab'.repeat(32);
+    await assert.rejects(wrong.connect(), /not the expected one/);
+    wrong.close();
   } finally {
     cpu.kill();
   }

@@ -1,7 +1,7 @@
 // Device configuration ("Configuration des appareils") and online & diagnostics.
-import { DEVICE_TYPES, ioChannels, ioLinkTags, isSerialPort, parseIodd, type Device, type IoLinkPort, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
+import { DEVICE_TYPES, keyFingerprint, ioChannels, ioLinkTags, isSerialPort, parseIodd, type Device, type IoLinkPort, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
 import { host } from '../host.ts';
-import { alertDialog } from '../ui/dialogs.ts';
+import { alertDialog, confirmDialog } from '../ui/dialogs.ts';
 import * as A from '../actions.ts';
 import { clear, h, svg } from '../dom.ts';
 import { icons } from '../icons.ts';
@@ -142,6 +142,25 @@ function textInput(value: string, onChange: (v: string) => void): HTMLInputEleme
   return i;
 }
 
+/** Pinned key of the CPU: fingerprint, and "forget" (after a replacement of the CPU) */
+function keyField(device: Device): HTMLElement {
+  const box = h('span', { style: 'display:flex;gap:8px;align-items:center' });
+  const key = device.connection.key;
+  if (!key) {
+    box.append(h('span', { className: 'muted' }, '(aucune — mémorisée à la prochaine liaison chiffrée)'));
+    return box;
+  }
+  const fp = h('code', null, '…');
+  void keyFingerprint(key).then((v) => { fp.textContent = v; });
+  box.append(fp, h('button', { className: 'button', onclick: async () => {
+    if (!(await confirmDialog('Clé de la CPU', 'Oublier la clé mémorisée ? La prochaine liaison affichera l\'empreinte de la clé de la CPU à vérifier.'))) return;
+    const { key: _k, ...rest } = device.connection;
+    device.connection = rest;
+    store.touch();
+  } }, 'Oublier'));
+  return box;
+}
+
 export function deviceEditor(device: Device): EditorView {
   let selected: number = -1; // -1 = CPU
   const rack = h('div', { className: 'rack' });
@@ -221,7 +240,11 @@ export function deviceEditor(device: Device): EditorView {
         field('Temps de cycle (ms)', numInput(device.cpu.cycleMs, (v) => { device.cpu.cycleMs = v; store.touch(); }, 1, 60000), 'Période d\'exécution de l\'OB de cycle de programme'),
         ...servicesProps(device, touch),
         h('div', { className: 'panel-subheader', style: 'margin:10px -14px 6px' }, 'Protection & sécurité'),
-        h('p', { className: 'muted', style: 'margin:4px 0' }, 'Le mot de passe d\'accès est défini sur la CPU (option --password-file du service vplc-cpu). Il est demandé lors de la liaison en ligne.'),
+        h('p', { className: 'muted', style: 'margin:4px 0' },
+          'Comptes utilisateurs et rôles (lecture seule, opérateur, ingénieur, administrateur) : créés sur la CPU (vplc-cpu --add-user) puis gérés dans « Sécurité ». ',
+          'Sans compte, un mot de passe unique (--password-file) donne tous les droits.'),
+        field('Clé de la CPU', keyField(device), 'Liaison chiffrée (TLS) : la clé est mémorisée à la première connexion ; une autre CPU à cette adresse est refusée.'),
+        h('p', { className: 'muted', style: 'margin:4px 0' }, h('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); A.openEditor({ kind: 'security', deviceId: device.id }); } }, 'Utilisateurs et journal d\'audit…')),
       );
       return;
     }

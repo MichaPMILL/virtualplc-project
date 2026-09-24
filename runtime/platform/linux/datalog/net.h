@@ -47,6 +47,7 @@ public:
     std::string sign(const std::string& message) const;  // raw 64 bytes
     std::string publicKey() const { return publicKey_; }  // raw 32 bytes
     bool ok() const { return key_ != nullptr; }
+    struct evp_pkey_st* key() const { return key_; }  // for TLS (the CPU certificate)
 
 private:
     struct evp_pkey_st* key_ = nullptr;

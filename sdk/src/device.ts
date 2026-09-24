@@ -2,6 +2,7 @@
 // link (USB) for microcontroller CPUs: the host is then a serial port (COM3, /dev/ttyUSB0…)
 // and the port number the speed in bauds.
 import { Socket } from 'node:net';
+import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { crc32 } from './crc32.ts';
 import { BAUD_RATES, DEFAULT_BAUD, isSerialPort, isSimulatorHost } from './serial.ts';
 import { simulator } from './simulator.ts';
@@ -28,6 +29,8 @@ export interface DeviceInfo {
   /** After connect(): logged-in user and role */
   user?: string;
   role?: Role;
+  /** After connect(): public key of the CPU (hex) when the link is encrypted (TLS) */
+  key?: string;
 }
 
 
@@ -114,6 +117,15 @@ export class DeviceClient {
   readonly port: number;
   timeoutMs = 5000;
   maxPayload = 1024;
+  /**
+   * Encryption of the TCP link: 'auto' tries TLS and falls back to the plain protocol for
+   * CPUs without TLS (microcontrollers) unless a key is pinned; 'on' requires TLS.
+   */
+  tls: 'auto' | 'on' | 'off' = 'auto';
+  /** Expected public key of the CPU (hex, pinned at the first connection): TLS is then required */
+  pinnedKey?: string;
+  /** Public key of the CPU seen during the TLS handshake (hex), null on a plain link */
+  peerKey: string | null = null;
 
   constructor(host: string, port = PROTOCOL_PORT) {
     this.host = host;
@@ -137,6 +149,7 @@ export class DeviceClient {
       info = await this.info();
     }
     this.maxPayload = Math.max(64, info.maxPayload);
+    if (this.peerKey) info.key = this.peerKey;
     if (info.auth) {
       if (!password) {
         throw new DeviceError(info.users ? 'The device requires a user name and a password' : 'The device requires a password', Status.UNAUTHORIZED);
@@ -190,7 +203,70 @@ export class DeviceClient {
     }
   }
 
+  get encrypted(): boolean {
+    return this.peerKey !== null;
+  }
+
   private async connectTcp(): Promise<void> {
+    this.peerKey = null;
+    if (this.tls !== 'off' || this.pinnedKey) {
+      try {
+        await this.connectTls();
+        return;
+      } catch (e) {
+        if (e instanceof DeviceError || this.tls === 'on' || this.pinnedKey) throw e;
+        // 'auto': CPU without TLS (it closes the link on the TLS hello)
+      }
+    }
+    await this.connectPlain();
+  }
+
+  private async connectTls(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      // The certificate is self-signed by the CPU: its key is checked against the pinned one
+      const socket: TLSSocket = tlsConnect({ host: this.host, port: this.port, rejectUnauthorized: false, minVersion: 'TLSv1.2', servername: undefined });
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(new Error(`TLS connection to ${this.host}:${this.port} timed out`));
+      }, this.timeoutMs);
+      const early = (e: Error) => {
+        clearTimeout(timer);
+        socket.destroy();
+        reject(new Error(`Cannot connect to ${this.host}:${this.port} with TLS: ${e.message}`));
+      };
+      socket.once('error', early);
+      socket.once('close', () => early(new Error('closed during the handshake')));
+      socket.once('secureConnect', () => {
+        clearTimeout(timer);
+        socket.removeAllListeners('error');
+        socket.removeAllListeners('close');
+        let key = '';
+        try {
+          const jwk = socket.getPeerX509Certificate()?.publicKey.export({ format: 'jwk' }) as { crv?: string; x?: string } | undefined;
+          if (jwk?.crv === 'Ed25519' && jwk.x) key = Buffer.from(jwk.x, 'base64url').toString('hex');
+        } catch {
+          key = '';
+        }
+        if (!key || (this.pinnedKey && key !== this.pinnedKey.toLowerCase())) {
+          socket.destroy();
+          reject(new DeviceError(
+            key ? `The key of the CPU at ${this.host} is not the expected one: another device answers at this address, or the CPU was replaced or reset. Check the key fingerprint on the CPU before trusting it.`
+              : `The CPU at ${this.host} did not present an identity key`,
+            Status.UNAUTHORIZED));
+          return;
+        }
+        this.peerKey = key;
+        socket.setNoDelay(true);
+        socket.on('error', (e) => this.fail(e));
+        socket.on('close', () => this.fail(new Error('Connection closed by the device')));
+        socket.on('data', (d) => this.onData(d));
+        this.socket = { write: (d) => socket.write(d), destroy: () => socket.destroy() };
+        resolve();
+      });
+    });
+  }
+
+  private async connectPlain(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const socket = new Socket();
       const timer = setTimeout(() => {
