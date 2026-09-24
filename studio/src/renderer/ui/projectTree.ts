@@ -166,6 +166,7 @@ function projectNodes(): NodeSpec[] {
         };
       }),
       { key: 'history', label: 'Historique des versions', icon: 'history', depth: 1, open: { kind: 'history' } },
+      { key: 'branches', label: store.git?.branch ? `Branches [${store.git.branch}]` : 'Branches', icon: 'branch', depth: 1, open: { kind: 'branches' } },
     ],
   }];
 }
@@ -265,7 +266,7 @@ export function projectTree(): HTMLElement {
   });
 
   store.on((topic) => {
-    if (['project', 'online', 'compile', 'selection'].includes(topic)) {
+    if (['project', 'online', 'compile', 'selection', 'git'].includes(topic)) {
       render();
       if (topic !== 'online') renderDetails();
     }

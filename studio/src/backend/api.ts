@@ -3,7 +3,7 @@
 import { Backend } from './backend.ts';
 import * as git from './git.ts';
 import { folderForNewProject, openProjectPath, saveProjectPath, type ProjectLayout } from './projectStore.ts';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { MANIFEST_EXT, safeFileName } from '../../../sdk/src/index.ts';
 
 export function createApi(backend = new Backend()) {
@@ -35,18 +35,28 @@ export function createApi(backend = new Backend()) {
     gitInit: (dir: string) => git.gitInit(dir),
     gitSetUser: (dir: string, name: string, email: string) => git.gitSetUser(dir, name, email),
     gitCommit: (dir: string, message: string) => git.gitCommit(dir, message),
-    gitLog: (dir: string, limit?: number) => git.gitLog(dir, limit),
+    gitLog: (dir: string, limit?: number, all?: boolean) => git.gitLog(dir, limit, all),
     gitTag: (dir: string, name: string, message: string, rev?: string) => git.gitTag(dir, name, message, rev),
     gitProjectAt: (dir: string, rev: string) => git.gitProjectAt(dir, rev),
     gitDiff: (dir: string, from?: string, to?: string) => git.gitDiff(dir, from, to),
-    gitSetRemote: (dir: string, url: string) => git.gitSetRemote(dir, url),
-    gitSync: (dir: string) => git.gitSync(dir),
+    gitSetRemote: (dir: string, url: string, name?: string) => git.gitSetRemote(dir, url, name),
+    gitRemotes: (dir: string) => git.gitRemotes(dir),
+    gitAddRemote: (dir: string, name: string, url: string) => git.gitAddRemote(dir, name, url),
+    gitEditRemote: (dir: string, name: string, newName: string, url: string) => git.gitEditRemote(dir, name, newName, url),
+    gitRemoveRemote: (dir: string, name: string) => git.gitRemoveRemote(dir, name),
+    gitCreateSharedRepo: (path: string) => git.gitCreateSharedRepo(path),
+    gitFetch: (dir: string) => git.gitFetch(dir),
+    gitSync: (dir: string, remote?: string) => git.gitSync(dir, remote),
+    gitBranches: (dir: string) => git.gitBranches(dir),
+    gitCreateBranch: (dir: string, name: string, from?: string, switchTo?: boolean) => git.gitCreateBranch(dir, name, from, switchTo),
+    gitSwitch: (dir: string, name: string) => git.gitSwitch(dir, name),
+    gitMergeBranch: (dir: string, ref: string) => git.gitMergeBranch(dir, ref),
+    gitDeleteBranch: (dir: string, name: string, force?: boolean, remote?: boolean) => git.gitDeleteBranch(dir, name, force, remote),
     gitResolve: (dir: string, path: string, side: 'mine' | 'theirs') => git.gitResolve(dir, path, side),
     gitFinishMerge: (dir: string) => git.gitFinishMerge(dir),
     gitAbortMerge: (dir: string) => git.gitAbortMerge(dir),
     gitClone: async (url: string, parent: string) => openProjectPath(await git.gitClone(url, parent)),
     gitArchive: (dir: string, rev: string, output: string) => git.gitArchive(dir, rev, output),
-    dirname: async (path: string) => dirname(path),
   };
 }
 

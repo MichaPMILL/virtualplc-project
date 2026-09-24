@@ -6,6 +6,7 @@ import { icons, type IconName } from '../icons.ts';
 import { t } from '../i18n.ts';
 import { store } from '../store.ts';
 import * as V from '../versioning.ts';
+import * as B from '../branches.ts';
 
 interface Item {
   label: string;
@@ -42,7 +43,9 @@ const MENUS: Array<[string, Entry[]]> = [
     { label: 'Archiver une version...', icon: 'archive', run: () => void V.archiveCmd(), enabled: hasProject },
     { label: "Synchroniser avec l'équipe", icon: 'sync', run: () => void V.syncCmd(), enabled: hasProject },
     { label: 'Historique des versions', icon: 'history', run: V.openHistoryCmd, enabled: hasProject },
-    { label: "Dépôt de l'équipe...", run: () => void V.remoteCmd(), enabled: () => hasProject() && V.isRepo() },
+    { label: 'Branches...', icon: 'branch', run: () => B.openBranchesCmd(), enabled: () => hasProject() && V.isRepo() },
+    { label: 'Nouvelle branche de travail...', run: () => void B.newBranchCmd(undefined, true), enabled: () => hasProject() && V.isRepo() },
+    { label: 'Dépôts distants...', run: () => void V.remoteCmd(), enabled: () => hasProject() && V.isRepo() },
     { label: 'Activer la gestion de versions...', run: () => void V.enableVersioningCmd(), enabled: () => hasProject() && !V.isRepo() },
     'sep',
     { label: t.importFiles, icon: 'source', run: () => void A.importSourceCmd(), enabled: hasProject },

@@ -68,6 +68,13 @@ workstation (menu *Projet*, toolbar, task card *Versions*):
   restore a version, set a mark (e.g. `V1.0` for a commissioning), export a version as `.zip`.
 - **Récupérer depuis un dépôt d'équipe**: first copy of a shared project (GitLab, Gitea,
   GitHub, Azure DevOps, or a bare repository on a network share).
+- **Dépôts distants**: add, rename, change or remove remotes (e.g. office server + site copy),
+  or create a shared repository in a network folder in one click. *Synchroniser* uses the
+  remote followed by the current branch (otherwise `origin`, otherwise it asks).
+- **Branches**: one branch per engineer or per topic (*Nouvelle branche de travail* proposes
+  `firstname-lastname/…`), switch (the project is reloaded), merge another branch into the
+  current one, *intégrer* the current branch into `main`, compare, publish, delete (locally
+  and on the server). The history can show every branch.
 
 Authentication uses the workstation's Git credentials (Git Credential Manager, SSH keys).
 

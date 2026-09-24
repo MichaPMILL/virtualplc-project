@@ -12,7 +12,8 @@ export type EditorRef =
   | { kind: 'block'; deviceId: string; blockId: string }
   | { kind: 'watch'; deviceId: string; tableId: string }
   | { kind: 'dataType'; deviceId: string; typeId: string }
-  | { kind: 'history' };
+  | { kind: 'history' }
+  | { kind: 'branches' };
 
 export interface Message {
   severity: 'error' | 'warning' | 'info' | 'ok';

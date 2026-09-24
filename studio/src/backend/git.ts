@@ -20,7 +20,10 @@ export interface GitStatus {
   empty?: boolean;
   branch?: string;
   upstream?: string;
+  /** Remote used by "Synchroniser": the upstream's, else origin, else the only one */
+  remote?: string;
   remoteUrl?: string;
+  remotes: GitRemote[];
   ahead?: number;
   behind?: number;
   changes: GitChange[];
@@ -28,6 +31,38 @@ export interface GitStatus {
   conflicts: string[];
   merging?: boolean;
   user?: { name: string; email: string };
+}
+
+export interface GitRemote {
+  name: string;
+  url: string;
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  /** remote branch followed by this branch (origin/main) */
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  /** the followed remote branch was deleted */
+  gone: boolean;
+  date: string;
+  author: string;
+  subject: string;
+}
+
+export interface GitRemoteBranch {
+  /** origin/alice/convoyeur */
+  ref: string;
+  remote: string;
+  /** alice/convoyeur */
+  name: string;
+  /** a local branch follows it */
+  tracked: boolean;
+  date: string;
+  author: string;
+  subject: string;
 }
 
 export interface GitCommit {
@@ -39,6 +74,8 @@ export interface GitCommit {
   subject: string;
   body: string;
   tags: string[];
+  /** branches pointing at this version (local and remote) */
+  branches: string[];
   parents: string[];
 }
 
@@ -167,10 +204,25 @@ function parseStatus(out: string): Pick<GitStatus, 'branch' | 'upstream' | 'ahea
   return { branch, upstream, ahead, behind, changes, conflicts, empty };
 }
 
+export async function gitRemotes(dir: string): Promise<GitRemote[]> {
+  const { out } = await run(dir, ['remote', '-v'], { allowFail: true });
+  const remotes = new Map<string, string>();
+  for (const line of out.split('\n')) {
+    const m = /^(\S+)\s+(.+?) \(fetch\)$/.exec(line.trim());
+    if (m) remotes.set(m[1], m[2]);
+  }
+  return [...remotes].map(([name, url]) => ({ name, url }));
+}
+
+function syncRemote(upstream: string | undefined, remotes: GitRemote[]): GitRemote | undefined {
+  const byName = (n?: string) => remotes.find((r) => r.name === n);
+  return byName(upstream?.split('/')[0]) ?? byName('origin') ?? (remotes.length === 1 ? remotes[0] : undefined);
+}
+
 export async function gitStatus(dir: string): Promise<GitStatus> {
   const version = await gitVersion();
-  if (!version) return { available: false, repo: false, changes: [], conflicts: [] };
-  if (!(await isRepo(dir))) return { available: true, version, repo: false, changes: [], conflicts: [] };
+  if (!version) return { available: false, repo: false, changes: [], conflicts: [], remotes: [] };
+  if (!(await isRepo(dir))) return { available: true, version, repo: false, changes: [], conflicts: [], remotes: [] };
   const { out } = await run(dir, ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all', '--', '.']);
   const s = parseStatus(out);
   // porcelain paths are relative to the repository root: make them relative to the project folder
@@ -186,10 +238,11 @@ export async function gitStatus(dir: string): Promise<GitStatus> {
   } catch {
     // no merge in progress
   }
-  const remote = s.upstream?.split('/')[0] ?? 'origin';
+  const remotes = await gitRemotes(dir);
+  const remote = syncRemote(s.upstream, remotes);
   return {
-    available: true, version, repo: true, ...s, merging,
-    remoteUrl: (await config(dir, `remote.${remote}.url`)) || undefined,
+    available: true, version, repo: true, ...s, merging, remotes,
+    remote: remote?.name, remoteUrl: remote?.url,
     user: { name: await config(dir, 'user.name'), email: await config(dir, 'user.email') },
   };
 }
@@ -217,17 +270,20 @@ export async function gitCommit(dir: string, message: string): Promise<string | 
   return (await run(dir, ['rev-parse', 'HEAD'])).out.trim();
 }
 
-export async function gitLog(dir: string, limit = 200): Promise<GitCommit[]> {
+/** History of the current branch, or of every branch (all = true). */
+export async function gitLog(dir: string, limit = 200, all = false): Promise<GitCommit[]> {
   const s = await gitStatus(dir);
   if (!s.repo || s.empty) return [];
   // Whole history (every engineer's versions, merges included), limited to the project folder when it is a sub-folder
   const prefix = (await run(dir, ['rev-parse', '--show-prefix'])).out.trim();
   const { out } = await run(dir, ['log', `--max-count=${limit}`, '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%b%x1f%D%x1f%P%x1e',
-    ...(prefix ? ['--full-history', '--', '.'] : [])]);
+    ...(all ? ['--branches', '--remotes', '--tags', '--date-order'] : []), ...(prefix ? ['--full-history', '--', '.'] : [])]);
   return out.split('\x1e').map((r) => r.replace(/^\n/, '')).filter(Boolean).map((r) => {
     const [hash, short, author, email, date, subject, body, refs, parents] = r.split('\x1f');
-    const tags = (refs ?? '').split(', ').filter((x) => x.startsWith('tag: ')).map((x) => x.slice(5).trim());
-    return { hash, short, author, email, date, subject, body: (body ?? '').trim(), tags, parents: (parents ?? '').trim().split(' ').filter(Boolean) };
+    const list = (refs ?? '').split(', ').map((x) => x.trim()).filter(Boolean);
+    const tags = list.filter((x) => x.startsWith('tag: ')).map((x) => x.slice(5));
+    const branches = list.filter((x) => !x.startsWith('tag: ') && x !== 'HEAD' && !x.endsWith('/HEAD')).map((x) => x.replace(/^HEAD -> /, ''));
+    return { hash, short, author, email, date, subject, body: (body ?? '').trim(), tags, branches, parents: (parents ?? '').trim().split(' ').filter(Boolean) };
   });
 }
 
@@ -257,10 +313,156 @@ export async function gitDiff(dir: string, from = 'HEAD', to?: string): Promise<
   return out;
 }
 
-export async function gitSetRemote(dir: string, url: string): Promise<void> {
-  if (url.startsWith('-')) throw new GitError('Adresse de dépôt invalide');
-  const has = (await run(dir, ['remote'], { allowFail: true })).out.split('\n').includes('origin');
-  await run(dir, has ? ['remote', 'set-url', 'origin', url] : ['remote', 'add', 'origin', url]);
+const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function checkRemote(name: string, url?: string): void {
+  if (!REMOTE_NAME.test(name)) throw new GitError(`Nom de dépôt invalide « ${name} » (lettres, chiffres, . _ -).`);
+  if (url !== undefined && (!url.trim() || url.startsWith('-'))) throw new GitError('Adresse de dépôt invalide');
+}
+
+/** Sets the address of a remote, creating it if needed (default: origin). */
+export async function gitSetRemote(dir: string, url: string, name = 'origin'): Promise<void> {
+  checkRemote(name, url);
+  const has = (await gitRemotes(dir)).some((r) => r.name === name);
+  await run(dir, has ? ['remote', 'set-url', name, url.trim()] : ['remote', 'add', name, url.trim()]);
+}
+
+export async function gitAddRemote(dir: string, name: string, url: string): Promise<void> {
+  checkRemote(name, url);
+  if ((await gitRemotes(dir)).some((r) => r.name === name)) throw new GitError(`Le dépôt « ${name} » existe déjà.`);
+  await run(dir, ['remote', 'add', name, url.trim()]);
+}
+
+export async function gitEditRemote(dir: string, name: string, newName: string, url: string): Promise<void> {
+  checkRemote(newName, url);
+  if (newName !== name) await run(dir, ['remote', 'rename', name, newName]);
+  await run(dir, ['remote', 'set-url', newName, url.trim()]);
+}
+
+export async function gitRemoveRemote(dir: string, name: string): Promise<void> {
+  checkRemote(name);
+  await run(dir, ['remote', 'remove', name]);
+}
+
+/** Creates an empty shared repository (e.g. on a network share) that the team can use as remote. */
+export async function gitCreateSharedRepo(path: string): Promise<string> {
+  const target = resolve(path);
+  try {
+    if ((await readdir(target)).length) throw new GitError(`Le dossier ${target} existe déjà et n'est pas vide.`);
+  } catch (e) {
+    if (e instanceof GitError) throw e;
+  }
+  await mkdir(target, { recursive: true });
+  await run(target, ['init', '--bare', '--shared=group']);
+  await run(target, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  return target;
+}
+
+/** Receives the branches and versions of every remote, without changing the project. */
+export async function gitFetch(dir: string): Promise<void> {
+  await run(dir, ['fetch', '--all', '--prune', '--tags'], { timeout: NETWORK_TIMEOUT });
+}
+
+// ---------------------------------------------------------------------------
+// Branches
+// ---------------------------------------------------------------------------
+
+export async function gitBranches(dir: string): Promise<{ local: GitBranch[]; remote: GitRemoteBranch[] }> {
+  const F = '%1f';
+  const { out: lo } = await run(dir, ['for-each-ref', `--format=%(HEAD)${F}%(refname:short)${F}%(upstream:short)${F}%(upstream:track,nobracket)${F}%(committerdate:iso-strict)${F}%(authorname)${F}%(subject)`, 'refs/heads']);
+  const local = lo.split('\n').filter(Boolean).map((line): GitBranch => {
+    const [head, name, upstream, track, date, author, subject] = line.split('\x1f');
+    return {
+      name, current: head === '*', upstream: upstream || undefined,
+      ahead: Number(/ahead (\d+)/.exec(track)?.[1] ?? 0), behind: Number(/behind (\d+)/.exec(track)?.[1] ?? 0), gone: track === 'gone',
+      date, author, subject,
+    };
+  });
+  const tracked = new Set(local.map((b) => b.upstream).filter(Boolean));
+  const remotes = (await gitRemotes(dir)).map((r) => r.name);
+  const { out: ro } = await run(dir, ['for-each-ref', `--format=%(refname:short)${F}%(symref)${F}%(committerdate:iso-strict)${F}%(authorname)${F}%(subject)`, 'refs/remotes']);
+  const remote = ro.split('\n').filter(Boolean).map((line) => line.split('\x1f')).filter(([ref, symref]) => !symref && !ref.endsWith('/HEAD')).map(([ref, , date, author, subject]): GitRemoteBranch => {
+    const r = remotes.find((x) => ref.startsWith(`${x}/`)) ?? ref.split('/')[0];
+    return { ref, remote: r, name: ref.slice(r.length + 1), tracked: tracked.has(ref), date, author, subject };
+  });
+  return { local, remote };
+}
+
+async function checkBranchName(dir: string, name: string): Promise<void> {
+  if (!name.trim() || name.startsWith('-') || (await run(dir, ['check-ref-format', '--branch', name], { allowFail: true })).code !== 0) {
+    throw new GitError(`Nom de branche invalide « ${name} » (pas d'espace ni de caractères spéciaux ; ex. alice/convoyeur).`);
+  }
+}
+
+async function requireClean(dir: string, action: string): Promise<GitStatus> {
+  const s = await gitStatus(dir);
+  if (!s.repo) throw new GitError("Le projet n'est pas sous gestion de versions.");
+  if (s.merging || s.conflicts.length) throw new GitError('Une fusion est en cours : résolvez les conflits ou annulez-la.');
+  if (s.changes.length) throw new GitError(`Archivez vos modifications avant de ${action}.`);
+  return s;
+}
+
+/** Creates a branch (from the current version or from `from`) and switches to it. */
+export async function gitCreateBranch(dir: string, name: string, from?: string, switchTo = true): Promise<void> {
+  await checkBranchName(dir, name);
+  if (from?.startsWith('-')) throw new GitError('Version invalide');
+  const s = await gitStatus(dir);
+  if (s.empty) throw new GitError('Archivez une première version avant de créer une branche.');
+  if (switchTo) {
+    await requireClean(dir, 'changer de branche');
+    await run(dir, ['switch', '--no-track', '-c', name, ...(from ? [from] : [])]);
+  } else {
+    await run(dir, ['branch', '--no-track', name, ...(from ? [from] : [])]);
+  }
+}
+
+/** Switches to a local branch, or to a remote branch (a local branch following it is created). */
+export async function gitSwitch(dir: string, name: string): Promise<void> {
+  if (name.startsWith('-')) throw new GitError('Branche invalide');
+  await requireClean(dir, 'changer de branche');
+  const { local, remote } = await gitBranches(dir);
+  if (local.some((b) => b.name === name)) {
+    await run(dir, ['switch', name]);
+    return;
+  }
+  const r = remote.find((b) => b.ref === name);
+  if (!r) throw new GitError(`Branche inconnue « ${name} ».`);
+  const existing = local.find((b) => b.upstream === r.ref || b.name === r.name);
+  if (existing) await run(dir, ['switch', existing.name]);
+  else await run(dir, ['switch', '-c', r.name, '--track', r.ref]);
+}
+
+/** Merges a branch (local or remote) into the current branch. */
+export async function gitMergeBranch(dir: string, ref: string): Promise<{ merged: number; conflicts: string[] }> {
+  if (ref.startsWith('-')) throw new GitError('Branche invalide');
+  const s = await requireClean(dir, 'fusionner');
+  const merged = Number((await run(dir, ['rev-list', '--count', `HEAD..${ref}`])).out.trim());
+  if (!merged) return { merged: 0, conflicts: [] };
+  const r = await run(dir, ['merge', '--no-edit', '-m', `Fusion de la branche ${ref} dans ${s.branch ?? 'HEAD'}`, ref], { allowFail: true });
+  if (r.code !== 0) {
+    const after = await gitStatus(dir);
+    if (after.conflicts.length) return { merged, conflicts: after.conflicts };
+    throw new GitError(explain('merge', (r.err || r.out).trim()));
+  }
+  return { merged, conflicts: [] };
+}
+
+/** Deletes a local branch; with `remote`, also deletes the branch it follows on the server. */
+export async function gitDeleteBranch(dir: string, name: string, force = false, remote = false): Promise<void> {
+  if (name.startsWith('-')) throw new GitError('Branche invalide');
+  const { local, remote: remotes } = await gitBranches(dir);
+  const b = local.find((x) => x.name === name);
+  const r = b?.upstream ? remotes.find((x) => x.ref === b.upstream) : remotes.find((x) => x.ref === name);
+  if (b) {
+    if (b.current) throw new GitError('Impossible de supprimer la branche actuelle : basculez d\'abord sur une autre branche.');
+    const res = await run(dir, ['branch', force ? '-D' : '-d', name], { allowFail: true });
+    if (res.code !== 0) {
+      if (/not fully merged/.test(res.err)) throw new GitError(`La branche « ${name} » contient des versions qui n'ont été fusionnées nulle part.`);
+      throw new GitError(explain('branch', res.err.trim()));
+    }
+  }
+  if (remote && r) await run(dir, ['push', r.remote, '--delete', r.name], { timeout: NETWORK_TIMEOUT });
+  if (!b && !r) throw new GitError(`Branche inconnue « ${name} ».`);
 }
 
 /**
@@ -268,16 +470,20 @@ export async function gitSetRemote(dir: string, url: string): Promise<void> {
  * then sends the local versions. Stops on merge conflicts, which the user resolves file
  * by file (gitResolve) before calling gitSync again.
  */
-export async function gitSync(dir: string): Promise<SyncResult> {
+export async function gitSync(dir: string, remoteName?: string): Promise<SyncResult> {
   const s = await gitStatus(dir);
   if (!s.repo) throw new GitError("Le projet n'est pas sous gestion de versions.");
-  if (!s.remoteUrl) throw new GitError("Aucun dépôt d'équipe n'est configuré (adresse du dépôt).");
+  const remote = remoteName ?? s.remote;
+  if (!remote || !s.remotes.some((r) => r.name === remote)) {
+    throw new GitError(s.remotes.length ? 'Choisissez le dépôt distant avec lequel synchroniser cette branche.' : "Aucun dépôt d'équipe n'est configuré (adresse du dépôt).");
+  }
   if (s.merging || s.conflicts.length) throw new GitError('Une fusion est en cours : résolvez les conflits ou annulez la synchronisation.');
   if (s.empty) throw new GitError('Archivez une première version avant de synchroniser.');
   if (s.changes.length) throw new GitError('Archivez vos modifications avant de synchroniser.');
   const branch = s.branch ?? 'main';
-  await run(dir, ['fetch', '--prune', 'origin'], { timeout: NETWORK_TIMEOUT });
-  const remoteRef = `refs/remotes/origin/${branch}`;
+  await run(dir, ['fetch', '--prune', remote], { timeout: NETWORK_TIMEOUT });
+  // the followed branch, or the branch of the same name on the remote
+  const remoteRef = s.upstream && s.upstream.startsWith(`${remote}/`) ? `refs/remotes/${s.upstream}` : `refs/remotes/${remote}/${branch}`;
   const hasRemoteBranch = (await run(dir, ['rev-parse', '--verify', '--quiet', remoteRef], { allowFail: true })).code === 0;
   let received = 0;
   if (hasRemoteBranch) {
@@ -291,9 +497,12 @@ export async function gitSync(dir: string): Promise<SyncResult> {
       }
     }
   }
-  const sent = Number((await run(dir, ['rev-list', '--count', hasRemoteBranch ? `${remoteRef}..HEAD` : 'HEAD'])).out.trim());
-  if (sent > 0) await run(dir, ['push', '--follow-tags', '-u', 'origin', branch], { timeout: NETWORK_TIMEOUT });
-  else if (!s.upstream) await run(dir, ['branch', '--set-upstream-to', `origin/${branch}`], { allowFail: true });
+  // versions the remote does not have yet (a new branch only sends what is not on any of its branches)
+  const sent = Number((await run(dir, ['rev-list', '--count', ...(hasRemoteBranch ? [`${remoteRef}..HEAD`] : ['HEAD', '--not', `--remotes=${remote}`])])).out.trim());
+  const publish = sent > 0 || !hasRemoteBranch;
+  const target = remoteRef.slice(`refs/remotes/${remote}/`.length);
+  if (publish) await run(dir, ['push', '--follow-tags', '-u', remote, `HEAD:refs/heads/${target}`], { timeout: NETWORK_TIMEOUT });
+  else if (!s.upstream && hasRemoteBranch) await run(dir, ['branch', '--set-upstream-to', `${remote}/${target}`], { allowFail: true });
   return { received, sent, conflicts: [] };
 }
 

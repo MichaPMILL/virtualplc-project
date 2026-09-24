@@ -34,7 +34,7 @@ export function closeEditor(ref: EditorRef): void {
 /** Closes editors whose object no longer exists. */
 export function pruneEditors(): void {
   store.editors = store.editors.filter((e) => {
-    if (e.kind === 'overview' || e.kind === 'history') return true;
+    if (e.kind === 'overview' || e.kind === 'history' || e.kind === 'branches') return true;
     const d = store.project?.devices.find((x) => x.id === e.deviceId);
     if (!d) return false;
     if (e.kind === 'block') return d.blocks.some((b) => b.id === e.blockId);

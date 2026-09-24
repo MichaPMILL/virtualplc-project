@@ -108,3 +108,73 @@ test('status tells when git is not a repository', async () => {
   assert.equal(s.available, true);
   assert.equal(s.repo, false);
 });
+
+test('several remotes, a branch per engineer, merges between branches', async () => {
+  const office = join(root, 'office.git');
+  const site = join(root, 'site.git');
+  await api.gitCreateSharedRepo(office);
+  await api.gitCreateSharedRepo(site);
+
+  const p = newProject('Ligne');
+  p.devices[0].blocks[0].code = '"Out" := TRUE;';
+  p.devices[0].tagTables[0].tags.push({ name: 'Out', dataType: 'Bool', address: '%Q0.0' });
+  const lead = await api.projectSaveAs(join(root, 'lead', 'Ligne.vplcproj'), JSON.stringify(p), 'Ligne');
+  const dir = lead.dir!;
+  await api.gitInit(dir);
+  await api.gitSetUser(dir, 'Chef', 'chef@example.com');
+  await api.gitCommit(dir, 'Initial');
+
+  // remotes managed from the Studio
+  await api.gitAddRemote(dir, 'origin', office);
+  await api.gitAddRemote(dir, 'site', site);
+  await assert.rejects(api.gitAddRemote(dir, 'origin', office), /existe déjà/);
+  await assert.rejects(api.gitAddRemote(dir, 'bad name', office), /invalide/);
+  assert.deepEqual((await api.gitRemotes(dir)).map((r) => r.name), ['origin', 'site']);
+  assert.equal((await api.gitStatus(dir)).remote, 'origin', 'origin is the default remote');
+  assert.deepEqual(await api.gitSync(dir), { received: 0, sent: 1, conflicts: [] });
+  assert.deepEqual(await api.gitSync(dir, 'site'), { received: 0, sent: 1, conflicts: [] }, 'publish to a second remote');
+  await api.gitEditRemote(dir, 'site', 'chantier', site);
+  assert.deepEqual((await api.gitRemotes(dir)).map((r) => r.name), ['chantier', 'origin']);
+
+  // a personal branch for an engineer, published on the team repository
+  const alice = await api.gitClone(office, join(root, 'alice-ws'));
+  const aDir = alice.dir!;
+  await api.gitSetUser(aDir, 'Alice', 'alice@example.com');
+  await api.gitCreateBranch(aDir, 'alice/convoyeur');
+  await assert.rejects(api.gitCreateBranch(aDir, 'nom invalide'), /invalide/);
+  const pa = loadProject((await api.projectOpen(alice.path)).json);
+  pa.devices[0].blocks[0].code = '"Out" := FALSE;';
+  await api.projectSave(alice.path, JSON.stringify(pa), 'folder');
+  await assert.rejects(api.gitSwitch(aDir, 'main'), /Archivez/);
+  await api.gitCommit(aDir, 'Convoyeur');
+  assert.deepEqual(await api.gitSync(aDir), { received: 0, sent: 1, conflicts: [] }, 'new branch published (only its own version is new)');
+  const status = await api.gitStatus(aDir);
+  assert.equal(status.branch, 'alice/convoyeur');
+  assert.equal(status.upstream, 'origin/alice/convoyeur');
+
+  // the lead sees the branch, reviews it and merges it into main
+  await api.gitFetch(dir);
+  const { local, remote } = await api.gitBranches(dir);
+  assert.deepEqual(local.map((b) => [b.name, b.current]), [['main', true]]);
+  assert.ok(remote.some((b) => b.ref === 'origin/alice/convoyeur' && b.name === 'alice/convoyeur' && b.author === 'Alice'));
+  assert.match(await api.gitDiff(dir, 'main', 'origin/alice/convoyeur'), /\+"Out" := FALSE;/);
+  const merge = await api.gitMergeBranch(dir, 'origin/alice/convoyeur');
+  assert.deepEqual(merge, { merged: 1, conflicts: [] });
+  assert.equal(loadProject((await api.projectOpen(lead.path)).json).devices[0].blocks[0].code, '"Out" := FALSE;');
+  await api.gitSync(dir);
+
+  // switching to a remote branch creates a local branch following it
+  await api.gitSwitch(dir, 'origin/alice/convoyeur');
+  assert.equal((await api.gitStatus(dir)).branch, 'alice/convoyeur');
+  await api.gitSwitch(dir, 'main');
+  const log = await api.gitLog(dir, 50, true);
+  assert.ok(log.some((c) => c.branches.includes('origin/alice/convoyeur')));
+
+  // branch deletion (local and on the server)
+  await api.gitDeleteBranch(dir, 'alice/convoyeur', false, true);
+  await api.gitFetch(dir);
+  assert.ok(!(await api.gitBranches(dir)).remote.some((b) => b.name === 'alice/convoyeur'));
+  await assert.rejects(api.gitDeleteBranch(dir, 'main'), /branche actuelle/);
+  await api.gitRemoveRemote(dir, 'chantier');
+  assert.deepEqual((await api.gitRemotes(dir)).map((r) => r.name), ['origin']);
+});

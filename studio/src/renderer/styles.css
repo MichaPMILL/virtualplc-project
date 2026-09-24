@@ -336,3 +336,6 @@ body.online .editorbar .status.conn { background: var(--online-light); color: #5
 .diff-line.del { background: #fbe4e2; color: #8a1c16; }
 .diff-line.hunk { color: #7a8591; background: #f3f6f9; }
 .vc-merge td { color: var(--muted); font-style: italic; }
+.pill.branch { background: #e3eefa; color: #1d4f7a; margin-right: 4px; font-weight: 500; max-width: 180px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.pill.branch.current { background: #1a73c9; color: #fff; }
+tr.vc-current td { font-weight: 600; }

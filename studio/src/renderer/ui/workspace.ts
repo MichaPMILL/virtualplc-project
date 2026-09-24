@@ -13,6 +13,7 @@ import { watchTableEditor } from '../editors/watchTable.ts';
 import { dataTypeEditor } from '../editors/dataType.ts';
 import * as V from '../versioning.ts';
 import { historyEditor } from '../versioning.ts';
+import { branchesEditor } from '../branches.ts';
 
 const views = new Map<string, EditorView>();
 const keyOf = (ref: EditorRef) => JSON.stringify(ref);
@@ -54,6 +55,7 @@ function overviewEditor(): EditorView {
 function createView(ref: EditorRef): EditorView | null {
   if (ref.kind === 'overview') return overviewEditor();
   if (ref.kind === 'history') return historyEditor();
+  if (ref.kind === 'branches') return branchesEditor();
   const device = store.device(ref.deviceId);
   if (!device || device.id !== ref.deviceId) return null;
   switch (ref.kind) {
@@ -216,6 +218,7 @@ export function editorBar(): HTMLElement {
 function labelOf(ref: EditorRef): string {
   if (ref.kind === 'overview') return t.overview;
   if (ref.kind === 'history') return 'Historique des versions';
+  if (ref.kind === 'branches') return 'Branches';
   const d = store.device(ref.deviceId);
   switch (ref.kind) {
     case 'block': {

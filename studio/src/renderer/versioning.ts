@@ -4,6 +4,7 @@
 import { blockLabel, loadProject, projectToFiles, type Project } from '../../../sdk/src/browser.ts';
 import type { GitCommit, GitStatus } from '../backend/git.ts';
 import * as A from './actions.ts';
+import * as B from './branches.ts';
 import { clear, h, svg } from './dom.ts';
 import type { EditorView } from './editors/types.ts';
 import { call, host } from './host.ts';
@@ -15,7 +16,7 @@ import { alertDialog, button, confirmDialog, openDialog, progressDialog } from '
 
 const TITLE = 'Gestion de versions';
 
-const fmtDate = (iso: string, time = true) => new Date(iso).toLocaleString('fr-FR', time
+export const fmtDate = (iso: string, time = true) => new Date(iso).toLocaleString('fr-FR', time
   ? { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }
   : { day: '2-digit', month: '2-digit', year: 'numeric' });
 
@@ -125,7 +126,7 @@ async function ensureGit(): Promise<GitStatus | null> {
   return g;
 }
 
-async function saveIfDirty(): Promise<boolean> {
+export async function saveIfDirty(): Promise<boolean> {
   return !store.dirty || A.saveProjectCmd();
 }
 
@@ -191,7 +192,7 @@ export async function enableVersioningCmd(): Promise<void> {
   }
 }
 
-async function readyRepo(): Promise<boolean> {
+export async function readyRepo(): Promise<boolean> {
   if (!store.project) return false;
   if (!(await ensureFolderProject())) return false;
   const g = await ensureGit();
@@ -273,7 +274,7 @@ function archiveDialog(changes: Array<{ path: string; status: string }>): Promis
 }
 
 /** Reloads the project from its folder (after a synchronisation or a conflict resolution). */
-async function reloadFromDisk(): Promise<void> {
+export async function reloadFromDisk(): Promise<void> {
   if (!store.filePath) return;
   const r = await call('projectOpen', store.filePath);
   const editors = store.editors;
@@ -293,12 +294,18 @@ async function reloadFromDisk(): Promise<void> {
 }
 
 /** "Synchroniser avec l'équipe": receives the versions of the others, then sends the local ones. */
-export async function syncCmd(): Promise<void> {
+export async function syncCmd(remote?: string): Promise<void> {
   if (!(await readyRepo())) return;
-  if (!store.git?.remoteUrl) {
+  if (!store.git?.remotes.length) {
     if (await confirmDialog(TITLE, "Aucun dépôt d'équipe n'est configuré. Le configurer maintenant ?", 'Configurer', t.cancel)) await remoteCmd();
-    if (!store.git?.remoteUrl) return;
+    if (!store.git?.remotes.length) return;
   }
+  // several remotes and none followed by this branch: ask which one
+  remote ??= store.git.remote ?? (await chooseDialog('Synchroniser avec l\'équipe',
+    `La branche « ${store.git.branch ?? ''} » n'est encore liée à aucun dépôt distant. Dépôt à utiliser :`,
+    store.git.remotes.map((r) => ({ value: r.name, label: `${r.name} — ${r.url}` })))) ?? undefined;
+  if (!remote) return;
+  const remoteUrl = store.git.remotes.find((r) => r.name === remote)?.url ?? '';
   if (!(await saveIfDirty())) return;
   await refreshGit();
   if (store.git?.changes.length) {
@@ -306,10 +313,10 @@ export async function syncCmd(): Promise<void> {
     if (!archive || !(await archiveCmd())) return;
     await refreshGit();
   }
-  const progress = progressDialog('Synchroniser avec l\'équipe', `Échange avec ${store.git?.remoteUrl ?? ''}...`);
+  const progress = progressDialog('Synchroniser avec l\'équipe', `Échange avec ${remote} (${remoteUrl})...`);
   progress.set(0.3);
   try {
-    const r = await call('gitSync', store.projectDir!);
+    const r = await call('gitSync', store.projectDir!, remote);
     progress.close();
     if (r.conflicts.length) {
       await refreshGit();
@@ -319,8 +326,8 @@ export async function syncCmd(): Promise<void> {
     if (r.received) await reloadFromDisk();
     await refreshGit();
     const text = r.received || r.sent
-      ? `Synchronisation terminée : ${r.received} version(s) reçue(s), ${r.sent} envoyée(s).`
-      : 'Le projet est à jour avec le dépôt de l\'équipe.';
+      ? `Synchronisation avec ${remote} terminée : ${r.received} version(s) reçue(s), ${r.sent} envoyée(s) (branche ${store.git?.branch ?? ''}).`
+      : `Le projet est à jour avec le dépôt ${remote}.`;
     store.addMessage({ severity: 'ok', text });
   } catch (e) {
     progress.close();
@@ -330,7 +337,7 @@ export async function syncCmd(): Promise<void> {
 }
 
 /** Conflicts: the same object was changed by two engineers. The user picks one version per object. */
-export async function resolveConflictsCmd(): Promise<void> {
+export async function resolveConflictsCmd(thenSync = true): Promise<void> {
   await refreshGit();
   const conflicts = store.git?.conflicts ?? [];
   const dir = store.projectDir;
@@ -372,37 +379,125 @@ export async function resolveConflictsCmd(): Promise<void> {
     }
     await reloadFromDisk();
     await refreshGit();
-    if (choice !== 'abort') await syncCmd();
+    if (choice !== 'abort' && thenSync && store.git?.remotes.length) await syncCmd();
   } catch (e) {
     await refreshGit();
     await alertDialog(TITLE, (e as Error).message, 'error');
   }
 }
 
-/** "Dépôt de l'équipe": address of the shared repository (server, GitHub/GitLab, network share). */
-export async function remoteCmd(): Promise<void> {
-  if (!(await readyRepo())) return;
-  const url = await new Promise<string | null>((resolve) => {
+/** Choice among a few values (select). */
+export function chooseDialog(title: string, label: string, options: Array<{ value: string; label: string }>, value?: string): Promise<string | null> {
+  return new Promise((resolve) => {
     let result: string | null = null;
-    openDialog("Dépôt de l'équipe", (d) => {
-      const input = h('input', { value: store.git?.remoteUrl ?? '', placeholder: 'https://serveur/equipe/projet.git', style: 'width:100%' });
-      d.body.append(h('div', { style: 'width:560px;display:flex;flex-direction:column;gap:8px;line-height:1.45' },
-        h('div', { className: 'muted' }, "Adresse du dépôt Git partagé par l'équipe : serveur d'entreprise (GitLab, Gitea, Azure DevOps…), GitHub, "
-          + 'ou dossier partagé du réseau (ex. \\\\serveur\\projets\\station.git). Les identifiants sont ceux configurés pour Git sur ce poste.'),
-        h('div', { className: 'field', style: 'grid-template-columns:70px 1fr' }, h('label', null, 'Adresse'), input)));
-      const ok = () => { result = input.value.trim(); d.close(); };
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+    openDialog(title, (d) => {
+      const sel = h('select', { style: 'width:100%' }, ...options.map((o) => h('option', { value: o.value }, o.label)));
+      if (value) sel.value = value;
+      d.body.append(h('div', { style: 'width:520px;display:flex;flex-direction:column;gap:8px' }, h('div', null, label), sel));
+      d.foot.append(button(t.ok, () => { result = sel.value; d.close(); }, true), button(t.cancel, () => d.close()));
+    }, { onClose: () => resolve(result) });
+  });
+}
+
+function remoteForm(title: string, init: { name: string; url: string }, intro?: string): Promise<{ name: string; url: string } | null> {
+  return new Promise((resolve) => {
+    let result: { name: string; url: string } | null = null;
+    openDialog(title, (d) => {
+      const name = h('input', { value: init.name, placeholder: 'origin', style: 'width:100%' });
+      const url = h('input', { value: init.url, placeholder: 'https://serveur/equipe/projet.git  ou  \\\\serveur\\projets\\projet.git', style: 'width:100%' });
+      const browse = button('Dossier...', async () => {
+        const p = await host.pickPath('folder', url.value || undefined);
+        if (p) url.value = p;
+      });
+      d.body.append(h('div', { style: 'width:620px;display:flex;flex-direction:column;gap:8px;line-height:1.45' },
+        h('div', { className: 'muted' }, intro ?? "Dépôt Git distant : serveur d'entreprise (GitLab, Gitea, Azure DevOps…), GitHub, ou dossier partagé du réseau. "
+          + 'Les identifiants sont ceux configurés pour Git sur ce poste.'),
+        h('div', { style: 'display:grid;grid-template-columns:80px 1fr auto;gap:8px;align-items:center' },
+          h('label', null, 'Nom'), name, h('span'),
+          h('label', null, 'Adresse'), url, browse)));
+      const ok = () => {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name.value.trim()) || !url.value.trim()) {
+          name.classList.toggle('invalid', !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name.value.trim()));
+          url.classList.toggle('invalid', !url.value.trim());
+          return;
+        }
+        result = { name: name.value.trim(), url: url.value.trim() };
+        d.close();
+      };
       d.foot.append(button(t.ok, ok, true), button(t.cancel, () => d.close()));
     }, { onClose: () => resolve(result) });
   });
-  if (!url) return;
-  try {
-    await call('gitSetRemote', store.projectDir!, url);
+}
+
+/** "Dépôts distants": the team repositories of the project (add, change, remove, create). */
+export async function remoteCmd(): Promise<void> {
+  if (!(await readyRepo())) return;
+  const dir = store.projectDir!;
+  const run = async (fn: () => Promise<unknown>, ok?: string) => {
+    try {
+      await fn();
+      if (ok) store.addMessage({ severity: 'ok', text: ok });
+    } catch (e) {
+      await alertDialog('Dépôts distants', (e as Error).message, 'error');
+    }
     await refreshGit();
-    store.addMessage({ severity: 'ok', text: `Dépôt de l'équipe : ${url}` });
-  } catch (e) {
-    await alertDialog(TITLE, (e as Error).message, 'error');
-  }
+  };
+  openDialog('Dépôts distants', (d) => {
+    const list = h('div', { className: 'grid-wrap', style: 'border:1px solid var(--border-light);min-height:120px;max-height:260px' });
+    const render = () => {
+      clear(list);
+      const remotes = store.git?.remotes ?? [];
+      const table = h('table', { className: 'grid' }, h('tr', null, h('th', { style: 'width:26px' }), h('th', { style: 'width:120px' }, 'Nom'), h('th', null, 'Adresse'), h('th', { style: 'width:190px' })));
+      for (const r of remotes) {
+        const isDefault = r.name === store.git?.remote;
+        table.append(h('tr', null,
+          h('td', null, svg(icons.branch)),
+          h('td', null, r.name, isDefault ? h('span', { className: 'pill run', style: 'margin-left:6px' }, 'synchro') : null),
+          h('td', { className: 'mono', title: r.url }, r.url),
+          h('td', null,
+            h('button', { className: 'button', style: 'margin-right:4px', onclick: async () => {
+              const v = await remoteForm('Modifier le dépôt distant', r);
+              if (v) await run(() => call('gitEditRemote', dir, r.name, v.name, v.url), `Dépôt ${v.name} : ${v.url}`);
+              render();
+            } }, 'Modifier'),
+            h('button', { className: 'button', onclick: async () => {
+              if (!(await confirmDialog('Dépôts distants', `Retirer le dépôt « ${r.name} » du projet ?\nLe dépôt lui-même n'est pas supprimé.`, 'Retirer', t.cancel))) return;
+              await run(() => call('gitRemoveRemote', dir, r.name), `Dépôt ${r.name} retiré.`);
+              render();
+            } }, 'Retirer'))));
+      }
+      if (!remotes.length) table.append(h('tr', null, h('td', { colSpan: '4', className: 'muted', style: 'padding:8px' }, "Aucun dépôt distant : le projet n'est versionné que sur ce poste.")));
+      list.append(table);
+    };
+    render();
+    d.body.append(h('div', { style: 'width:760px;display:flex;flex-direction:column;gap:8px' },
+      h('div', { className: 'muted', style: 'line-height:1.45' },
+        "« Synchroniser » utilise le dépôt suivi par la branche actuelle (sinon « origin »). Plusieurs dépôts permettent par exemple un serveur au bureau et une copie sur le site."),
+      list));
+    d.foot.append(
+      h('div', { className: 'left' },
+        button('Ajouter...', async () => {
+          const v = await remoteForm('Ajouter un dépôt distant', { name: store.git?.remotes.some((r) => r.name === 'origin') ? '' : 'origin', url: '' });
+          if (v) await run(() => call('gitAddRemote', dir, v.name, v.url), `Dépôt ${v.name} ajouté : ${v.url}`);
+          render();
+        }),
+        button('Créer un dépôt partagé...', async () => {
+          const parent = await host.pickPath('folder');
+          if (!parent) return;
+          const name = `${(store.project?.name ?? 'projet').replace(/[^\w.-]+/g, '_')}.git`;
+          const v = await remoteForm('Créer un dépôt partagé', { name: store.git?.remotes.some((r) => r.name === 'origin') ? 'partage' : 'origin', url: `${parent.replace(/[/\\]+$/, '')}/${name}` },
+            "Crée un dépôt vide dans un dossier (ex. partage réseau accessible à toute l'équipe), l'ajoute au projet et y publie la branche actuelle.");
+          if (!v) return;
+          await run(async () => {
+            await call('gitCreateSharedRepo', v.url);
+            await call('gitAddRemote', dir, v.name, v.url);
+          }, `Dépôt partagé créé : ${v.url}`);
+          render();
+          if (store.git?.remotes.some((r) => r.name === v.name)) await syncCmd(v.name);
+        }),
+        button('Récupérer', () => void run(() => call('gitFetch', dir), 'Branches et versions des dépôts distants récupérées.'))),
+      button(t.close, () => d.close(), true));
+  });
 }
 
 /** "Récupérer un projet depuis un dépôt": first copy of a team project on this computer. */
@@ -451,7 +546,7 @@ export function openHistoryCmd(): void {
 // Compare, restore, tag, export
 // ---------------------------------------------------------------------------
 
-function diffDialog(title: string, text: string): void {
+export function diffDialog(title: string, text: string): void {
   openDialog(title, (d) => {
     const pre = h('div', { className: 'diff' });
     if (!text.trim()) pre.append(h('div', { className: 'muted', style: 'padding:10px' }, 'Aucune différence.'));
@@ -471,7 +566,7 @@ function diffDialog(title: string, text: string): void {
   });
 }
 
-async function compareCmd(from: string, to: string | undefined, label: string): Promise<void> {
+export async function compareCmd(from: string, to: string | undefined, label: string): Promise<void> {
   try {
     if (!to && store.dirty) await A.saveProjectCmd();
     diffDialog(label, await call('gitDiff', store.projectDir!, from, to));
@@ -550,6 +645,7 @@ async function exportCmd(c: GitCommit): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function historyEditor(): EditorView {
+  let allBranches = false;
   let commits: GitCommit[] = [];
   let selected: GitCommit | null = null;
   const toolbar = h('div', { className: 'panel-toolbar' });
@@ -601,6 +697,7 @@ export function historyEditor(): EditorView {
     const table = h('table', { className: 'grid' },
       h('tr', null, h('th', { style: 'width:26px' }), h('th', { style: 'width:110px' }, 'Repère'), h('th', { style: 'width:150px' }, 'Date'),
         h('th', { style: 'width:160px' }, 'Auteur'), h('th', null, 'Commentaire'), h('th', { style: 'width:80px' }, 'Version')));
+    const current = store.git?.branch;
     for (const c of commits) {
       const tr = h('tr', {
         className: selected?.hash === c.hash ? 'selected' : '',
@@ -610,7 +707,8 @@ export function historyEditor(): EditorView {
       },
       h('td', null, svg(icons[c.tags.length ? 'tag' : 'history'])),
       h('td', null, ...c.tags.map((x) => h('span', { className: 'pill run', style: 'margin-right:3px' }, x))),
-      h('td', null, fmtDate(c.date)), h('td', null, c.author), h('td', { title: c.body || c.subject }, c.subject),
+      h('td', null, fmtDate(c.date)), h('td', null, c.author),
+      h('td', { title: c.body || c.subject }, ...c.branches.map((b) => h('span', { className: `pill branch${b === current ? ' current' : ''}`, title: b }, b)), c.subject),
       h('td', { className: 'mono' }, c.short));
       if (c.parents.length > 1) tr.classList.add('vc-merge');
       table.append(tr);
@@ -628,14 +726,20 @@ export function historyEditor(): EditorView {
       tb('archive', 'Archiver une version', () => void archiveCmd().then(load), !!g?.repo),
       tb('sync', "Synchroniser avec l'équipe", () => void syncCmd().then(load), !!g?.repo),
       tb('refresh', 'Actualiser', () => void refreshGit().then(load)),
+      h('label', { style: 'display:flex;align-items:center;gap:4px;white-space:nowrap;flex:none;margin-left:4px' },
+        (() => {
+          const cb = h('input', { type: 'checkbox', checked: allBranches });
+          cb.onchange = () => { allBranches = cb.checked; void load(); };
+          return cb;
+        })(), 'Toutes les branches'),
       h('span', { className: 'muted', style: 'margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0' }, g?.repo
-        ? `Branche ${g.branch ?? '?'} — ${g.remoteUrl ? `dépôt de l'équipe : ${g.remoteUrl}` : "pas de dépôt d'équipe"}${g.changes.length ? ` — ${g.changes.length} modification(s) non archivée(s)` : ''}`
+        ? `Branche ${g.branch ?? '?'} — ${g.remote ? `dépôt ${g.remote} : ${g.remoteUrl}` : "pas de dépôt d'équipe"}${g.changes.length ? ` — ${g.changes.length} modification(s) non archivée(s)` : ''}`
         : ''));
   };
 
   const load = async () => {
     renderToolbar();
-    commits = store.git?.repo && store.projectDir ? await call('gitLog', store.projectDir, 500).catch(() => []) : [];
+    commits = store.git?.repo && store.projectDir ? await call('gitLog', store.projectDir, 500, allBranches).catch(() => []) : [];
     selected = commits.find((c) => c.hash === selected?.hash) ?? commits[0] ?? null;
     renderList();
     renderDetail();
@@ -680,9 +784,11 @@ export function versionsCard(body: HTMLElement): void {
   body.append(h('div', { className: 'operator' },
     h('div', { className: 'op-title' }, 'État'),
     h('div', { className: 'kv' },
-      h('span', null, 'Branche'), h('span', null, g.branch ?? '—'),
-      h('span', null, 'Dépôt équipe'), h('span', { title: g.remoteUrl ?? '' , style: 'overflow:hidden;text-overflow:ellipsis' }, g.remoteUrl ? g.remoteUrl.replace(/^.*[/\\]/, '') : h('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); void remoteCmd(); } }, 'Configurer...')),
-      h('span', null, 'À envoyer'), h('span', null, g.remoteUrl ? `${g.ahead ?? 0} version(s)` : '—'),
+      h('span', null, 'Branche'), branchSelect(g),
+      h('span', null, 'Dépôt'), h('span', { title: g.remoteUrl ?? '', style: 'overflow:hidden;text-overflow:ellipsis' },
+        g.remote ? `${g.remote}${g.remotes.length > 1 ? ` (+${g.remotes.length - 1})` : ''}` : g.remotes.length ? 'à choisir' : '',
+        ' ', h('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); void remoteCmd(); } }, g.remotes.length ? 'Gérer...' : 'Configurer...')),
+      h('span', null, 'À envoyer'), h('span', null, g.upstream ? `${g.ahead ?? 0} version(s)` : g.remotes.length ? 'branche non publiée' : '—'),
       h('span', null, 'Auteur'), h('span', null, g.user?.name ? g.user.name : h('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); void identityDialog(g.user).then(() => refreshGit()); } }, 'Définir...')))));
 
   const changes = h('div', { className: 'vc-changes' });
@@ -723,6 +829,27 @@ export function versionsCard(body: HTMLElement): void {
         h('span', { className: 'muted', style: 'margin-left:auto;padding-left:6px' }, fmtDate(c.date, false))));
     }
   }).catch(() => undefined);
+}
+
+/** Quick branch switch (task card). */
+function branchSelect(g: GitStatus): HTMLElement {
+  const sel = h('select', { style: 'width:100%;height:20px', title: 'Changer de branche' }, h('option', { value: g.branch ?? '' }, g.branch ?? '—'));
+  let loaded = false;
+  sel.onfocus = async () => {
+    if (loaded || !store.projectDir) return;
+    loaded = true;
+    const { local } = await call('gitBranches', store.projectDir);
+    for (const b of local) if (!b.current) sel.append(h('option', { value: b.name }, b.name));
+    sel.append(h('option', { value: '__branches' }, 'Gérer les branches...'));
+  };
+  sel.onchange = () => {
+    const v = sel.value;
+    sel.value = g.branch ?? '';
+    if (v === '__branches') A.openEditor({ kind: 'branches' });
+    else if (v && v !== g.branch) void B.switchBranchCmd(v);
+  };
+  return h('span', { style: 'display:flex;gap:4px;align-items:center' }, sel,
+    h('a', { href: '#', title: 'Nouvelle branche', onclick: (e: Event) => { e.preventDefault(); void B.newBranchCmd(); } }, '+'));
 }
 
 /** Short status for the status bar. */
