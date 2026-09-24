@@ -58,6 +58,7 @@ export const icons = {
   control: s('<path d="M8 1.5l6 6.5-6 6.5L2 8z" fill="#fff" stroke="#4a5563"/><path d="M8 5v4" stroke="#4a5563" stroke-width="1.4"/>'),
   string: s('<text x="8" y="11.5" font-size="8" text-anchor="middle" font-family="Arial" fill="#4a5563">Ab</text>'),
   source: s('<path d="M3.5 1.5h6l3 3v10h-9z" fill="#fff" stroke="#6b6b6b"/><path d="M5 7h6M5 9.5h6M5 12h4" stroke="#9aa5b1"/>'),
+  dataType: s('<rect x="1.5" y="2.5" width="13" height="11" fill="#fff" stroke="#6b6b6b"/><rect x="1.5" y="2.5" width="13" height="3" fill="#c9b6e8" stroke="#6b6b6b"/><path d="M4 8h3M4 10.5h3M9 8h3M9 10.5h3" stroke="#6a4fa3"/>'),
   archive: s('<rect x="1.5" y="2.5" width="13" height="3.5" fill="#d9c9a8" stroke="#8a6030"/><path d="M2.5 6v7.5h11V6" fill="#efe3c8" stroke="#8a6030"/><path d="M6 8.5h4" stroke="#8a6030" stroke-width="1.5"/>'),
   sync: s('<path d="M13 6.5A5 5 0 004 4.5M3 9.5a5 5 0 009 2" fill="none" stroke="#1a73c9" stroke-width="1.6"/><path d="M4 1.5v3.5h3.5M12 14.5V11H8.5" fill="none" stroke="#1a73c9" stroke-width="1.6"/>'),
   history: s('<circle cx="8.5" cy="8.5" r="5.5" fill="#fff" stroke="#4a5563" stroke-width="1.3"/><path d="M8.5 5.5v3.2l2.2 1.4" fill="none" stroke="#4a5563" stroke-width="1.3"/><path d="M1.5 5.5l1.5 2.5 2.5-1.5" fill="none" stroke="#1a73c9" stroke-width="1.3"/>'),

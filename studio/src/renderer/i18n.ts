@@ -7,6 +7,7 @@ export const t = {
   menuOptions: 'Options', menuTools: 'Outils', menuWindow: 'Fenêtre', menuHelp: 'Aide',
   newProject: 'Nouveau...', openProject: 'Ouvrir...', saveProject: 'Enregistrer le projet', saveAs: 'Enregistrer sous...',
   closeProject: 'Fermer', importSource: 'Sources externes > Générer des blocs à partir de la source...', exit: 'Quitter',
+  importFiles: 'Importer des fichiers (.scl, .db, .udt, .xlsx)...',
   undo: 'Annuler', redo: 'Rétablir', cut: 'Couper', copy: 'Copier', paste: 'Coller', delete: 'Supprimer', compile: 'Compiler',
   compileSoftware: 'Compiler > Logiciel (tous les blocs)',
   showTree: 'Arborescence du projet', showTasks: 'Cartes des tâches', showInspector: "Fenêtre d'inspection", showDetails: 'Vue détaillée',

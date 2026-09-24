@@ -10,6 +10,8 @@ export interface TypeRef {
   high?: number;
   /** STRING[n] */
   length?: number;
+  /** Anonymous STRUCT ... END_STRUCT */
+  fields?: VarDecl[];
   line: number;
 }
 
@@ -85,8 +87,17 @@ export interface DataBlock {
   file?: string;
 }
 
+/** PLC data type (UDT): TYPE "Name" STRUCT ... END_STRUCT END_TYPE */
+export interface UserType {
+  name: string;
+  fields: VarDecl[];
+  line: number;
+  file?: string;
+}
+
 export interface Program {
   vars: VarDecl[];
   pous: Pou[];
   dataBlocks: DataBlock[];
+  types: UserType[];
 }

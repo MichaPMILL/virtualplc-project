@@ -45,7 +45,7 @@ const MENUS: Array<[string, Entry[]]> = [
     { label: "Dépôt de l'équipe...", run: () => void V.remoteCmd(), enabled: () => hasProject() && V.isRepo() },
     { label: 'Activer la gestion de versions...', run: () => void V.enableVersioningCmd(), enabled: () => hasProject() && !V.isRepo() },
     'sep',
-    { label: t.importSource, icon: 'source', run: A.importSourceCmd, enabled: hasProject },
+    { label: t.importFiles, icon: 'source', run: () => void A.importSourceCmd(), enabled: hasProject },
     ...(host.kind === 'electron' ? ['sep' as const, { label: t.exit, run: () => window.close() }] : []),
   ]],
   [t.menuEdit, [

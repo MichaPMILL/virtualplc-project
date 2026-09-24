@@ -347,3 +347,82 @@ vmTest('watchdog stops an endless loop', async () => {
     assert.equal((state.fault as { code: string }).code, 'WATCHDOG');
   }, { watchdogMs: 50 });
 });
+
+vmTest('PLC data types (UDT) and anonymous structs', async () => {
+  await withSim(`
+    TYPE "Axis"
+    VERSION : 0.1
+      STRUCT
+        Name : String[8] := 'X';
+        Position : Real;
+        Limits : Struct
+          Low : Real := -10.0;
+          High : Real := 10.0;
+        END_STRUCT;
+        Enabled : Bool := TRUE;
+      END_STRUCT;
+    END_TYPE
+
+    TYPE "Cell"
+      STRUCT
+        Axes : Array[0..1] of "Axis";
+        Count : Int;
+      END_STRUCT;
+    END_TYPE
+
+    DATA_BLOCK "Machine"
+      STRUCT
+        Cell : "Cell";
+        Saved : "Axis";
+      END_STRUCT;
+    BEGIN
+    END_DATA_BLOCK
+
+    FUNCTION "Clamp" : Real
+      VAR_INPUT a : "Axis"; END_VAR
+    BEGIN
+      #Clamp := LIMIT(MN := #a.Limits.Low, IN := #a.Position, MX := #a.Limits.High);
+    END_FUNCTION
+
+    FUNCTION_BLOCK "Mover"
+      VAR_INPUT target : "Axis"; END_VAR
+      VAR_OUTPUT result : "Axis"; END_VAR
+    BEGIN
+      #result := #target;
+      #result.Position := #target.Position * 2.0;
+    END_FUNCTION_BLOCK
+
+    VAR_GLOBAL
+      Clamped : Real; Moved : Real; Copied : Real; Enabled : Bool; Low : Real; NameLen : Int; Temp : Real;
+      M : "Mover";
+    END_VAR
+
+    ORGANIZATION_BLOCK "Main"
+      VAR_TEMP t : "Axis"; END_VAR
+    BEGIN
+      "Machine".Cell.Axes[1].Position := 25.0;
+      "Machine".Cell.Count += 1;
+      Clamped := "Clamp"(a := "Machine".Cell.Axes[1]);
+      "Machine".Saved := "Machine".Cell.Axes[1];
+      Copied := "Machine".Saved.Position;
+      M(target := "Machine".Saved, result => "Machine".Cell.Axes[0]);
+      Moved := "Machine".Cell.Axes[0].Position;
+      Enabled := "Machine".Cell.Axes[0].Enabled;
+      Low := "Machine".Cell.Axes[0].Limits.Low;
+      NameLen := LEN(#t.Name);
+      #t.Position := 3.0;
+      Temp := #t.Position;
+    END_ORGANIZATION_BLOCK`, async (sim) => {
+    await sim.scan();
+    assert.equal(await sim.get('Clamped'), 10);
+    assert.equal(await sim.get('Copied'), 25);
+    assert.equal(await sim.get('Moved'), 50);
+    assert.equal(await sim.get('Enabled'), true, 'start value inside a UDT');
+    assert.equal(await sim.get('Low'), -10, 'start value inside a nested struct');
+    assert.equal(await sim.get('NameLen'), 1, 'string start value of a temporary UDT');
+    assert.equal(await sim.get('Temp'), 3);
+    assert.equal(await sim.get('"Machine".Cell.Axes[1].Position'), 25);
+    await sim.scan();
+    assert.equal(await sim.get('"Machine".Cell.Count'), 2);
+  });
+});

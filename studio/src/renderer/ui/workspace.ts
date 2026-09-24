@@ -10,6 +10,7 @@ import { deviceEditor, onlineEditor } from '../editors/device.ts';
 import { tagTableEditor } from '../editors/tagTable.ts';
 import type { EditorView } from '../editors/types.ts';
 import { watchTableEditor } from '../editors/watchTable.ts';
+import { dataTypeEditor } from '../editors/dataType.ts';
 import * as V from '../versioning.ts';
 import { historyEditor } from '../versioning.ts';
 
@@ -70,6 +71,10 @@ function createView(ref: EditorRef): EditorView | null {
     case 'watch': {
       const w = device.watchTables.find((x) => x.id === ref.tableId);
       return w ? watchTableEditor(device, w) : null;
+    }
+    case 'dataType': {
+      const dt = device.types.find((x) => x.id === ref.typeId);
+      return dt ? dataTypeEditor(device, dt) : null;
     }
   }
 }
@@ -219,6 +224,7 @@ function labelOf(ref: EditorRef): string {
     }
     case 'tagTable': return d?.tagTables.find((x) => x.id === ref.tableId)?.name ?? '?';
     case 'watch': return d?.watchTables.find((x) => x.id === ref.tableId)?.name ?? '?';
+    case 'dataType': return d?.types.find((x) => x.id === ref.typeId)?.name ?? '?';
     case 'device': return d?.name ?? '?';
     case 'online': return t.onlineDiag;
     case 'allTags': return t.showAllTags;

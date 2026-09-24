@@ -1,4 +1,4 @@
-import type { Address, CallArg, DataBlock, Expr, Pou, PouKind, Program, Section, Stmt, TypeRef, VarDecl } from './ast.ts';
+import type { Address, CallArg, DataBlock, Expr, Pou, PouKind, Program, Section, Stmt, TypeRef, UserType, VarDecl } from './ast.ts';
 import { CompileError } from './diagnostics.ts';
 import { describeToken, tokenize, type Token } from './lexer.ts';
 
@@ -52,7 +52,7 @@ class Parser {
   }
 
   program(): Program {
-    const prog: Program = { vars: [], pous: [], dataBlocks: [] };
+    const prog: Program = { vars: [], pous: [], dataBlocks: [], types: [] };
     let startup: Stmt[] | null = null;
 
     while (!this.at('eof')) {
@@ -74,6 +74,9 @@ class Parser {
           break;
         case 'DATA_BLOCK':
           prog.dataBlocks.push(this.dataBlock());
+          break;
+        case 'TYPE':
+          prog.types.push(...this.userTypes());
           break;
         case 'FC': {
           // Historical main program -> cyclic OB "Main"
@@ -101,7 +104,7 @@ class Parser {
         case 'HARDWARE':
           throw this.error('HARDWARE sections are not supported by the compiled runtime: declare I/O modules in the device configuration and use %I/%Q addresses', t);
         default:
-          throw this.unexpected('a block (ORGANIZATION_BLOCK, FUNCTION_BLOCK, FUNCTION, DATA_BLOCK) or VAR_GLOBAL');
+          throw this.unexpected('a block (ORGANIZATION_BLOCK, FUNCTION_BLOCK, FUNCTION, DATA_BLOCK), a TYPE or VAR_GLOBAL');
       }
     }
     if (startup !== null) {
@@ -158,6 +161,23 @@ class Parser {
     if (this.acceptKeyword('BEGIN')) init = this.statements(['END_DATA_BLOCK']);
     this.close('END_DATA_BLOCK');
     return { name, instanceOf, fields, init, line: start.line, file: this.file };
+  }
+
+  /** TYPE "Name" [header] STRUCT ... END_STRUCT[;] END_TYPE (several types may share one TYPE section). */
+  private userTypes(): UserType[] {
+    this.next();
+    const out: UserType[] = [];
+    do {
+      const name = this.expectIdent();
+      this.accept(':');
+      this.skipHeader();
+      this.expectKeyword('STRUCT');
+      const fields = this.declarations('static', ['END_STRUCT']);
+      this.close('END_STRUCT');
+      out.push({ name: name.text, fields, line: name.line, file: this.file });
+    } while (!this.isKeyword('END_TYPE') && !this.at('eof'));
+    this.close('END_TYPE');
+    return out;
   }
 
   private skipHeader(): void {
@@ -224,6 +244,11 @@ class Parser {
       this.expectKeyword('OF');
       if (high < low || high - low >= 65536) throw this.error(`Invalid array bounds [${low}..${high}]`, t);
       return { name: 'ARRAY', element: this.type(), low, high, line: t.line };
+    }
+    if (this.acceptKeyword('STRUCT')) {
+      const fields = this.declarations('static', ['END_STRUCT']);
+      this.expectKeyword('END_STRUCT');
+      return { name: 'STRUCT', fields, line: t.line };
     }
     const id = this.expectIdent();
     const upper = id.text.toUpperCase();

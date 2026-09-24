@@ -5,14 +5,15 @@ import { promptDialog } from './ui/dialogs.ts';
 export interface OpenedFile {
   path: string;
   name: string;
-  text: string;
+  bytes: Uint8Array;
 }
 
 interface HostBridge {
   kind: 'electron' | 'web';
   platform: string;
   invoke(method: string, args: unknown[]): Promise<unknown>;
-  openFile(kind: 'scl'): Promise<OpenedFile | null>;
+  /** Files exported by engineering tools (.scl, .db, .udt, .xlsx) */
+  openFiles(): Promise<OpenedFile[]>;
   /** Native file/folder chooser; returns an absolute path on this computer */
   pickPath(kind: PathKind, suggested?: string): Promise<string | null>;
   setDirty(dirty: boolean): void;
@@ -39,14 +40,14 @@ function webHost(): HostBridge {
       if (data.error) throw new Error(data.error);
       return data.result;
     },
-    openFile() {
+    openFiles() {
       return new Promise((resolve) => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.scl,.txt';
+        input.multiple = true;
+        input.accept = '.scl,.db,.udt,.xlsx,.txt';
         input.onchange = async () => {
-          const f = input.files?.[0];
-          resolve(f ? { path: f.name, name: f.name, text: await f.text() } : null);
+          resolve(await Promise.all([...(input.files ?? [])].map(async (f) => ({ path: f.name, name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))));
         };
         input.click();
       });

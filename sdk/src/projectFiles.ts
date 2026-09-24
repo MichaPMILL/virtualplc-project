@@ -7,13 +7,14 @@
 //   devices/<Device>/blocks/<Block>.scl   block code (SCL statements)
 //   devices/<Device>/tags/<Table>.json    PLC tag table
 //   devices/<Device>/watch/<Table>.json   watch table
+//   devices/<Device>/types/<Type>.json    PLC data type (UDT)
 //   .gitattributes, .gitignore
 //
 // The manifest carries no modification date: Git keeps the history, and a date that
 // changes on every save would make every merge conflict.
 import {
   emptyInterface, PROJECT_FORMAT, PROJECT_VERSION,
-  type Block, type Device, type Project, type TagTable, type WatchTable,
+  type Block, type DataTypeDef, type Device, type Project, type TagTable, type WatchTable,
 } from './project.ts';
 
 export const MANIFEST_EXT = '.vplcproj';
@@ -104,13 +105,15 @@ export function projectToFiles(project: Project): ProjectFiles {
     for (const t of d.tagTables) files[`${dir}/tags/${tagNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'tags', 'constants']));
     const watchNames = uniqueNames(d.watchTables, (t) => t.name);
     for (const t of d.watchTables) files[`${dir}/watch/${watchNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'rows']));
+    const typeNames = uniqueNames(d.types ?? [], (t) => t.name);
+    for (const t of d.types ?? []) files[`${dir}/types/${typeNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'comment', 'members']));
   }
   return files;
 }
 
 /** Folders written by projectToFiles (files below them that are not in the project any more are stale). */
 export function isManagedPath(path: string): boolean {
-  return /^devices\/[^/]+\/(device\.json|(blocks|tags|watch)\/[^/]+\.(json|scl))$/.test(path) || /^[^/]+\.vplcproj$/.test(path);
+  return /^devices\/[^/]+\/(device\.json|(blocks|tags|watch|types)\/[^/]+\.(json|scl))$/.test(path) || /^[^/]+\.vplcproj$/.test(path);
 }
 
 function parseJson<T>(files: ProjectFiles, path: string): T {
@@ -169,6 +172,12 @@ export function projectFromFiles(files: ProjectFiles): Project {
       t.rows ??= [];
       return t;
     }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    d.types = inDir('types', '.json').map((p) => {
+      const t = parseJson<DataTypeDef>(files, p);
+      t.members ??= [];
+      return t;
+    }).sort((a, b) => a.name.localeCompare(b.name));
     devices.push(d);
   }
   if (!devices.length) throw new Error('Invalid project: no devices');

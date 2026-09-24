@@ -74,6 +74,18 @@ document.addEventListener('keydown', shortcuts);
 host.onMenu((action) => {
   if (action === 'project.saveAndQuit') void A.saveAndQuit();
 });
+// Files exported by engineering tools can be dropped on the window
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+});
+window.addEventListener('drop', (e) => {
+  const files = [...(e.dataTransfer?.files ?? [])].filter((f) => /\.(scl|db|udt|xlsx|txt)$/i.test(f.name));
+  if (!e.dataTransfer?.files.length) return;
+  e.preventDefault();
+  const device = A.currentDevice();
+  if (!device || !files.length) return;
+  void Promise.all(files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))).then((list) => A.importFiles(device, list));
+});
 window.addEventListener('beforeunload', (e) => {
   if (host.kind === 'web' && store.dirty) e.preventDefault();
 });

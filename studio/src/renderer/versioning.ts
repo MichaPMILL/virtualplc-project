@@ -76,6 +76,10 @@ export function describePath(path: string, project: Project | null = store.proje
           const tt = d.tagTables.find((x) => x.id === objId);
           if (tt) return { label: `${d.name} > ${t.plcTags} > ${tt.name}`, icon: 'tagTable', ref: { kind: 'tagTable', deviceId: d.id, tableId: tt.id } };
         }
+        if (rest.startsWith('types/')) {
+          const ut = d.types.find((x) => x.id === objId);
+          if (ut) return { label: `${d.name} > ${t.dataTypes} > ${ut.name}`, icon: 'dataType', ref: { kind: 'dataType', deviceId: d.id, typeId: ut.id } };
+        }
         if (rest.startsWith('watch/')) {
           const w = d.watchTables.find((x) => x.id === objId);
           if (w) return { label: `${d.name} > ${t.watchTables} > ${w.name}`, icon: 'watch', ref: { kind: 'watch', deviceId: d.id, tableId: w.id } };
@@ -84,11 +88,11 @@ export function describePath(path: string, project: Project | null = store.proje
     }
   }
   // Objects that no longer exist (deleted, renamed) or files outside the project
-  const m = /^devices\/([^/]+)\/(?:(device\.json)|(blocks|tags|watch)\/(.+)\.(json|scl))$/.exec(path);
+  const m = /^devices\/([^/]+)\/(?:(device\.json)|(blocks|tags|watch|types)\/(.+)\.(json|scl))$/.exec(path);
   if (m) {
     if (m[2]) return { label: `${m[1]} > ${t.deviceConfig}`, icon: 'cpu' };
-    const folder = { blocks: t.programBlocks, tags: t.plcTags, watch: t.watchTables }[m[3] as 'blocks' | 'tags' | 'watch'];
-    return { label: `${m[1]} > ${folder} > ${m[4]}${m[3] === 'blocks' ? (m[5] === 'scl' ? ' (code)' : ' (interface)') : ''}`, icon: m[3] === 'blocks' ? 'source' : m[3] === 'tags' ? 'tagTable' : 'watch' };
+    const folder = { blocks: t.programBlocks, tags: t.plcTags, watch: t.watchTables, types: t.dataTypes }[m[3] as 'blocks' | 'tags' | 'watch' | 'types'];
+    return { label: `${m[1]} > ${folder} > ${m[4]}${m[3] === 'blocks' ? (m[5] === 'scl' ? ' (code)' : ' (interface)') : ''}`, icon: m[3] === 'blocks' ? 'source' : m[3] === 'tags' ? 'tagTable' : m[3] === 'types' ? 'dataType' : 'watch' };
   }
   if (path.endsWith('.vplcproj')) return { label: 'Propriétés du projet', icon: 'project' };
   return { label: path, icon: 'source' };

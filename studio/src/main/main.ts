@@ -10,7 +10,7 @@ let dirty = false;
 
 const FILTERS = {
   project: [{ name: 'Projet VirtualPLC', extensions: ['vplcproj'] }, { name: 'Projet VirtualPLC 1.x (JSON)', extensions: ['json'] }],
-  scl: [{ name: 'Source externe SCL', extensions: ['scl', 'txt'] }],
+  scl: [{ name: 'Fichiers exportés (sources SCL, DB, types, tables de variables)', extensions: ['scl', 'db', 'udt', 'xlsx', 'txt'] }],
   zip: [{ name: 'Archive ZIP', extensions: ['zip'] }],
 };
 
@@ -76,12 +76,11 @@ ipcMain.handle('api', async (_e, method: ApiMethod, args: unknown[]) => {
   return fn(...args);
 });
 
-ipcMain.handle('files.open', async (_e, kind: keyof typeof FILTERS) => {
-  if (!win) return null;
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: FILTERS[kind] ?? [] });
-  if (r.canceled || !r.filePaths[0]) return null;
-  const path = r.filePaths[0];
-  return { path, name: basename(path), text: await readFile(path, 'utf8') };
+ipcMain.handle('files.openMany', async () => {
+  if (!win) return [];
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: FILTERS.scl });
+  if (r.canceled) return [];
+  return Promise.all(r.filePaths.map(async (path) => ({ path, name: basename(path), bytes: new Uint8Array(await readFile(path)) })));
 });
 
 ipcMain.handle('files.pick', async (_e, kind: 'openProject' | 'saveProject' | 'folder' | 'zip', suggested?: string) => {

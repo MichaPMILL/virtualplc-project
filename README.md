@@ -71,6 +71,22 @@ workstation (menu *Projet*, toolbar, task card *Versions*):
 
 Authentication uses the workstation's Git credentials (Git Credential Manager, SSH keys).
 
+### Importing from other engineering tools
+
+*Projet > Importer des fichiers* (or drag and drop on the window) reads the files that
+engineering tools export from their own projects:
+
+| File                     | Content                                                                 |
+|--------------------------|-------------------------------------------------------------------------|
+| `.scl`                   | SCL external sources: OB, FB, FC, DATA_BLOCK, TYPE, VAR_GLOBAL           |
+| `.db`                    | Data block sources (global and instance DBs)                            |
+| `.udt`                   | PLC data types (`TYPE "Name" STRUCT … END_STRUCT END_TYPE`, nested structs) |
+| `.xlsx`                  | PLC tag table exports (columns Name, Path, Data Type, Logical Address, Comment — English or French headers), one table per *Path* |
+
+Proprietary binary project files and archives are deliberately **not** read: their formats are
+undocumented and reading them would require reverse engineering. Export the blocks, data
+types and tag tables as sources from the original tool, then import them.
+
 ## Features
 
 - **SCL language**: `IF/ELSIF/ELSE`, `CASE`, `FOR ... BY`, `WHILE`, `REPEAT`, `EXIT`, `RETURN`,

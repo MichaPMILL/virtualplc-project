@@ -26,8 +26,9 @@ function sectionsFor(b: Block): SectionKey[] {
   }
 }
 
-function typeSuggestions(device: Device): string[] {
-  return [...DATA_TYPES, ...FB_TYPES, ...device.blocks.filter((b) => b.type === 'FB').map((b) => `"${b.name}"`)];
+export function typeSuggestions(device: Device, withFb = true): string[] {
+  return [...DATA_TYPES, 'Struct', ...(device.types ?? []).map((x) => `"${x.name}"`),
+    ...(withFb ? [...FB_TYPES, ...device.blocks.filter((b) => b.type === 'FB').map((b) => `"${b.name}"`)] : [])];
 }
 
 function blockIcon(b: Block): IconName {

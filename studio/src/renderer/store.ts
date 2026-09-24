@@ -1,5 +1,5 @@
 // Application state. Components subscribe to change notifications.
-import type { Block, Device, Project, ProjectDiagnostic, SymbolNode, TagTable, WatchTable } from '../../../sdk/src/browser.ts';
+import type { Block, DataTypeDef, Device, Project, ProjectDiagnostic, SymbolNode, TagTable, WatchTable } from '../../../sdk/src/browser.ts';
 import type { CompileSummary } from '../backend/backend.ts';
 import type { GitStatus } from '../backend/git.ts';
 
@@ -11,6 +11,7 @@ export type EditorRef =
   | { kind: 'allTags'; deviceId: string }
   | { kind: 'block'; deviceId: string; blockId: string }
   | { kind: 'watch'; deviceId: string; tableId: string }
+  | { kind: 'dataType'; deviceId: string; typeId: string }
   | { kind: 'history' };
 
 export interface Message {
@@ -83,6 +84,10 @@ class Store {
 
   tagTable(deviceId: string, tableId: string): TagTable | undefined {
     return this.device(deviceId)?.tagTables.find((t) => t.id === tableId);
+  }
+
+  dataType(deviceId: string, typeId: string): DataTypeDef | undefined {
+    return this.device(deviceId)?.types.find((x) => x.id === typeId);
   }
 
   watchTable(deviceId: string, tableId: string): WatchTable | undefined {

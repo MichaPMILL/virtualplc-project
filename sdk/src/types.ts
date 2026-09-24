@@ -10,6 +10,8 @@ export type DataType =
   | { k: 'array'; elem: DataType; low: number; high: number }
   | { k: 'fb'; name: string; library: boolean }
   | { k: 'db'; name: string }
+  /** PLC data type (UDT) or anonymous STRUCT; `key` identifies the layout */
+  | { k: 'struct'; name: string; key: string }
   | { k: 'anyint' }
   | { k: 'anyreal' }
   | { k: 'void' };
@@ -82,6 +84,8 @@ export function typeName(t: DataType): string {
       return t.library ? t.name : `"${t.name}"`;
     case 'db':
       return `DB "${t.name}"`;
+    case 'struct':
+      return t.name ? `"${t.name}"` : 'Struct';
     case 'anyint':
       return 'integer constant';
     case 'anyreal':
@@ -105,6 +109,8 @@ export function sameType(a: DataType, b: DataType): boolean {
     case 'fb':
     case 'db':
       return a.name.toUpperCase() === (b as typeof a).name.toUpperCase();
+    case 'struct':
+      return a.key === (b as typeof a).key;
     default:
       return true;
   }

@@ -1,6 +1,6 @@
 // Commands of the Studio (menus, toolbar, shortcuts, tree context menus).
 import {
-  blockLabel, DEVICE_TYPES, emptyInterface, importExternalSource, loadProject, newDevice, newId, newProject, saveProject,
+  blockLabel, DEVICE_TYPES, emptyInterface, importExternalSource, importTagTableXlsx, loadProject, newDevice, newId, newProject, saveProject,
   type Block, type Device,
 } from '../../../sdk/src/browser.ts';
 import type { CompileSummary, MonitorValue } from '../backend/backend.ts';
@@ -40,6 +40,7 @@ export function pruneEditors(): void {
     if (e.kind === 'block') return d.blocks.some((b) => b.id === e.blockId);
     if (e.kind === 'tagTable') return d.tagTables.some((b) => b.id === e.tableId);
     if (e.kind === 'watch') return d.watchTables.some((b) => b.id === e.tableId);
+    if (e.kind === 'dataType') return d.types.some((b) => b.id === e.typeId);
     return true;
   });
   if (store.active && !store.editors.some((e) => sameEditor(e, store.active!))) store.active = store.editors[0] ?? null;
@@ -176,36 +177,104 @@ export async function saveAndQuit(): Promise<void> {
   if (await saveProjectCmd()) host.quit();
 }
 
-export async function importSourceCmd(): Promise<void> {
-  const device = currentDevice();
-  if (!device) return;
-  const file = await host.openFile('scl');
-  if (!file) return;
-  try {
-    const { blocks, tags } = importExternalSource(device, file.text, file.name);
-    let replaced = 0;
-    for (const b of blocks) {
-      const existing = device.blocks.findIndex((x) => x.name.toLowerCase() === b.name.toLowerCase());
-      if (existing >= 0) {
-        b.id = device.blocks[existing].id;
-        b.number = device.blocks[existing].number;
-        device.blocks[existing] = b;
-        replaced++;
-      } else {
-        device.blocks.push(b);
-      }
+/** Text of an exported source file (UTF-8 with or without BOM, or UTF-16). */
+function decodeText(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  return new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+}
+
+function mergeByName<T extends { name: string }>(target: T[], items: T[]): { added: number; replaced: number } {
+  let added = 0;
+  let replaced = 0;
+  for (const item of items) {
+    const i = target.findIndex((x) => x.name.toLowerCase() === item.name.toLowerCase());
+    if (i >= 0) {
+      target[i] = item;
+      replaced++;
+    } else {
+      target.push(item);
+      added++;
     }
-    const table = device.tagTables[0];
-    for (const tag of tags) {
-      if (!table.tags.some((x) => x.name.toLowerCase() === tag.name.toLowerCase())) table.tags.push(tag);
-    }
-    store.touch();
-    pruneEditors();
-    store.addMessage({ severity: 'ok', text: `Source externe « ${file.name} » : ${blocks.length} bloc(s) générés (${replaced} remplacés), ${tags.length} variable(s).` });
-  } catch (e) {
-    store.addMessage({ severity: 'error', text: `Source externe « ${file.name} » : ${(e as Error).message}`, path: file.name });
-    await alertDialog(t.importSource, (e as Error).message, 'error');
   }
+  return { added, replaced };
+}
+
+/** "Importer des fichiers": files exported by engineering tools (SCL sources, DB, UDT, tag tables). */
+export async function importSourceCmd(device = currentDevice()): Promise<void> {
+  if (!device) return;
+  const files = await host.openFiles();
+  if (files.length) await importFiles(device, files);
+}
+
+export async function importFiles(device: Device, files: Array<{ name: string; bytes: Uint8Array }>): Promise<void> {
+  // data types first (used by DBs and blocks), then tag tables, DBs and code blocks
+  const rank = (n: string) => (/\.udt$/i.test(n) ? 0 : /\.xlsx$/i.test(n) ? 1 : /\.db$/i.test(n) ? 2 : 3);
+  let errors = 0;
+  for (const f of [...files].sort((a, b) => rank(a.name) - rank(b.name))) {
+    const path = `${device.name} > ${t.externalSources} > ${f.name}`;
+    try {
+      if (/\.xlsx$/i.test(f.name)) {
+        const tables = await importTagTableXlsx(f.bytes, f.name.replace(/\.xlsx$/i, ''));
+        let tags = 0;
+        let constants = 0;
+        for (const it of tables) {
+          // a tag name is unique in the device: update it where it already is
+          const fresh = it.tags.filter((tag) => {
+            const owner = device.tagTables.find((tt) => tt.name.toLowerCase() !== it.name.toLowerCase() && tt.tags.some((x) => x.name.toLowerCase() === tag.name.toLowerCase()));
+            if (owner) mergeByName(owner.tags, [tag]);
+            return !owner;
+          });
+          let table = device.tagTables.find((x) => x.name.toLowerCase() === it.name.toLowerCase());
+          if (!table) {
+            table = { id: newId('tt'), name: it.name, tags: [], constants: [] };
+            device.tagTables.push(table);
+          }
+          mergeByName(table.tags, fresh);
+          mergeByName(table.constants, it.constants);
+          tags += it.tags.length;
+          constants += it.constants.length;
+        }
+        store.addMessage({ severity: 'ok', path, text: `Table de variables « ${f.name} » : ${tags} variable(s), ${constants} constante(s) dans ${tables.map((x) => x.name).join(', ')}.` });
+        continue;
+      }
+      const { blocks, tags, types } = importExternalSource(device, decodeText(f.bytes), f.name);
+      for (const ut of types) {
+        const existing = device.types.find((x) => x.name.toLowerCase() === ut.name.toLowerCase());
+        if (existing) ut.id = existing.id;
+      }
+      const typeResult = mergeByName(device.types, types);
+      let replaced = 0;
+      for (const b of blocks) {
+        const existing = device.blocks.findIndex((x) => x.name.toLowerCase() === b.name.toLowerCase());
+        if (existing >= 0) {
+          b.id = device.blocks[existing].id;
+          b.number = device.blocks[existing].number;
+          device.blocks[existing] = b;
+          replaced++;
+        } else {
+          device.blocks.push(b);
+        }
+      }
+      const table = device.tagTables[0];
+      for (const tag of tags) {
+        if (!device.tagTables.some((tt) => tt.tags.some((x) => x.name.toLowerCase() === tag.name.toLowerCase()))) table.tags.push(tag);
+      }
+      const parts = [
+        types.length ? `${types.length} type(s) de données${typeResult.replaced ? ` (${typeResult.replaced} remplacé(s))` : ''}` : '',
+        blocks.length ? `${blocks.length} bloc(s)${replaced ? ` (${replaced} remplacé(s))` : ''}` : '',
+        tags.length ? `${tags.length} variable(s)` : '',
+      ].filter(Boolean);
+      store.addMessage({ severity: 'ok', path, text: `Source externe « ${f.name} » : ${parts.join(', ') || 'rien à importer'}.` });
+    } catch (e) {
+      errors++;
+      store.addMessage({ severity: 'error', text: `« ${f.name} » : ${(e as Error).message}`, path });
+    }
+  }
+  store.touch();
+  pruneEditors();
+  store.emit('editors');
+  if (errors) await alertDialog(t.importFiles.replace(/\.\.\.$/, ''), `${errors} fichier(s) n'ont pas pu être importés : voir la fenêtre d'inspection (Info).`, 'warning');
 }
 
 // ---------------------------------------------------------------------------
@@ -274,12 +343,31 @@ export async function addWatchTableCmd(device = currentDevice()): Promise<void> 
   openEditor({ kind: 'watch', deviceId: device.id, tableId: table.id });
 }
 
-export async function renameCmd(kind: 'block' | 'tagTable' | 'watch' | 'device', deviceId: string, id: string): Promise<void> {
+type ObjectKind = 'block' | 'tagTable' | 'watch' | 'device' | 'dataType';
+
+export async function addDataTypeCmd(device = currentDevice()): Promise<void> {
+  if (!device) return;
+  let n = 1;
+  while (device.types.some((x) => x.name === `Type de données utilisateur_${n}`)) n++;
+  const name = await promptDialog('Ajouter nouveau type de données', t.name, `Type de données utilisateur_${n}`);
+  if (!name) return;
+  if (device.types.some((x) => x.name.toLowerCase() === name.toLowerCase()) || device.blocks.some((b) => b.name.toLowerCase() === name.toLowerCase())) {
+    await alertDialog('Ajouter nouveau type de données', `Le nom « ${name} » est déjà utilisé.`, 'error');
+    return;
+  }
+  const type = { id: newId('udt'), name, members: [] };
+  device.types.push(type);
+  store.touch();
+  openEditor({ kind: 'dataType', deviceId: device.id, typeId: type.id });
+}
+
+export async function renameCmd(kind: ObjectKind, deviceId: string, id: string): Promise<void> {
   const d = store.device(deviceId);
   if (!d) return;
   const obj = kind === 'block' ? d.blocks.find((b) => b.id === id)
     : kind === 'tagTable' ? d.tagTables.find((b) => b.id === id)
-      : kind === 'watch' ? d.watchTables.find((b) => b.id === id) : d;
+      : kind === 'watch' ? d.watchTables.find((b) => b.id === id)
+        : kind === 'dataType' ? d.types.find((b) => b.id === id) : d;
   if (!obj) return;
   const name = await promptDialog('Renommer', t.name, obj.name);
   if (!name || name === obj.name) return;
@@ -297,11 +385,12 @@ export async function renameCmd(kind: 'block' | 'tagTable' | 'watch' | 'device',
   store.emit('editors');
 }
 
-export async function deleteCmd(kind: 'block' | 'tagTable' | 'watch' | 'device', deviceId: string, id: string): Promise<void> {
+export async function deleteCmd(kind: ObjectKind, deviceId: string, id: string): Promise<void> {
   const d = store.device(deviceId);
   if (!d || !store.project) return;
   const label = kind === 'block' ? blockLabel(d.blocks.find((b) => b.id === id)!) : kind === 'device' ? d.name
-    : (kind === 'tagTable' ? d.tagTables : d.watchTables).find((x) => x.id === id)?.name;
+    : kind === 'dataType' ? d.types.find((x) => x.id === id)?.name
+      : (kind === 'tagTable' ? d.tagTables : d.watchTables).find((x) => x.id === id)?.name;
   if (!(await confirmDialog('Supprimer', `Voulez-vous vraiment supprimer « ${label} » ?`))) return;
   if (kind === 'block') d.blocks = d.blocks.filter((b) => b.id !== id);
   else if (kind === 'tagTable') {
@@ -311,6 +400,7 @@ export async function deleteCmd(kind: 'block' | 'tagTable' | 'watch' | 'device',
     }
     d.tagTables = d.tagTables.filter((b) => b.id !== id);
   } else if (kind === 'watch') d.watchTables = d.watchTables.filter((b) => b.id !== id);
+  else if (kind === 'dataType') d.types = d.types.filter((b) => b.id !== id);
   else store.project.devices = store.project.devices.filter((x) => x.id !== id);
   store.touch();
   pruneEditors();
@@ -340,12 +430,15 @@ export async function compileCmd(device = currentDevice(), quiet = false): Promi
   store.messages = store.messages.filter((m) => !m.path?.startsWith(device.name));
   for (const d of r.diagnostics) {
     const tagTable = device.tagTables.find((x) => x.id === d.tagTableId);
-    const path = tagTable ? `${device.name} > ${t.plcTags} > ${tagTable.name}` : blockPath(device, d.blockId);
+    const dataType = device.types.find((x) => x.id === d.typeId);
+    const path = tagTable ? `${device.name} > ${t.plcTags} > ${tagTable.name}`
+      : dataType ? `${device.name} > ${t.dataTypes} > ${dataType.name}` : blockPath(device, d.blockId);
     const where = d.location === 'interface' ? ' (interface)' : d.codeLine ? ` (ligne ${d.codeLine})` : '';
     store.messages.push({
       severity: d.severity, text: `${d.message}${where}`, path, time: new Date().toLocaleTimeString(),
       goto: d.blockId ? { kind: 'block', deviceId: device.id, blockId: d.blockId, line: d.codeLine }
-        : tagTable ? { kind: 'tagTable', deviceId: device.id, tableId: tagTable.id } : undefined,
+        : tagTable ? { kind: 'tagTable', deviceId: device.id, tableId: tagTable.id }
+          : dataType ? { kind: 'dataType', deviceId: device.id, typeId: dataType.id } : undefined,
     });
   }
   store.messages.push({

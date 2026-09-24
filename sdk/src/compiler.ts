@@ -1,4 +1,4 @@
-import type { Address, CallArg, DataBlock, Expr, Pou, Program, Stmt, TypeRef, VarDecl } from './ast.ts';
+import type { Address, CallArg, DataBlock, Expr, Pou, Program, Stmt, TypeRef, UserType, VarDecl } from './ast.ts';
 import { ByteWriter, MemoryImage } from './bytes.ts';
 import { CompileError, toDiagnostic, type Diagnostic } from './diagnostics.ts';
 import { Area, LIBRARY_BLOCKS, MathFn, Op, OPERANDS, StdFn, SysFn, Trap, VmType } from './isa.ts';
@@ -118,7 +118,12 @@ export function compileSource(text: string, file = 'main.scl', options: Omit<Com
 
 class Compiler {
   private readonly diagnostics: Diagnostic[] = [];
-  private program: Program = { vars: [], pous: [], dataBlocks: [] };
+  private program: Program = { vars: [], pous: [], dataBlocks: [], types: [] };
+  private readonly userTypes = new Map<string, UserType>();
+  private readonly structLayouts = new Map<string, Layout>();
+  /** Fields of each struct layout (for start values) */
+  private readonly structFields = new Map<string, { fields: VarDecl[]; file?: string }>();
+  private readonly anonStructs = new WeakMap<TypeRef, string>();
   private readonly globals = new Map<string, Sym>();
   private readonly pous = new Map<string, Pou>();
   private readonly dataBlocks = new Map<string, DataBlock>();
@@ -179,6 +184,7 @@ class Compiler {
         this.program.vars.push(...p.vars);
         this.program.pous.push(...p.pous);
         this.program.dataBlocks.push(...p.dataBlocks);
+        this.program.types.push(...p.types);
       } catch (e) {
         this.diagnostics.push(toDiagnostic(e));
       }
@@ -192,10 +198,18 @@ class Compiler {
   }
 
   private declareBlocks(): void {
+    for (const ut of this.program.types) {
+      const key = ut.name.toUpperCase();
+      this.file = ut.file;
+      if (this.userTypes.has(key)) throw this.err(`Duplicate data type '${ut.name}'`, ut.line);
+      if (RESERVED_TYPES.has(key) || isElementary(key)) throw this.err(`Data type '${ut.name}' has the name of a built-in type`, ut.line);
+      this.userTypes.set(key, ut);
+      this.structFields.set(key, { fields: ut.fields, file: ut.file });
+    }
     for (const pou of this.program.pous) {
       const key = pou.name.toUpperCase();
       this.file = pou.file;
-      if (this.pous.has(key)) throw this.err(`Duplicate block '${pou.name}'`, pou.line);
+      if (this.pous.has(key) || this.userTypes.has(key)) throw this.err(`Duplicate block '${pou.name}'`, pou.line);
       if (RESERVED_TYPES.has(key) || key in STD_PARAMS || conversion(key) !== null) {
         throw this.err(`Block '${pou.name}' has the name of a built-in instruction`, pou.line);
       }
@@ -204,7 +218,7 @@ class Compiler {
     for (const db of this.program.dataBlocks) {
       const key = db.name.toUpperCase();
       this.file = db.file;
-      if (this.pous.has(key) || this.dataBlocks.has(key)) throw this.err(`Duplicate block '${db.name}'`, db.line);
+      if (this.pous.has(key) || this.dataBlocks.has(key) || this.userTypes.has(key)) throw this.err(`Duplicate block '${db.name}'`, db.line);
       this.dataBlocks.set(key, db);
     }
   }
@@ -253,6 +267,17 @@ class Compiler {
     }
     if (t.name === 'STRING') return { k: 'string', length: t.length ?? 32 };
     if (isElementary(t.name)) return T.elem(t.name);
+    if (t.name === 'STRUCT' && t.fields) {
+      let key = this.anonStructs.get(t);
+      if (!key) {
+        key = `#STRUCT${this.structFields.size}`;
+        this.anonStructs.set(t, key);
+        this.structFields.set(key, { fields: t.fields, file: this.file });
+      }
+      return { k: 'struct', name: '', key };
+    }
+    const ut = this.userTypes.get(t.name.toUpperCase());
+    if (ut) return { k: 'struct', name: ut.name, key: ut.name.toUpperCase() };
     const lib = libraryBlock(t.name);
     if (lib) return { k: 'fb', name: lib.key, library: true };
     const pou = this.pous.get(t.name.toUpperCase());
@@ -277,6 +302,8 @@ class Compiler {
         return this.fbLayout(t).size;
       case 'db':
         return this.dbLayouts.get(t.name.toUpperCase())?.size ?? 0;
+      case 'struct':
+        return this.structLayout(t).size;
       default:
         return 8;
     }
@@ -318,6 +345,35 @@ class Compiler {
     this.layoutInProgress.delete(key);
     const layout = { size: offset, members };
     this.fbLayouts.set(key, layout);
+    return layout;
+  }
+
+  private structLayout(t: { name: string; key: string }): Layout {
+    const cached = this.structLayouts.get(t.key);
+    if (cached) return cached;
+    const guard = `TYPE:${t.key}`;
+    if (this.layoutInProgress.has(guard)) throw this.err(`Data type '${t.name}' contains itself`, 0);
+    this.layoutInProgress.add(guard);
+    const { fields, file } = this.structFields.get(t.key)!;
+    const saved = this.file;
+    this.file = file;
+    const members = new Map<string, Member>();
+    let offset = 0;
+    try {
+      for (const v of fields) {
+        const k = v.name.toUpperCase();
+        if (members.has(k)) throw this.err(`Duplicate declaration of '${v.name}' in ${t.name ? `'${t.name}'` : 'Struct'}`, v.line);
+        const type = this.resolveType(v.type);
+        if (type.k === 'fb' || type.k === 'db') throw this.err(`'${v.name}': a data type cannot contain a function block instance`, v.line);
+        members.set(k, { name: v.name, type, offset, section: 'static' });
+        offset += this.sizeOf(type);
+      }
+    } finally {
+      this.file = saved;
+      this.layoutInProgress.delete(guard);
+    }
+    const layout = { size: offset, members };
+    this.structLayouts.set(t.key, layout);
     return layout;
   }
 
@@ -558,6 +614,21 @@ class Compiler {
         for (const m of layout.members.values()) this.initValue(offset + m.offset, m.type);
         break;
       }
+      case 'struct': {
+        const layout = this.structLayout(t);
+        const { fields, file } = this.structFields.get(t.key)!;
+        for (const f of fields) {
+          const m = layout.members.get(f.name.toUpperCase())!;
+          this.initValue(offset + m.offset, m.type);
+          if (f.initial) {
+            const saved = this.file;
+            this.file = file;
+            this.initConst(offset + m.offset, m.type, f.initial);
+            this.file = saved;
+          }
+        }
+        break;
+      }
       default:
     }
   }
@@ -660,9 +731,9 @@ class Compiler {
         node.children = [];
         for (let i = t.low; i <= t.high; i++) node.children.push(this.symbolFor(`[${i}]`, t.elem, area, offset + (i - t.low) * size));
       }
-    } else if (t.k === 'fb' || t.k === 'db') {
+    } else if (t.k === 'fb' || t.k === 'db' || t.k === 'struct') {
       node.kind = 'struct';
-      const layout = t.k === 'fb' ? this.fbLayout(t) : this.dbLayouts.get(t.name.toUpperCase())!;
+      const layout = t.k === 'fb' ? this.fbLayout(t) : t.k === 'struct' ? this.structLayout(t) : this.dbLayouts.get(t.name.toUpperCase())!;
       node.children = [...layout.members.values()]
         .filter((m) => m.section !== 'inout')
         .map((m) => this.symbolFor(m.name, m.type, area, offset + m.offset));
@@ -687,12 +758,14 @@ class Compiler {
         this.stringHeaders(sym.type, sym.offset);
       }
     }
-    // Prologue: start values of temporaries / outputs
+    // Prologue: start values of temporaries / outputs (and of the fields of their data types)
     for (const v of info.pou.vars) {
-      if (!v.initial || v.section === 'constant') continue;
+      if (v.section === 'constant') continue;
       if (info.pou.kind === 'FUNCTION_BLOCK' && v.section !== 'temp') continue;
       if (info.pou.kind === 'FUNCTION' && (v.section === 'input' || v.section === 'inout')) continue;
-      this.collect(() => this.assign({ kind: 'var', name: v.name, scope: 'local', line: v.line }, v.initial!, v.line));
+      const target: Expr = { kind: 'var', name: v.name, scope: 'local', line: v.line };
+      if (v.initial) this.collect(() => this.assign(target, v.initial!, v.line));
+      else this.collect(() => this.structStartValues(target, this.resolveType(v.type), v.line));
     }
 
     this.statements(info.pou.body);
@@ -700,13 +773,30 @@ class Compiler {
     this.fn = null;
   }
 
+  /** Code that applies the start values declared in a data type to a zeroed variable. */
+  private structStartValues(target: Expr, t: DataType, line: number): void {
+    if (t.k === 'array' && (t.elem.k === 'struct' || t.elem.k === 'array') && t.high - t.low < 1024) {
+      for (let i = t.low; i <= t.high; i++) {
+        this.structStartValues({ kind: 'index', base: target, index: { kind: 'int', value: i, line }, line }, t.elem, line);
+      }
+    } else if (t.k === 'struct') {
+      for (const f of this.structFields.get(t.key)!.fields) {
+        const member: Expr = { kind: 'member', base: target, member: f.name, line };
+        if (f.initial) this.assign(member, f.initial, line);
+        else this.structStartValues(member, this.resolveType(f.type), line);
+      }
+    }
+  }
+
   private stringHeaders(t: DataType, offset: number): void {
     if (t.k === 'string') {
       this.pushInt(t.length);
       this.emit(Op.STORE, VmType.U8, Area.D, offset);
-    } else if (t.k === 'array' && (t.elem.k === 'string' || t.elem.k === 'array')) {
+    } else if (t.k === 'array' && (t.elem.k === 'string' || t.elem.k === 'array' || t.elem.k === 'struct')) {
       const size = this.sizeOf(t.elem);
       for (let i = 0; i <= t.high - t.low; i++) this.stringHeaders(t.elem, offset + i * size);
+    } else if (t.k === 'struct') {
+      for (const m of this.structLayout(t).members.values()) this.stringHeaders(m.type, offset + m.offset);
     }
   }
 
@@ -919,7 +1009,7 @@ class Compiler {
       this.emit(Op.CALL_STD, StdFn.SASSIGN, 2);
       return;
     }
-    if (t.k === 'array') {
+    if (t.k === 'array' || t.k === 'struct') {
       const vt = this.typeOf(value);
       if (!sameType(vt, t)) throw this.err(`Cannot assign ${typeName(vt)} to ${typeName(t)}`, line);
       this.pushAddress(place);
@@ -1003,6 +1093,7 @@ class Compiler {
     let layout: Layout | undefined;
     if (t.k === 'fb') layout = this.fbLayout(t);
     else if (t.k === 'db') layout = this.dbLayouts.get(t.name.toUpperCase());
+    else if (t.k === 'struct') layout = this.structLayout(t);
     if (!layout) throw this.err(`${typeName(t)} has no members`, line);
     const m = layout.members.get(member.toUpperCase());
     if (!m) throw this.err(`${t.k === 'fb' && t.library ? `'${t.name}'` : typeName(t)} has no member '${member}'`, line);
@@ -1637,7 +1728,7 @@ class Compiler {
           this.emit(Op.SWAP);
           this.emit(Op.CALL_STD, StdFn.SASSIGN, 2);
         });
-      } else if (sym.type.k === 'array') {
+      } else if (sym.type.k === 'array' || sym.type.k === 'struct') {
         const at = this.typeOf(a.value);
         if (!sameType(at, sym.type)) throw this.err(`Parameter '${p.name}' expects ${typeName(sym.type)}, got ${typeName(at)}`, e.line);
         this.pushAddress(this.place(a.value));
@@ -1677,6 +1768,14 @@ class Compiler {
       this.pushAddress(dest);
       this.pushAddress(source);
       this.emit(Op.CALL_STD, StdFn.SASSIGN, 2);
+      return;
+    }
+    if (dest.type.k === 'array' || dest.type.k === 'struct') {
+      if (!sameType(dest.type, source.type)) throw this.err(`Cannot assign ${typeName(source.type)} to ${typeName(dest.type)}`, line);
+      if (source.k !== 'static') throw this.err(`Cannot copy ${typeName(source.type)} from this output`, line);
+      this.pushAddress(dest);
+      this.pushAddress(source);
+      this.emit(Op.COPY, this.sizeOf(dest.type));
       return;
     }
     this.loadPlace(source);
@@ -1757,6 +1856,15 @@ class Compiler {
             this.emit(Op.SWAP);
             this.emit(Op.STORE_IND, VmType.PTR);
           }
+        });
+      } else if (m.type.k === 'array' || m.type.k === 'struct') {
+        const at = this.typeOf(a.value);
+        if (!sameType(at, m.type)) throw this.err(`Parameter '${m.name}' expects ${typeName(m.type)}, got ${typeName(at)}`, e.line);
+        this.pushAddress(this.place(a.value));
+        stores.push(() => {
+          this.pushAddress(memberPlace(m));
+          this.emit(Op.SWAP);
+          this.emit(Op.COPY, this.sizeOf(m.type));
         });
       } else if (isString(m.type)) {
         this.stringValue(a.value);

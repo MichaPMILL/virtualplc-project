@@ -7,7 +7,7 @@ import { t } from '../i18n.ts';
 import { store, type EditorRef } from '../store.ts';
 import { contextMenu, type MenuEntry } from './chrome.ts';
 
-const expanded = new Set<string>(['project', 'dev:*', 'blocks:*', 'tags:*', 'watch:*']);
+const expanded = new Set<string>(['project', 'dev:*', 'blocks:*', 'tags:*', 'watch:*', 'types:*']);
 const isExpanded = (key: string) => expanded.has(key) || expanded.has(key.replace(/:.*/, ':*')) && !expanded.has(`!${key}`);
 function toggle(key: string) {
   if (isExpanded(key)) {
@@ -81,12 +81,12 @@ function deviceNodes(d: Device): NodeSpec[] {
     { key: `techno:${d.id}`, label: t.technologyObjects, icon: 'folder', depth: 2, children: () => [] },
     {
       key: `sources:${d.id}`, label: t.externalSources, icon: 'folder', depth: 2,
-      menu: [{ label: 'Ajouter nouvelle source externe...', icon: 'source', run: () => void A.importSourceCmd() }],
-      children: () => [{ key: `addsrc:${d.id}`, label: 'Ajouter nouvelle source externe', icon: 'add', depth: 3, className: 'add', onActivate: () => void A.importSourceCmd() }],
+      menu: [{ label: t.importFiles, icon: 'source', run: () => void A.importSourceCmd(d) }],
+      children: () => [{ key: `addsrc:${d.id}`, label: 'Ajouter nouvelle source externe', icon: 'add', depth: 3, className: 'add', onActivate: () => void A.importSourceCmd(d) }],
     },
     {
       key: `tags:${d.id}`, label: t.plcTags, icon: 'folder', depth: 2, select: { kind: 'tags', deviceId: d.id },
-      menu: [{ label: t.addTagTable, icon: 'tagTable', run: () => void A.addTagTableCmd(d) }],
+      menu: [{ label: t.addTagTable, icon: 'tagTable', run: () => void A.addTagTableCmd(d) }, { label: 'Importer une table de variables (.xlsx)...', icon: 'source', run: () => void A.importSourceCmd(d) }],
       children: () => [
         { key: `alltags:${d.id}`, label: t.showAllTags, icon: 'tags', depth: 3, open: { kind: 'allTags', deviceId: d.id } },
         { key: `addtt:${d.id}`, label: t.addTagTable, icon: 'add', depth: 3, className: 'add', onActivate: () => void A.addTagTableCmd(d) },
@@ -101,7 +101,23 @@ function deviceNodes(d: Device): NodeSpec[] {
         })),
       ],
     },
-    { key: `types:${d.id}`, label: t.dataTypes, icon: 'folder', depth: 2, children: () => [] },
+    {
+      key: `types:${d.id}`, label: t.dataTypes, icon: 'folder', depth: 2,
+      menu: [{ label: 'Ajouter nouveau type de données', icon: 'dataType', run: () => void A.addDataTypeCmd(d) }, { label: t.importFiles, icon: 'source', run: () => void A.importSourceCmd(d) }],
+      children: () => [
+        { key: `addudt:${d.id}`, label: 'Ajouter nouveau type de données', icon: 'add', depth: 3, className: 'add', onActivate: () => void A.addDataTypeCmd(d) },
+        ...[...d.types].sort((a, b) => a.name.localeCompare(b.name)).map((ut): NodeSpec => ({
+          key: `udt:${ut.id}`, label: ut.name, icon: 'dataType', depth: 3,
+          open: { kind: 'dataType', deviceId: d.id, typeId: ut.id }, select: { kind: 'dataType', id: ut.id, deviceId: d.id },
+          className: store.compile.get(d.id)?.diagnostics.some((x) => x.typeId === ut.id && x.severity === 'error') ? 'error' : undefined,
+          menu: [
+            { label: 'Ouvrir', run: () => A.openEditor({ kind: 'dataType', deviceId: d.id, typeId: ut.id }) },
+            { label: 'Renommer', run: () => void A.renameCmd('dataType', d.id, ut.id) },
+            { label: t.delete, icon: 'del', run: () => void A.deleteCmd('dataType', d.id, ut.id) },
+          ],
+        })),
+      ],
+    },
     {
       key: `watch:${d.id}`, label: t.watchTables, icon: 'folder', depth: 2,
       menu: [{ label: t.addWatchTable, icon: 'watch', run: () => void A.addWatchTableCmd(d) }],

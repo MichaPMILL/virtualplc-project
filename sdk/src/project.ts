@@ -16,6 +16,16 @@ export interface Member {
   dataType: string;
   defaultValue?: string;
   comment?: string;
+  /** Members of an anonymous structure (dataType 'Struct') */
+  members?: Member[];
+}
+
+/** PLC data type (UDT) */
+export interface DataTypeDef {
+  id: string;
+  name: string;
+  comment?: string;
+  members: Member[];
 }
 
 export interface BlockInterface {
@@ -93,6 +103,8 @@ export interface Device {
   tagTables: TagTable[];
   blocks: Block[];
   watchTables: WatchTable[];
+  /** PLC data types (UDT) */
+  types: DataTypeDef[];
 }
 
 export interface Project {
@@ -138,6 +150,7 @@ export function newDevice(type: DeviceType, name = 'PLC_1'): Device {
       },
     ],
     watchTables: [{ id: newId('wt'), name: 'Table de visualisation_1', rows: [] }],
+    types: [],
   };
 }
 
@@ -167,6 +180,7 @@ export function loadProject(json: string): Project {
     d.tagTables ??= [];
     d.blocks ??= [];
     d.watchTables ??= [];
+    d.types ??= [];
     d.cpu ??= { cycleMs: 10 };
     d.connection ??= { host: '192.168.0.10', port: 20105 };
     for (const b of d.blocks) b.interface = { ...emptyInterface(), ...(b.interface ?? {}) };
@@ -197,15 +211,18 @@ export function nextBlockNumber(device: Device, type: BlockType): number {
 
 const q = (name: string) => `"${name}"`;
 
-function memberLine(m: Member): string {
-  const init = m.defaultValue !== undefined && m.defaultValue.trim() !== '' ? ` := ${m.defaultValue.trim()}` : '';
+function memberLines(m: Member, indent = '      '): string[] {
   const comment = m.comment ? `   // ${m.comment.replace(/[\r\n]+/g, ' ')}` : '';
-  return `      ${m.name} : ${m.dataType}${init};${comment}`;
+  if (/^struct$/i.test(m.dataType.trim())) {
+    return [`${indent}${m.name} : Struct${comment}`, ...(m.members ?? []).flatMap((c) => memberLines(c, `${indent}   `)), `${indent}END_STRUCT;`];
+  }
+  const init = m.defaultValue !== undefined && m.defaultValue.trim() !== '' ? ` := ${m.defaultValue.trim()}` : '';
+  return [`${indent}${m.name} : ${m.dataType}${init};${comment}`];
 }
 
 function section(keyword: string, members: Member[]): string[] {
   if (members.length === 0) return [];
-  return [`   ${keyword}`, ...members.map(memberLine), '   END_VAR'];
+  return [`   ${keyword}`, ...members.flatMap((m) => memberLines(m)), '   END_VAR'];
 }
 
 export interface GeneratedSource {
@@ -214,6 +231,7 @@ export interface GeneratedSource {
   /** Block the source belongs to (null for tag tables) */
   blockId: string | null;
   tagTableId: string | null;
+  typeId?: string;
   /** Line of the source where the user code starts (1-based) */
   codeLine: number;
 }
@@ -258,6 +276,12 @@ export function blockSource(b: Block): GeneratedSource {
   return { file: b.name, text: lines.join('\n') + '\n', blockId: b.id, tagTableId: null, codeLine };
 }
 
+/** Generates the SCL external source of a PLC data type (.udt). */
+export function dataTypeSource(t: DataTypeDef): GeneratedSource {
+  const lines = [`TYPE ${q(t.name)}`, 'VERSION : 0.1', '   STRUCT', ...t.members.flatMap((m) => memberLines(m)), '   END_STRUCT;', '', 'END_TYPE'];
+  return { file: t.name, text: lines.join('\n') + '\n', blockId: null, tagTableId: null, typeId: t.id, codeLine: 0 };
+}
+
 export function tagTableSource(t: TagTable): GeneratedSource {
   const lines: string[] = [];
   if (t.tags.length) {
@@ -279,10 +303,11 @@ export function tagTableSource(t: TagTable): GeneratedSource {
 export interface ProjectDiagnostic extends Diagnostic {
   blockId?: string;
   tagTableId?: string;
+  typeId?: string;
   /** Line in the block's code editor (1-based), when the error is in the code */
   codeLine?: number;
   /** "Interface" when the error is in the block interface / declarations */
-  location?: 'code' | 'interface' | 'tags';
+  location?: 'code' | 'interface' | 'tags' | 'type';
 }
 
 export interface ProjectCompileResult extends Omit<CompileResult, 'diagnostics'> {
@@ -301,6 +326,16 @@ function checkDevice(device: Device): ProjectDiagnostic[] {
       if (tag.address.trim() && !parseAddress(tag.address)) out.push({ severity: 'error', message: `Invalid address '${tag.address}' of tag "${tag.name}" (e.g. %I0.0, %QW2, %MD10)`, tagTableId: t.id, location: 'tags', file: t.name });
     }
   }
+  const checkMembers = (members: Member[], where: string, extra: Partial<ProjectDiagnostic>) => {
+    for (const m of members) {
+      if (!nameRe.test(m.name)) out.push({ severity: 'error', message: `Invalid name '${m.name}' in ${where} (letters, digits and _)`, ...extra });
+      if (m.members) checkMembers(m.members, where, extra);
+    }
+  };
+  for (const t of device.types ?? []) {
+    if (!quotedRe.test(t.name)) out.push({ severity: 'error', message: `Invalid data type name "${t.name}"`, typeId: t.id, location: 'type', file: t.name });
+    checkMembers(t.members, `"${t.name}"`, { typeId: t.id, location: 'type', file: t.name });
+  }
   for (const b of device.blocks) {
     if (!quotedRe.test(b.name)) out.push({ severity: 'error', message: `Invalid block name "${b.name}"`, blockId: b.id, file: b.name });
     for (const [kind, members] of Object.entries(b.interface)) {
@@ -313,7 +348,7 @@ function checkDevice(device: Device): ProjectDiagnostic[] {
 }
 
 export function compileDevice(project: Project, device: Device): ProjectCompileResult {
-  const sources = [...device.tagTables.map(tagTableSource), ...device.blocks.map(blockSource)];
+  const sources = [...(device.types ?? []).map(dataTypeSource), ...device.tagTables.map(tagTableSource), ...device.blocks.map(blockSource)];
   const pre = checkDevice(device);
   const main = device.blocks.find((b) => b.type === 'OB' && (b.event ?? 'ProgramCycle') === 'ProgramCycle');
   const startup = device.blocks.find((b) => b.type === 'OB' && b.event === 'Startup');
@@ -342,6 +377,9 @@ export function compileDevice(project: Project, device: Device): ProjectCompileR
     } else if (src?.tagTableId) {
       pd.tagTableId = src.tagTableId;
       pd.location = 'tags';
+    } else if (src?.typeId) {
+      pd.typeId = src.typeId;
+      pd.location = 'type';
     }
     return pd;
   })];
@@ -353,6 +391,7 @@ export function compileDevice(project: Project, device: Device): ProjectCompileR
 // ---------------------------------------------------------------------------
 
 function typeText(t: TypeRef): string {
+  if (t.name === 'STRUCT') return 'Struct';
   if (t.name === 'ARRAY') return `Array[${t.low}..${t.high}] of ${typeText(t.element!)}`;
   if (t.name === 'STRING') return t.length && t.length !== 32 ? `String[${t.length}]` : 'String';
   return /^[A-Z_]+$/.test(t.name) && ['BOOL', 'BYTE', 'WORD', 'DWORD', 'SINT', 'USINT', 'INT', 'UINT', 'DINT', 'UDINT', 'LINT', 'REAL', 'LREAL', 'TIME'].includes(t.name)
@@ -374,8 +413,14 @@ function exprText(e: Expr | null): string | undefined {
   }
 }
 
-/** Creates blocks and tags from an SCL external source (.scl). */
-export function importExternalSource(device: Device, text: string, file = 'source.scl'): { blocks: Block[]; tags: Tag[] } {
+function toMember(v: { name: string; type: TypeRef; initial: Expr | null }): Member {
+  const m: Member = { name: v.name, dataType: typeText(v.type), defaultValue: exprText(v.initial) };
+  if (v.type.name === 'STRUCT') m.members = (v.type.fields ?? []).map(toMember);
+  return m;
+}
+
+/** Creates blocks, PLC data types and tags from an SCL external source (.scl, .db, .udt). */
+export function importExternalSource(device: Device, text: string, file = 'source.scl'): { blocks: Block[]; tags: Tag[]; types: DataTypeDef[] } {
   const program = parse(text, file);
   const blocks: Block[] = [];
   const bodyOf = (kind: string, name: string): string => {
@@ -388,7 +433,7 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
     return lines.map((l) => l.slice(Number.isFinite(indent) ? indent : 0)).join('\n');
   };
   const members = (vars: Array<{ name: string; type: TypeRef; initial: Expr | null; section: string }>, section: string): Member[] =>
-    vars.filter((v) => v.section === section).map((v) => ({ name: v.name, dataType: typeText(v.type), defaultValue: exprText(v.initial) }));
+    vars.filter((v) => v.section === section).map(toMember);
 
   for (const pou of program.pous) {
     const type: BlockType = pou.kind === 'ORGANIZATION_BLOCK' ? 'OB' : pou.kind === 'FUNCTION' ? 'FC' : 'FB';
@@ -416,7 +461,7 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
     blocks.push({
       id: newId('blk'), name: db.name, type: 'DB', number: 0, interface: emptyInterface(), code: '',
       instanceOf: db.instanceOf ?? undefined,
-      members: db.instanceOf ? undefined : db.fields.map((f) => ({ name: f.name, dataType: typeText(f.type), defaultValue: exprText(f.initial) })),
+      members: db.instanceOf ? undefined : db.fields.map(toMember),
     });
   }
   const tags: Tag[] = program.vars.filter((v) => v.section === 'global').map((v) => ({
@@ -431,7 +476,8 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
     b.number = preferred && free(b.type, preferred) ? preferred : nextBlockNumber({ ...device, blocks: numbered }, b.type);
     numbered.push(b);
   }
-  return { blocks, tags };
+  const types: DataTypeDef[] = program.types.map((ut) => ({ id: newId('udt'), name: ut.name, members: ut.fields.map(toMember) }));
+  return { blocks, tags, types };
 }
 
 // ---------------------------------------------------------------------------
