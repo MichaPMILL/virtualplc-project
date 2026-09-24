@@ -12,6 +12,8 @@ export type EditorRef =
   | { kind: 'block'; deviceId: string; blockId: string }
   | { kind: 'watch'; deviceId: string; tableId: string }
   | { kind: 'dataType'; deviceId: string; typeId: string }
+  | { kind: 'method'; deviceId: string; blockId: string; methodId: string }
+  | { kind: 'interface'; deviceId: string; interfaceId: string }
   | { kind: 'history' }
   | { kind: 'branches' };
 

@@ -417,3 +417,8 @@ tr.vc-current td { font-weight: 600; }
 .lad-pin.right .lad-val { right: auto; left: 4px; }
 .lad-add { margin: 10px; padding: 6px; border: 1px dashed var(--border); color: var(--muted); text-align: center; cursor: pointer; }
 .lad-add:hover { background: var(--hover); }
+
+/* Interface editor: list of method prototypes */
+.ifc-method { display: flex; align-items: center; gap: 4px; padding: 3px 8px; cursor: default; white-space: nowrap; }
+.ifc-method:hover { background: var(--hover); }
+.ifc-method.selected { background: var(--select); }

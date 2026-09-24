@@ -130,6 +130,44 @@ and the block interface; errors point to the network and the element. With *Visu
 on, the power flow is drawn in green and box parameters show their values. Networks are
 translated to SCL by the compiler (`sdk/src/ladder.ts`); *CONT→SCL* converts a block for good.
 
+### Object-oriented programming (IEC 61131-3 edition 3)
+
+Function blocks can have **methods** (*Ajouter une méthode* on an FB, or `METHOD … END_METHOD`
+in SCL, between the declarations and `BEGIN`), **inherit** from another FB (`EXTENDS`) and
+implement **interfaces** (folder *Interfaces* of the project tree, `INTERFACE … END_INTERFACE`).
+
+```
+INTERFACE "ICylinder"
+  METHOD Extend END_METHOD
+  METHOD IsExtended : Bool END_METHOD
+END_INTERFACE
+
+FUNCTION_BLOCK "Cylinder" IMPLEMENTS "ICylinder"
+  VAR_OUTPUT valve : Bool; END_VAR
+  VAR_INPUT sensorOut : Bool; END_VAR
+  METHOD Extend  valve := TRUE;  END_METHOD
+  METHOD IsExtended : Bool  IsExtended := sensorOut;  END_METHOD
+END_FUNCTION_BLOCK
+
+VAR_GLOBAL cyl : "Cylinder"; ref : "ICylinder"; END_VAR
+ref := cyl;            // any instance that implements the interface
+ref.Extend();          // runs the method of the block of the instance
+```
+
+- `THIS.x`, `THIS.Method()` and plain `Method()` inside a method or the FB body; `SUPER.Method()`
+  calls the method of the base block, `SUPER()` its body.
+- Methods overridden in derived blocks are **virtual**: a call through `THIS`, an interface
+  reference or an in-out parameter of the base type runs the implementation of the actual
+  instance. An in-out parameter of FB type also accepts instances of derived blocks.
+- `ABSTRACT` / `FINAL` blocks and methods, `OVERRIDE`, access specifiers `PUBLIC`,
+  `PROTECTED`, `PRIVATE`, `INTERNAL`, interfaces extending interfaces, `NULL` references
+  (`ref = NULL`; calling a method through a NULL reference puts the CPU in FAULT), and
+  `CLASS … END_CLASS` (a function block without body).
+- No recursion, as for blocks: a method may not call itself, even through a virtual call.
+- The bytecode is unchanged (dispatch is compiled into small dispatcher functions), so OOP
+  programs run on every CPU, including the microcontroller firmware. In the project folder,
+  the code of a method is stored in `blocks/<FB>.methods/<Method>.scl`.
+
 ### Data types
 
 Elementary types of the usual engineering tools: `Bool`, `Byte`, `Word`, `DWord`, `LWord`,

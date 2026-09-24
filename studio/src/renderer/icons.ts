@@ -65,6 +65,8 @@ export const icons = {
   tag: s('<path d="M1.5 2.5v5l7 7 6-6-7-7h-5z" fill="#fbe7a6" stroke="#b8932e"/><circle cx="5" cy="5.5" r="1.3" fill="#b8932e"/>'),
   branch: s('<circle cx="4" cy="3.5" r="1.8" fill="#fff" stroke="#e05d2b" stroke-width="1.3"/><circle cx="4" cy="12.5" r="1.8" fill="#fff" stroke="#e05d2b" stroke-width="1.3"/><circle cx="12" cy="6" r="1.8" fill="#fff" stroke="#e05d2b" stroke-width="1.3"/><path d="M4 5.3v5.4M12 7.8c0 3-8 1.5-8 2.9" fill="none" stroke="#e05d2b" stroke-width="1.3"/>'),
   refresh: s('<path d="M13 8a5 5 0 11-1.5-3.6" fill="none" stroke="#1a73c9" stroke-width="1.6"/><path d="M12.5 1.5v3.5H9" fill="none" stroke="#1a73c9" stroke-width="1.6"/>'),
+  method: s('<rect x="2.5" y="3.5" width="11" height="9" rx="1" fill="#e6f4ea" stroke="#2e7d4f"/><path d="M5 10V6l1.5 2L8 6v4M10 6.2v3.8" fill="none" stroke="#2e7d4f" stroke-width="1.1"/>'),
+  iface: s('<circle cx="5" cy="8" r="3" fill="#fff" stroke="#6a4fa3" stroke-width="1.4"/><path d="M8 8h6.5" stroke="#6a4fa3" stroke-width="1.4"/>'),
   menuArrow: s('<path d="M6 4l4 4-4 4" fill="none" stroke="#4a5563"/>'),
 };
 

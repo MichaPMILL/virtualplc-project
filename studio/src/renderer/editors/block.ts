@@ -11,6 +11,7 @@ import { alertDialog, button, confirmDialog, openDialog } from '../ui/dialogs.ts
 import { LadderEditor } from './ladder.ts';
 import { operandsOf, SclEditor, type CompletionSource } from './sclEditor.ts';
 import type { EditorView } from './types.ts';
+import { inheritanceDialog } from './method.ts';
 
 type SectionKey = 'input' | 'output' | 'inout' | 'static' | 'temp' | 'constant';
 type Row = Member & { _section?: SectionKey };
@@ -148,6 +149,11 @@ export function blockEditor(device: Device, block: Block): EditorView {
         h('button', { className: 'tbtn', title: 'Commenter la sélection', onclick: () => toggleComment() }, '//'),
         h('button', { className: 'tbtn', title: 'Insérer une REGION', onclick: () => editor?.insert('REGION Nouvelle région\n    \nEND_REGION\n') }, '{ }'),
       ]),
+      ...(block.type === 'FB' ? [
+        h('span', { className: 'sep' }),
+        h('button', { className: 'tbtn', title: 'Ajouter une méthode (programmation orientée objet)', onclick: () => void A.addMethodCmd(device, block) }, svg(icons.method), ' Méthode'),
+        h('button', { className: 'tbtn', title: 'EXTENDS / IMPLEMENTS / ABSTRACT / FINAL', onclick: () => inheritanceDialog(device, block) }, svg(icons.iface), ' Héritage'),
+      ] : []),
       h('span', { className: 'sep' }),
       h('button', { className: 'tbtn', title: t.monitorAll, onclick: () => void A.toggleMonitorCmd() }, svg(icons.glasses)),
       h('span', { style: 'display:flex;align-items:center;gap:4px;margin-left:8px' }, h('span', { className: 'muted' }, 'Instance :'), instanceSel)),

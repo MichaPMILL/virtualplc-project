@@ -11,6 +11,7 @@ import { tagTableEditor } from '../editors/tagTable.ts';
 import type { EditorView } from '../editors/types.ts';
 import { watchTableEditor } from '../editors/watchTable.ts';
 import { dataTypeEditor } from '../editors/dataType.ts';
+import { interfaceEditor, methodEditor } from '../editors/method.ts';
 import * as V from '../versioning.ts';
 import { historyEditor } from '../versioning.ts';
 import { branchesEditor } from '../branches.ts';
@@ -77,6 +78,15 @@ function createView(ref: EditorRef): EditorView | null {
     case 'dataType': {
       const dt = device.types.find((x) => x.id === ref.typeId);
       return dt ? dataTypeEditor(device, dt) : null;
+    }
+    case 'method': {
+      const b = device.blocks.find((x) => x.id === ref.blockId);
+      const m = b?.methods?.find((x) => x.id === ref.methodId);
+      return b && m ? methodEditor(device, b, m) : null;
+    }
+    case 'interface': {
+      const i = device.interfaces?.find((x) => x.id === ref.interfaceId);
+      return i ? interfaceEditor(device, i) : null;
     }
   }
 }
@@ -228,6 +238,11 @@ function labelOf(ref: EditorRef): string {
     case 'tagTable': return d?.tagTables.find((x) => x.id === ref.tableId)?.name ?? '?';
     case 'watch': return d?.watchTables.find((x) => x.id === ref.tableId)?.name ?? '?';
     case 'dataType': return d?.types.find((x) => x.id === ref.typeId)?.name ?? '?';
+    case 'method': {
+      const b = d?.blocks.find((x) => x.id === ref.blockId);
+      return `${b?.name ?? '?'}.${b?.methods?.find((x) => x.id === ref.methodId)?.name ?? '?'}`;
+    }
+    case 'interface': return d?.interfaces?.find((x) => x.id === ref.interfaceId)?.name ?? '?';
     case 'device': return d?.name ?? '?';
     case 'online': return t.onlineDiag;
     case 'allTags': return t.showAllTags;

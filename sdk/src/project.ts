@@ -5,7 +5,7 @@ import type { IoModuleConfig, ServicesConfig } from './image.ts';
 import { parse, parseAddress } from './parser.ts';
 import { TYPE_DISPLAY, type Elementary } from './types.ts';
 import { formatTemporal, type TemporalType } from './literals.ts';
-import type { TypeRef, Expr } from './ast.ts';
+import type { TypeRef, Expr, Method, TextRange, VarDecl } from './ast.ts';
 import { ladderToScl, LadderError, ladElementFor, type LadNetwork } from './ladder.ts';
 
 export const PROJECT_FORMAT = 'virtualplc-project';
@@ -65,6 +65,40 @@ export interface Block {
   instanceOf?: string;
   /** Global DB: variables */
   members?: Member[];
+  /** FB: object orientation (IEC 61131-3 ed.3) */
+  extends?: string;
+  implements?: string[];
+  abstract?: boolean;
+  final?: boolean;
+  methods?: BlockMethod[];
+}
+
+export type MethodAccess = 'PUBLIC' | 'PRIVATE' | 'PROTECTED' | 'INTERNAL';
+
+/** Method of a function block, or method prototype of an interface */
+export interface BlockMethod {
+  id: string;
+  name: string;
+  /** 'Void' (or empty) = no return value */
+  returnType?: string;
+  access?: MethodAccess;
+  abstract?: boolean;
+  final?: boolean;
+  override?: boolean;
+  comment?: string;
+  /** input / output / inout / temp / constant (static is not used) */
+  interface: BlockInterface;
+  /** SCL statements */
+  code: string;
+}
+
+/** Interface (IEC 61131-3 ed.3): method prototypes implemented by function blocks */
+export interface InterfaceDef {
+  id: string;
+  name: string;
+  comment?: string;
+  extends?: string[];
+  methods: BlockMethod[];
 }
 
 export interface Tag {
@@ -120,6 +154,8 @@ export interface Device {
   watchTables: WatchTable[];
   /** PLC data types (UDT) */
   types: DataTypeDef[];
+  /** Interfaces (object-oriented programming) */
+  interfaces?: InterfaceDef[];
   /** OPC UA server and S7 communication (HMI / SCADA access) */
   services?: ServicesConfig;
 }
@@ -200,9 +236,29 @@ export function loadProject(json: string): Project {
     d.types ??= [];
     d.cpu ??= { cycleMs: 10 };
     d.connection ??= { host: '192.168.0.10', port: 20105 };
-    for (const b of d.blocks) b.interface = { ...emptyInterface(), ...(b.interface ?? {}) };
+    for (const b of d.blocks) normalizeBlock(b);
+    for (const i of d.interfaces ?? []) {
+      i.methods ??= [];
+      for (const m of i.methods) normalizeMethod(m);
+    }
   }
   return p as Project;
+}
+
+export function normalizeMethod(m: BlockMethod): BlockMethod {
+  m.interface = { ...emptyInterface(), ...(m.interface ?? {}) };
+  m.code ??= '';
+  return m;
+}
+
+export function normalizeBlock(b: Block): Block {
+  b.interface = { ...emptyInterface(), ...(b.interface ?? {}) };
+  for (const m of b.methods ?? []) normalizeMethod(m);
+  return b;
+}
+
+export function newMethod(name: string): BlockMethod {
+  return { id: newId('mth'), name, returnType: 'Void', interface: emptyInterface(), code: '' };
 }
 
 export function saveProject(project: Project): string {
@@ -253,6 +309,50 @@ export interface GeneratedSource {
   codeLine: number;
   /** LAD blocks: network / element of each generated code line, translation error */
   ladder?: { lines: Array<{ network: number; element?: string }>; error?: LadderError };
+  /** Interface object the source belongs to */
+  interfaceId?: string;
+  /** Methods: first line of the declaration, of the code, and line after the code */
+  methods?: Array<{ id: string; line: number; codeLine: number; endLine: number }>;
+}
+
+function methodHeader(m: BlockMethod, prototype: boolean): string {
+  const mods = [
+    !prototype && m.access && m.access !== 'PUBLIC' ? m.access : '',
+    !prototype && m.abstract ? 'ABSTRACT' : '', !prototype && m.final ? 'FINAL' : '', !prototype && m.override ? 'OVERRIDE' : '',
+  ].filter(Boolean);
+  const ret = m.returnType && m.returnType.trim() !== '' && m.returnType.trim().toUpperCase() !== 'VOID' ? ` : ${m.returnType.trim()}` : '';
+  return `METHOD ${[...mods, q(m.name)].join(' ')}${ret}`;
+}
+
+/** Declarations and code of methods (appended to `lines`) */
+function methodLines(lines: string[], methods: BlockMethod[], prototype: boolean): NonNullable<GeneratedSource['methods']> {
+  const out: NonNullable<GeneratedSource['methods']> = [];
+  for (const m of methods) {
+    const i = m.interface;
+    const line = lines.length + 1;
+    lines.push(methodHeader(m, prototype));
+    lines.push(...section('VAR_INPUT', i.input), ...section('VAR_OUTPUT', i.output), ...section('VAR_IN_OUT', i.inout));
+    if (!prototype) lines.push(...section('VAR_TEMP', i.temp), ...section('VAR CONSTANT', i.constant));
+    let codeLine = lines.length + 1;
+    if (!prototype && !m.abstract) {
+      lines.push('BEGIN');
+      codeLine = lines.length + 1;
+      lines.push(...m.code.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n'));
+    }
+    const endLine = lines.length + 1;
+    lines.push('END_METHOD');
+    lines.push('');
+    out.push({ id: m.id, line, codeLine, endLine });
+  }
+  return out;
+}
+
+/** Generates the SCL source of an interface. */
+export function interfaceSource(d: InterfaceDef): GeneratedSource {
+  const lines = [`INTERFACE ${q(d.name)}${d.extends?.length ? ` EXTENDS ${d.extends.map(q).join(', ')}` : ''}`];
+  const methods = methodLines(lines, d.methods, true);
+  lines.push('END_INTERFACE');
+  return { file: d.name, text: lines.join('\n') + '\n', blockId: null, tagTableId: null, interfaceId: d.id, codeLine: 0, methods };
 }
 
 /** Generates the SCL external source of a block. */
@@ -296,17 +396,21 @@ export function blockSource(b: Block): GeneratedSource {
       lines.push(...section('VAR_INPUT', i.input), ...section('VAR_OUTPUT', i.output), ...section('VAR_IN_OUT', i.inout),
         ...section('VAR_TEMP', i.temp), ...section('VAR CONSTANT', i.constant));
       break;
-    case 'FB':
-      header('FUNCTION_BLOCK');
+    case 'FB': {
+      const mods = [b.abstract ? 'ABSTRACT ' : '', b.final ? 'FINAL ' : ''].join('');
+      lines.push(`FUNCTION_BLOCK ${mods}${q(b.name)}${b.extends?.trim() ? ` EXTENDS ${q(b.extends.trim())}` : ''}${b.implements?.length ? ` IMPLEMENTS ${b.implements.map(q).join(', ')}` : ''}`);
+      lines.push('VERSION : 0.1');
       lines.push(...section('VAR_INPUT', i.input), ...section('VAR_OUTPUT', i.output), ...section('VAR_IN_OUT', i.inout),
         ...section('VAR', i.static), ...section('VAR_TEMP', i.temp), ...section('VAR CONSTANT', i.constant));
       break;
+    }
   }
+  const methods = b.type === 'FB' && b.methods?.length ? methodLines(lines, b.methods, false) : undefined;
   lines.push('BEGIN');
   const codeLine = lines.length + 1;
   lines.push(code.replace(/\r\n/g, '\n').replace(/\n+$/, ''));
   lines.push(b.type === 'OB' ? 'END_ORGANIZATION_BLOCK' : b.type === 'FC' ? 'END_FUNCTION' : 'END_FUNCTION_BLOCK');
-  return { file: b.name, text: lines.join('\n') + '\n', blockId: b.id, tagTableId: null, codeLine, ladder };
+  return { file: b.name, text: lines.join('\n') + '\n', blockId: b.id, tagTableId: null, codeLine, ladder, methods };
 }
 
 /** Generates the SCL external source of a PLC data type (.udt). */
@@ -344,6 +448,9 @@ export interface ProjectDiagnostic extends Diagnostic {
   /** LAD blocks: network (0-based) and element of the error */
   network?: number;
   element?: string;
+  /** Error in a method (codeLine / location relative to the method) */
+  methodId?: string;
+  interfaceId?: string;
 }
 
 export interface ProjectCompileResult extends Omit<CompileResult, 'diagnostics'> {
@@ -379,6 +486,15 @@ function checkDevice(device: Device): ProjectDiagnostic[] {
         if (!nameRe.test(m.name)) out.push({ severity: 'error', message: `Invalid name '${m.name}' in ${kind} of "${b.name}" (letters, digits and _)`, blockId: b.id, location: 'interface', file: b.name });
       }
     }
+    for (const m of b.methods ?? []) {
+      if (!quotedRe.test(m.name)) out.push({ severity: 'error', message: `Invalid method name "${m.name}"`, blockId: b.id, methodId: m.id, location: 'interface', file: b.name });
+      for (const [kind, members] of Object.entries(m.interface)) {
+        checkMembers(members as Member[], `${kind} of "${b.name}.${m.name}"`, { blockId: b.id, methodId: m.id, location: 'interface', file: b.name });
+      }
+    }
+  }
+  for (const d of device.interfaces ?? []) {
+    if (!quotedRe.test(d.name)) out.push({ severity: 'error', message: `Invalid interface name "${d.name}"`, interfaceId: d.id, location: 'interface', file: d.name });
   }
   return out;
 }
@@ -408,7 +524,10 @@ export function hmiAccess(device: Device): { hidden: string[]; readOnly: string[
 }
 
 export function compileDevice(project: Project, device: Device): ProjectCompileResult {
-  const sources = [...(device.types ?? []).map(dataTypeSource), ...device.tagTables.map(tagTableSource), ...device.blocks.map(blockSource)];
+  const sources = [
+    ...(device.types ?? []).map(dataTypeSource), ...(device.interfaces ?? []).map(interfaceSource),
+    ...device.tagTables.map(tagTableSource), ...device.blocks.map(blockSource),
+  ];
   const pre = checkDevice(device);
   for (const src of sources) {
     const err = src.ladder?.error;
@@ -433,7 +552,21 @@ export function compileDevice(project: Project, device: Device): ProjectCompileR
   const diagnostics: ProjectDiagnostic[] = [...pre, ...result.diagnostics.map((d) => {
     const src = d.file ? byFile.get(d.file.toUpperCase()) : undefined;
     const pd: ProjectDiagnostic = { ...d };
-    if (src?.blockId) {
+    const method = d.line ? src?.methods?.find((m) => d.line! >= m.line && d.line! <= m.endLine) : undefined;
+    if (src?.interfaceId) {
+      pd.interfaceId = src.interfaceId;
+      pd.location = 'interface';
+      if (method) pd.methodId = method.id;
+    } else if (src?.blockId && method) {
+      pd.blockId = src.blockId;
+      pd.methodId = method.id;
+      if (d.line! >= method.codeLine && d.line! < method.endLine) {
+        pd.location = 'code';
+        pd.codeLine = d.line! - method.codeLine + 1;
+      } else {
+        pd.location = 'interface';
+      }
+    } else if (src?.blockId) {
       pd.blockId = src.blockId;
       if (d.line && src.codeLine && d.line >= src.codeLine) {
         pd.location = 'code';
@@ -497,24 +630,38 @@ function toMember(v: { name: string; type: TypeRef; initial: Expr | null }): Mem
 }
 
 /** Creates blocks, PLC data types and tags from an SCL external source (.scl, .db, .udt). */
-export function importExternalSource(device: Device, text: string, file = 'source.scl'): { blocks: Block[]; tags: Tag[]; types: DataTypeDef[] } {
+export function importExternalSource(device: Device, text: string, file = 'source.scl'): { blocks: Block[]; tags: Tag[]; types: DataTypeDef[]; interfaces: InterfaceDef[] } {
   const program = parse(text, file);
   const blocks: Block[] = [];
-  const bodyOf = (kind: string, name: string): string => {
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`${kind}\\s+"?${esc}"?[\\s\\S]*?\\n\\s*BEGIN[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n?\\s*END_${kind}`, 'i');
-    const m = re.exec(text);
-    if (!m) return '';
-    const lines = m[1].replace(/\s+$/, '').split(/\r?\n/);
+  const srcLines = text.split(/\r?\n/);
+  const bodyOf = (r: TextRange | undefined): string => {
+    if (!r) return '';
+    const out: string[] = [];
+    for (let l = r.fromLine; l <= r.toLine && l <= srcLines.length; l++) {
+      let s = srcLines[l - 1];
+      if (l === r.toLine) s = s.slice(0, r.toCol - 1);
+      if (l === r.fromLine) s = ' '.repeat(r.fromCol - 1) + s.slice(r.fromCol - 1);
+      out.push(s);
+    }
+    const lines = out.join('\n').replace(/\s+$/, '').replace(/^(\s*\n)+/, '').split('\n');
     const indent = Math.min(...lines.filter((l) => l.trim()).map((l) => /^\s*/.exec(l)![0].length));
     return lines.map((l) => l.slice(Number.isFinite(indent) ? indent : 0)).join('\n');
   };
-  const members = (vars: Array<{ name: string; type: TypeRef; initial: Expr | null; section: string }>, section: string): Member[] =>
+  const members = (vars: VarDecl[], section: string): Member[] =>
     vars.filter((v) => v.section === section).map(toMember);
+  const methodOf = (m: Method, prototype: boolean): BlockMethod => ({
+    id: newId('mth'), name: m.name, returnType: m.returnType ? typeText(m.returnType) : 'Void',
+    ...(!prototype && m.accessGiven && m.access !== 'PUBLIC' ? { access: m.access } : {}),
+    ...(!prototype && m.abstract ? { abstract: true } : {}), ...(m.final ? { final: true } : {}), ...(m.override ? { override: true } : {}),
+    interface: {
+      ...emptyInterface(), input: members(m.vars, 'input'), output: members(m.vars, 'output'), inout: members(m.vars, 'inout'),
+      temp: members(m.vars, 'temp'), constant: members(m.vars, 'constant'),
+    },
+    code: prototype ? '' : bodyOf(m.bodyRange),
+  });
 
   for (const pou of program.pous) {
     const type: BlockType = pou.kind === 'ORGANIZATION_BLOCK' ? 'OB' : pou.kind === 'FUNCTION' ? 'FC' : 'FB';
-    const kind = pou.kind;
     const isStartup = type === 'OB' && ['STARTUP', 'OB100'].includes(pou.name.toUpperCase());
     blocks.push({
       id: newId('blk'),
@@ -531,7 +678,12 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
         temp: members(pou.vars, 'temp'),
         constant: members(pou.vars, 'constant'),
       },
-      code: bodyOf(kind, pou.name),
+      code: bodyOf(pou.bodyRange),
+      ...(pou.extends ? { extends: pou.extends } : {}),
+      ...(pou.implements?.length ? { implements: pou.implements } : {}),
+      ...(pou.abstract ? { abstract: true } : {}),
+      ...(pou.final ? { final: true } : {}),
+      ...(pou.methods?.length ? { methods: pou.methods.map((m) => methodOf(m, false)) } : {}),
     });
   }
   for (const db of program.dataBlocks) {
@@ -543,7 +695,7 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
   }
   const tags: Tag[] = program.vars.filter((v) => v.section === 'global').map((v) => ({
     name: v.name,
-    dataType: typeText(v.type).replace(/^"|"$/g, ''),
+    dataType: typeText(v.type).replace(/^"([^"]*)"$/, '$1'),
     address: v.address ? `%${v.address.area}${v.address.size === 'X' ? `${v.address.byte}.${v.address.bit}` : `${v.address.size}${v.address.byte}`}` : '',
   }));
   const numbered: Block[] = [...device.blocks];
@@ -554,7 +706,10 @@ export function importExternalSource(device: Device, text: string, file = 'sourc
     numbered.push(b);
   }
   const types: DataTypeDef[] = program.types.map((ut) => ({ id: newId('udt'), name: ut.name, members: ut.fields.map(toMember) }));
-  return { blocks, tags, types };
+  const interfaces: InterfaceDef[] = program.interfaces.map((d) => ({
+    id: newId('ifc'), name: d.name, ...(d.extends.length ? { extends: d.extends } : {}), methods: d.methods.map((m) => methodOf(m, true)),
+  }));
+  return { blocks, tags, types, interfaces };
 }
 
 // ---------------------------------------------------------------------------

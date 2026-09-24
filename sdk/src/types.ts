@@ -12,6 +12,10 @@ export type DataType =
   | { k: 'db'; name: string }
   /** PLC data type (UDT) or anonymous STRUCT; `key` identifies the layout */
   | { k: 'struct'; name: string; key: string }
+  /** Interface reference (pointer to an instance that implements the interface) */
+  | { k: 'ifc'; name: string }
+  /** NULL literal (empty interface reference) */
+  | { k: 'null' }
   | { k: 'anyint' }
   | { k: 'anyreal' }
   | { k: 'void' };
@@ -108,6 +112,10 @@ export function typeName(t: DataType): string {
       return `DB "${t.name}"`;
     case 'struct':
       return t.name ? `"${t.name}"` : 'Struct';
+    case 'ifc':
+      return `"${t.name}"`;
+    case 'null':
+      return 'NULL';
     case 'anyint':
       return 'integer constant';
     case 'anyreal':
@@ -130,6 +138,7 @@ export function sameType(a: DataType, b: DataType): boolean {
     }
     case 'fb':
     case 'db':
+    case 'ifc':
       return a.name.toUpperCase() === (b as typeof a).name.toUpperCase();
     case 'struct':
       return a.key === (b as typeof a).key;

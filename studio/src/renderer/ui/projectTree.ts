@@ -6,8 +6,9 @@ import { icons, type IconName } from '../icons.ts';
 import { t } from '../i18n.ts';
 import { store, type EditorRef } from '../store.ts';
 import { contextMenu, type MenuEntry } from './chrome.ts';
+import { inheritanceDialog } from '../editors/method.ts';
 
-const expanded = new Set<string>(['project', 'dev:*', 'blocks:*', 'tags:*', 'watch:*', 'types:*']);
+const expanded = new Set<string>(['project', 'dev:*', 'blocks:*', 'block:*', 'tags:*', 'watch:*', 'types:*', 'ifcs:*']);
 const isExpanded = (key: string) => expanded.has(key) || expanded.has(key.replace(/:.*/, ':*')) && !expanded.has(`!${key}`);
 function toggle(key: string) {
   if (isExpanded(key)) {
@@ -61,7 +62,17 @@ function deviceNodes(d: Device): NodeSpec[] {
       children: () => [
         { key: `addblock:${d.id}`, label: t.addBlock, icon: 'add', depth: 3, className: 'add', onActivate: () => void A.addBlockCmd(d) },
         ...blocks.map((b): NodeSpec => ({
-          key: `block:${b.id}`, label: blockLabel(b) + (b.type === 'DB' && b.instanceOf ? '' : ''), icon: blockIcon(b), depth: 3,
+          key: `block:${b.id}`, label: blockLabel(b) + (b.extends ? ` ◁ ${b.extends}` : ''), icon: blockIcon(b), depth: 3,
+          children: b.type === 'FB' && b.methods?.length ? () => (b.methods ?? []).map((m): NodeSpec => ({
+            key: `method:${m.id}`, label: m.name + (m.returnType && !/^void$/i.test(m.returnType) ? ` : ${m.returnType}` : ''), icon: 'method', depth: 4,
+            open: { kind: 'method', deviceId: d.id, blockId: b.id, methodId: m.id },
+            className: store.diagnosticsFor(b.id).some((x) => x.methodId === m.id && x.severity === 'error') ? 'error' : undefined,
+            menu: [
+              { label: 'Ouvrir', run: () => A.openEditor({ kind: 'method', deviceId: d.id, blockId: b.id, methodId: m.id }) },
+              { label: 'Renommer', run: () => void A.renameMethodCmd(d, b, m.id) },
+              { label: t.delete, icon: 'del', run: () => void A.deleteMethodCmd(d, b, m.id) },
+            ],
+          })) : undefined,
           open: { kind: 'block', deviceId: d.id, blockId: b.id }, select: { kind: 'block', id: b.id, deviceId: d.id },
           className: hasErrors(b.id) ? 'error' : undefined,
           status: status.icon, statusTitle: status.title,
@@ -73,7 +84,11 @@ function deviceNodes(d: Device): NodeSpec[] {
             'sep',
             { label: t.compile, icon: 'compile', run: () => void A.compileCmd(d) },
             { label: t.downloadToDevice, icon: 'download', run: () => void A.downloadCmd(d) },
-            ...(b.type === 'FB' ? ['sep' as const, { label: `Créer un DB d'instance`, icon: 'db' as IconName, run: () => void A.addBlockCmd(d, { type: 'DB', name: `${b.name}_DB`, instanceOf: b.name }) }] : []),
+            ...(b.type === 'FB' ? [
+              'sep' as const, { label: `Créer un DB d'instance`, icon: 'db' as IconName, run: () => void A.addBlockCmd(d, { type: 'DB', name: `${b.name}_DB`, instanceOf: b.name }) },
+              { label: 'Ajouter une méthode', icon: 'method' as IconName, run: () => void A.addMethodCmd(d, b) },
+              { label: 'Héritage et interfaces...', icon: 'iface' as IconName, run: () => inheritanceDialog(d, b) },
+            ] : []),
           ],
         })),
       ],
@@ -114,6 +129,23 @@ function deviceNodes(d: Device): NodeSpec[] {
             { label: 'Ouvrir', run: () => A.openEditor({ kind: 'dataType', deviceId: d.id, typeId: ut.id }) },
             { label: 'Renommer', run: () => void A.renameCmd('dataType', d.id, ut.id) },
             { label: t.delete, icon: 'del', run: () => void A.deleteCmd('dataType', d.id, ut.id) },
+          ],
+        })),
+      ],
+    },
+    {
+      key: `ifcs:${d.id}`, label: 'Interfaces', icon: 'folder', depth: 2,
+      menu: [{ label: 'Ajouter nouvelle interface', icon: 'iface', run: () => void A.addInterfaceCmd(d) }],
+      children: () => [
+        { key: `addifc:${d.id}`, label: 'Ajouter nouvelle interface', icon: 'add', depth: 3, className: 'add', onActivate: () => void A.addInterfaceCmd(d) },
+        ...[...(d.interfaces ?? [])].sort((a, b) => a.name.localeCompare(b.name)).map((i): NodeSpec => ({
+          key: `ifc:${i.id}`, label: i.name, icon: 'iface', depth: 3,
+          open: { kind: 'interface', deviceId: d.id, interfaceId: i.id },
+          className: store.compile.get(d.id)?.diagnostics.some((x) => x.interfaceId === i.id && x.severity === 'error') ? 'error' : undefined,
+          menu: [
+            { label: 'Ouvrir', run: () => A.openEditor({ kind: 'interface', deviceId: d.id, interfaceId: i.id }) },
+            { label: 'Renommer', run: () => void A.renameCmd('interface', d.id, i.id) },
+            { label: t.delete, icon: 'del', run: () => void A.deleteCmd('interface', d.id, i.id) },
           ],
         })),
       ],

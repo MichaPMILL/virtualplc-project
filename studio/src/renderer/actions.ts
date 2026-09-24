@@ -1,7 +1,7 @@
 // Commands of the Studio (menus, toolbar, shortcuts, tree context menus).
 import {
-  blockLabel, DEVICE_TYPES, emptyInterface, fixIecInstances, importExternalSource, importSimaticMl, importTagTableXlsx, isSimaticMl, ladId, loadProject, newDevice, newId, newProject, saveProject,
-  type Block, type DataTypeDef, type Device, type TagTable,
+  blockLabel, DEVICE_TYPES, emptyInterface, newMethod, fixIecInstances, importExternalSource, importSimaticMl, importTagTableXlsx, isSimaticMl, ladId, loadProject, newDevice, newId, newProject, saveProject,
+  type Block, type DataTypeDef, type Device, type InterfaceDef, type TagTable,
 } from '../../../sdk/src/browser.ts';
 import type { CompileSummary, MonitorValue } from '../backend/backend.ts';
 import { call, host } from './host.ts';
@@ -41,6 +41,8 @@ export function pruneEditors(): void {
     if (e.kind === 'tagTable') return d.tagTables.some((b) => b.id === e.tableId);
     if (e.kind === 'watch') return d.watchTables.some((b) => b.id === e.tableId);
     if (e.kind === 'dataType') return d.types.some((b) => b.id === e.typeId);
+    if (e.kind === 'method') return !!d.blocks.find((b) => b.id === e.blockId)?.methods?.some((m) => m.id === e.methodId);
+    if (e.kind === 'interface') return !!d.interfaces?.some((b) => b.id === e.interfaceId);
     return true;
   });
   if (store.active && !store.editors.some((e) => sameEditor(e, store.active!))) store.active = store.editors[0] ?? null;
@@ -48,6 +50,11 @@ export function pruneEditors(): void {
 }
 
 export function goto(ref: EditorRef & { line?: number; network?: number; element?: string }): void {
+  if (ref.kind === 'method') {
+    openEditor({ kind: 'method', deviceId: ref.deviceId, blockId: ref.blockId, methodId: ref.methodId });
+    if (ref.line) window.dispatchEvent(new CustomEvent('studio:goto-line', { detail: { blockId: ref.blockId, methodId: ref.methodId, line: ref.line } }));
+    return;
+  }
   openEditor(ref.kind === 'block' ? { kind: 'block', deviceId: ref.deviceId, blockId: ref.blockId } : ref);
   if (ref.kind === 'block' && (ref.line || ref.network !== undefined)) {
     // The block editor listens to this event to move its cursor
@@ -284,8 +291,14 @@ export async function importFiles(device: Device, files: Array<{ name: string; b
         store.addMessage({ severity: 'ok', path, text: `Table de variables « ${f.name} » : ${tags} variable(s), ${constants} constante(s) dans ${tables.map((x) => x.name).join(', ')}.` });
         continue;
       }
-      const { blocks, tags, types } = importExternalSource(device, decodeText(f.bytes), f.name);
+      const { blocks, tags, types, interfaces } = importExternalSource(device, decodeText(f.bytes), f.name);
       const typeResult = mergeTypes(types);
+      device.interfaces ??= [];
+      for (const i of interfaces) {
+        const existing = device.interfaces.findIndex((x) => x.name.toLowerCase() === i.name.toLowerCase());
+        if (existing >= 0) device.interfaces[existing] = { ...i, id: device.interfaces[existing].id };
+        else device.interfaces.push(i);
+      }
       const replaced = mergeBlocks(blocks);
       const table = device.tagTables[0];
       for (const tag of tags) {
@@ -293,6 +306,7 @@ export async function importFiles(device: Device, files: Array<{ name: string; b
       }
       const parts = [
         types.length ? `${types.length} type(s) de données${typeResult.replaced ? ` (${typeResult.replaced} remplacé(s))` : ''}` : '',
+        interfaces.length ? `${interfaces.length} interface(s)` : '',
         blocks.length ? `${blocks.length} bloc(s)${replaced ? ` (${replaced} remplacé(s))` : ''}` : '',
         tags.length ? `${tags.length} variable(s)` : '',
       ].filter(Boolean);
@@ -376,7 +390,63 @@ export async function addWatchTableCmd(device = currentDevice()): Promise<void> 
   openEditor({ kind: 'watch', deviceId: device.id, tableId: table.id });
 }
 
-type ObjectKind = 'block' | 'tagTable' | 'watch' | 'device' | 'dataType';
+type ObjectKind = 'block' | 'tagTable' | 'watch' | 'device' | 'dataType' | 'interface';
+
+export async function addInterfaceCmd(device = currentDevice()): Promise<void> {
+  if (!device) return;
+  let n = 1;
+  while ((device.interfaces ?? []).some((x) => x.name === `Interface_${n}`)) n++;
+  const name = await promptDialog('Ajouter nouvelle interface', t.name, `Interface_${n}`);
+  if (!name) return;
+  if (nameUsed(device, name)) {
+    await alertDialog('Ajouter nouvelle interface', `Le nom « ${name} » est déjà utilisé.`, 'error');
+    return;
+  }
+  const ifc: InterfaceDef = { id: newId('ifc'), name, methods: [] };
+  (device.interfaces ??= []).push(ifc);
+  store.touch();
+  openEditor({ kind: 'interface', deviceId: device.id, interfaceId: ifc.id });
+}
+
+function nameUsed(device: Device, name: string): boolean {
+  const n = name.toLowerCase();
+  return device.types.some((x) => x.name.toLowerCase() === n) || device.blocks.some((b) => b.name.toLowerCase() === n)
+    || (device.interfaces ?? []).some((x) => x.name.toLowerCase() === n);
+}
+
+export async function addMethodCmd(device: Device, block: Block): Promise<void> {
+  let n = 1;
+  while ((block.methods ?? []).some((x) => x.name === `Method_${n}`)) n++;
+  const name = await promptDialog('Ajouter une méthode', t.name, `Method_${n}`);
+  if (!name) return;
+  if ((block.methods ?? []).some((x) => x.name.toLowerCase() === name.toLowerCase())) {
+    await alertDialog('Ajouter une méthode', `La méthode « ${name} » existe déjà.`, 'error');
+    return;
+  }
+  const m = newMethod(name);
+  (block.methods ??= []).push(m);
+  store.touch();
+  openEditor({ kind: 'method', deviceId: device.id, blockId: block.id, methodId: m.id });
+}
+
+export async function renameMethodCmd(device: Device, block: Block, methodId: string): Promise<void> {
+  const m = block.methods?.find((x) => x.id === methodId);
+  if (!m) return;
+  const name = await promptDialog('Renommer', t.name, m.name);
+  if (!name || name === m.name) return;
+  m.name = name;
+  store.touch();
+  store.emit('editors');
+}
+
+export async function deleteMethodCmd(device: Device, block: Block, methodId: string): Promise<void> {
+  const m = block.methods?.find((x) => x.id === methodId);
+  if (!m || !(await confirmDialog('Supprimer', `Voulez-vous vraiment supprimer la méthode « ${block.name}.${m.name} » ?`))) return;
+  block.methods = block.methods!.filter((x) => x.id !== methodId);
+  if (!block.methods.length) delete block.methods;
+  store.touch();
+  pruneEditors();
+}
 
 export async function addDataTypeCmd(device = currentDevice()): Promise<void> {
   if (!device) return;
@@ -400,7 +470,8 @@ export async function renameCmd(kind: ObjectKind, deviceId: string, id: string):
   const obj = kind === 'block' ? d.blocks.find((b) => b.id === id)
     : kind === 'tagTable' ? d.tagTables.find((b) => b.id === id)
       : kind === 'watch' ? d.watchTables.find((b) => b.id === id)
-        : kind === 'dataType' ? d.types.find((b) => b.id === id) : d;
+        : kind === 'dataType' ? d.types.find((b) => b.id === id)
+          : kind === 'interface' ? d.interfaces?.find((b) => b.id === id) : d;
   if (!obj) return;
   const name = await promptDialog('Renommer', t.name, obj.name);
   if (!name || name === obj.name) return;
@@ -411,7 +482,15 @@ export async function renameCmd(kind: ObjectKind, deviceId: string, id: string):
     }
     // Keep instance DBs pointing to a renamed FB
     const old = obj.name;
-    for (const b of d.blocks) if (b.instanceOf === old) b.instanceOf = name;
+    for (const b of d.blocks) {
+      if (b.instanceOf === old) b.instanceOf = name;
+      if (b.extends === old) b.extends = name;
+    }
+  }
+  if (kind === 'interface') {
+    const old = obj.name.toLowerCase();
+    for (const b of d.blocks) b.implements = b.implements?.map((x) => (x.toLowerCase() === old ? name : x));
+    for (const i of d.interfaces ?? []) i.extends = i.extends?.map((x) => (x.toLowerCase() === old ? name : x));
   }
   obj.name = name;
   store.touch();
@@ -423,6 +502,7 @@ export async function deleteCmd(kind: ObjectKind, deviceId: string, id: string):
   if (!d || !store.project) return;
   const label = kind === 'block' ? blockLabel(d.blocks.find((b) => b.id === id)!) : kind === 'device' ? d.name
     : kind === 'dataType' ? d.types.find((x) => x.id === id)?.name
+      : kind === 'interface' ? d.interfaces?.find((x) => x.id === id)?.name
       : (kind === 'tagTable' ? d.tagTables : d.watchTables).find((x) => x.id === id)?.name;
   if (!(await confirmDialog('Supprimer', `Voulez-vous vraiment supprimer « ${label} » ?`))) return;
   if (kind === 'block') d.blocks = d.blocks.filter((b) => b.id !== id);
@@ -434,6 +514,7 @@ export async function deleteCmd(kind: ObjectKind, deviceId: string, id: string):
     d.tagTables = d.tagTables.filter((b) => b.id !== id);
   } else if (kind === 'watch') d.watchTables = d.watchTables.filter((b) => b.id !== id);
   else if (kind === 'dataType') d.types = d.types.filter((b) => b.id !== id);
+  else if (kind === 'interface') d.interfaces = d.interfaces?.filter((b) => b.id !== id);
   else store.project.devices = store.project.devices.filter((x) => x.id !== id);
   store.touch();
   pruneEditors();
@@ -464,12 +545,18 @@ export async function compileCmd(device = currentDevice(), quiet = false): Promi
   for (const d of r.diagnostics) {
     const tagTable = device.tagTables.find((x) => x.id === d.tagTableId);
     const dataType = device.types.find((x) => x.id === d.typeId);
+    const ifc = device.interfaces?.find((x) => x.id === d.interfaceId);
+    const method = device.blocks.find((b) => b.id === d.blockId)?.methods?.find((m) => m.id === d.methodId);
     const path = tagTable ? `${device.name} > ${t.plcTags} > ${tagTable.name}`
-      : dataType ? `${device.name} > ${t.dataTypes} > ${dataType.name}` : blockPath(device, d.blockId);
+      : dataType ? `${device.name} > ${t.dataTypes} > ${dataType.name}`
+        : ifc ? `${device.name} > Interfaces > ${ifc.name}`
+          : `${blockPath(device, d.blockId)}${method ? ` > ${method.name}` : ''}`;
     const where = d.location === 'interface' ? ' (interface)' : d.network !== undefined ? '' : d.codeLine ? ` (ligne ${d.codeLine})` : '';
     store.messages.push({
       severity: d.severity, text: `${d.message}${where}`, path, time: new Date().toLocaleTimeString(),
-      goto: d.blockId ? { kind: 'block', deviceId: device.id, blockId: d.blockId, line: d.codeLine, network: d.network, element: d.element }
+      goto: d.blockId && method ? { kind: 'method', deviceId: device.id, blockId: d.blockId, methodId: method.id, line: d.codeLine }
+        : ifc ? { kind: 'interface', deviceId: device.id, interfaceId: ifc.id }
+        : d.blockId ? { kind: 'block', deviceId: device.id, blockId: d.blockId, line: d.codeLine, network: d.network, element: d.element }
         : tagTable ? { kind: 'tagTable', deviceId: device.id, tableId: tagTable.id }
           : dataType ? { kind: 'dataType', deviceId: device.id, typeId: dataType.id } : undefined,
     });

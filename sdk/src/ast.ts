@@ -78,6 +78,52 @@ export interface Pou {
   body: Stmt[];
   line: number;
   file?: string;
+  /** Object orientation (IEC 61131-3 ed.3, function blocks only) */
+  extends?: string;
+  implements?: string[];
+  methods?: Method[];
+  abstract?: boolean;
+  final?: boolean;
+  /** CLASS ... END_CLASS: a function block without body nor inputs/outputs */
+  isClass?: boolean;
+  /** Source range of the statements (import of external sources) */
+  bodyRange?: TextRange;
+}
+
+/** 1-based lines and columns; `to` is exclusive */
+export interface TextRange {
+  fromLine: number;
+  fromCol: number;
+  toLine: number;
+  toCol: number;
+}
+
+export type Access = 'PUBLIC' | 'PRIVATE' | 'PROTECTED' | 'INTERNAL';
+
+/** METHOD of a function block, a class or an interface (prototype) */
+export interface Method {
+  name: string;
+  returnType: TypeRef | null;
+  vars: VarDecl[];
+  body: Stmt[];
+  access: Access;
+  /** access specifier written in the source (an override keeps the access of the overridden method otherwise) */
+  accessGiven?: boolean;
+  abstract: boolean;
+  final: boolean;
+  override: boolean;
+  line: number;
+  file?: string;
+  bodyRange?: TextRange;
+}
+
+/** INTERFACE "Name" [EXTENDS ...] METHOD ... END_METHOD ... END_INTERFACE */
+export interface InterfaceDecl {
+  name: string;
+  extends: string[];
+  methods: Method[];
+  line: number;
+  file?: string;
 }
 
 export interface DataBlock {
@@ -102,4 +148,5 @@ export interface Program {
   pous: Pou[];
   dataBlocks: DataBlock[];
   types: UserType[];
+  interfaces: InterfaceDecl[];
 }

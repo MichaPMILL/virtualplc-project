@@ -5,16 +5,18 @@
 //   devices/<Device>/device.json          CPU settings, connection, I/O modules
 //   devices/<Device>/blocks/<Block>.json  block properties and interface
 //   devices/<Device>/blocks/<Block>.scl   block code (SCL statements; LAD networks are in the .json)
+//   devices/<Device>/blocks/<Block>.methods/<Method>.scl   code of the methods of a function block
 //   devices/<Device>/tags/<Table>.json    PLC tag table
 //   devices/<Device>/watch/<Table>.json   watch table
 //   devices/<Device>/types/<Type>.json    PLC data type (UDT)
+//   devices/<Device>/interfaces/<Name>.json  interface (method prototypes)
 //   .gitattributes, .gitignore
 //
 // The manifest carries no modification date: Git keeps the history, and a date that
 // changes on every save would make every merge conflict.
 import {
-  emptyInterface, PROJECT_FORMAT, PROJECT_VERSION,
-  type Block, type DataTypeDef, type Device, type Project, type TagTable, type WatchTable,
+  normalizeBlock, normalizeMethod, PROJECT_FORMAT, PROJECT_VERSION,
+  type Block, type DataTypeDef, type Device, type InterfaceDef, type Project, type TagTable, type WatchTable,
 } from './project.ts';
 
 export const MANIFEST_EXT = '.vplcproj';
@@ -98,8 +100,16 @@ export function projectToFiles(project: Project): ProjectFiles {
     const blockNames = uniqueNames(blocks, (b) => b.name);
     for (const b of blocks) {
       const base = `${dir}/blocks/${blockNames.get(b)}`;
-      files[`${base}.json`] = json(pick(b, ['id', 'name', 'type', 'number', 'comment', 'event', 'returnType', 'instanceOf', 'interface', 'members', 'language', 'networks']));
+      const methods = b.methods?.length ? b.methods : undefined;
+      const methodNames = uniqueNames(methods ?? [], (m) => m.name);
+      files[`${base}.json`] = json({
+        ...pick(b, ['id', 'name', 'type', 'number', 'comment', 'event', 'returnType', 'instanceOf', 'extends', 'implements', 'abstract', 'final', 'interface', 'members', 'language', 'networks']),
+        ...(methods ? { methods: methods.map((m) => ({ ...pick(m, ['id', 'name', 'returnType', 'access', 'abstract', 'final', 'override', 'comment', 'interface']), file: methodNames.get(m) })) } : {}),
+      });
       if (b.type !== 'DB' && b.language !== 'LAD') files[`${base}.scl`] = b.code.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n');
+      for (const m of methods ?? []) {
+        if (!m.abstract) files[`${base}.methods/${methodNames.get(m)}.scl`] = m.code.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n');
+      }
     }
     const tagNames = uniqueNames(d.tagTables, (t) => t.name);
     for (const t of d.tagTables) files[`${dir}/tags/${tagNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'tags', 'constants']));
@@ -107,13 +117,21 @@ export function projectToFiles(project: Project): ProjectFiles {
     for (const t of d.watchTables) files[`${dir}/watch/${watchNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'rows']));
     const typeNames = uniqueNames(d.types ?? [], (t) => t.name);
     for (const t of d.types ?? []) files[`${dir}/types/${typeNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'comment', 'members']));
+    const ifcNames = uniqueNames(d.interfaces ?? [], (t) => t.name);
+    for (const t of d.interfaces ?? []) {
+      files[`${dir}/interfaces/${ifcNames.get(t)}.json`] = json({
+        ...pick(t, ['id', 'name', 'comment', 'extends']),
+        methods: t.methods.map((m) => pick(m, ['id', 'name', 'returnType', 'comment', 'interface'])),
+      });
+    }
   }
   return files;
 }
 
 /** Folders written by projectToFiles (files below them that are not in the project any more are stale). */
 export function isManagedPath(path: string): boolean {
-  return /^devices\/[^/]+\/(device\.json|(blocks|tags|watch|types)\/[^/]+\.(json|scl))$/.test(path) || /^[^/]+\.vplcproj$/.test(path);
+  return /^devices\/[^/]+\/(device\.json|(blocks|tags|watch|types|interfaces)\/[^/]+\.(json|scl)|blocks\/[^/]+\.methods\/[^/]+\.scl)$/.test(path)
+    || /^[^/]+\.vplcproj$/.test(path);
 }
 
 function parseJson<T>(files: ProjectFiles, path: string): T {
@@ -153,11 +171,18 @@ export function projectFromFiles(files: ProjectFiles): Project {
 
     d.blocks = inDir('blocks', '.json').map((p) => {
       const b = parseJson<Block>(files, p);
-      b.interface = { ...emptyInterface(), ...(b.interface ?? {}) };
-      const code = files[p.replace(/\.json$/, '.scl')];
-      if (code !== undefined && /^(<<<<<<<|>>>>>>>) /m.test(code)) throw new Error(`${p.replace(/\.json$/, '.scl')}: unresolved merge conflict`);
-      b.code = b.type === 'DB' ? '' : (code ?? '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
-      return b;
+      const readCode = (path: string) => {
+        const code = files[path];
+        if (code !== undefined && /^(<<<<<<<|>>>>>>>) /m.test(code)) throw new Error(`${path}: unresolved merge conflict`);
+        return (code ?? '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
+      };
+      b.code = b.type === 'DB' ? '' : readCode(p.replace(/\.json$/, '.scl'));
+      for (const m of b.methods ?? []) {
+        const entry = m as typeof m & { file?: string };
+        entry.code = readCode(`${p.replace(/\.json$/, '')}.methods/${entry.file ?? safeFileName(entry.name)}.scl`);
+        delete entry.file;
+      }
+      return normalizeBlock(b);
     }).sort((a, b) => BLOCK_ORDER[a.type] - BLOCK_ORDER[b.type] || a.number - b.number || a.name.localeCompare(b.name));
 
     d.tagTables = inDir('tags', '.json').map((p) => {
@@ -178,6 +203,13 @@ export function projectFromFiles(files: ProjectFiles): Project {
       t.members ??= [];
       return t;
     }).sort((a, b) => a.name.localeCompare(b.name));
+
+    const interfaces = inDir('interfaces', '.json').map((p) => {
+      const t = parseJson<InterfaceDef>(files, p);
+      t.methods = (t.methods ?? []).map(normalizeMethod);
+      return t;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    if (interfaces.length) d.interfaces = interfaces;
     devices.push(d);
   }
   if (!devices.length) throw new Error('Invalid project: no devices');

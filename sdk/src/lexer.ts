@@ -25,6 +25,8 @@ export const KEYWORDS = new Set([
   'IF', 'THEN', 'ELSIF', 'ELSE', 'END_IF', 'CASE', 'END_CASE', 'FOR', 'TO', 'BY', 'DO', 'END_FOR',
   'WHILE', 'END_WHILE', 'REPEAT', 'UNTIL', 'END_REPEAT', 'EXIT', 'CONTINUE', 'RETURN',
   'AND', 'OR', 'XOR', 'NOT', 'MOD',
+  // object orientation (METHOD, INTERFACE, CLASS, EXTENDS, ... are contextual identifiers)
+  'END_METHOD', 'END_INTERFACE', 'END_CLASS',
 ]);
 
 const TWO_CHAR = new Set([':=', '=>', '+=', '-=', '*=', '/=', '**', '<>', '<=', '>=', '..']);

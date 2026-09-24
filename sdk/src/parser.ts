@@ -1,4 +1,4 @@
-import type { Address, CallArg, DataBlock, Expr, Pou, PouKind, Program, Section, Stmt, TypeRef, UserType, VarDecl } from './ast.ts';
+import type { Access, Address, TextRange, CallArg, DataBlock, Expr, InterfaceDecl, Method, Pou, PouKind, Program, Section, Stmt, TypeRef, UserType, VarDecl } from './ast.ts';
 import { CompileError } from './diagnostics.ts';
 import { describeToken, tokenize, type Token } from './lexer.ts';
 
@@ -52,12 +52,23 @@ class Parser {
   }
 
   program(): Program {
-    const prog: Program = { vars: [], pous: [], dataBlocks: [], types: [] };
+    const prog: Program = { vars: [], pous: [], dataBlocks: [], types: [], interfaces: [] };
     let startup: Stmt[] | null = null;
 
     while (!this.at('eof')) {
       const t = this.cur();
       const kw = t.type === 'keyword' ? t.text : '';
+      if (t.type === 'ident' && t.scope === null && this.peek(1).type === 'ident') {
+        const word = t.text.toUpperCase();
+        if (word === 'INTERFACE') {
+          prog.interfaces.push(this.interfaceDecl());
+          continue;
+        }
+        if (word === 'CLASS') {
+          prog.pous.push(this.pou('FUNCTION_BLOCK', 'END_CLASS'));
+          continue;
+        }
+      }
       switch (kw) {
         case 'VAR':
         case 'VAR_GLOBAL':
@@ -117,12 +128,41 @@ class Parser {
 
   private pou(kind: PouKind, end: string): Pou {
     const start = this.next();
+    const oop: Partial<Pou> = {};
+    if (kind === 'FUNCTION_BLOCK') {
+      if (end === 'END_CLASS') oop.isClass = true;
+      for (const mod of this.modifiers(['ABSTRACT', 'FINAL'])) oop[mod === 'ABSTRACT' ? 'abstract' : 'final'] = true;
+    }
     const name = this.expectIdent().text;
     let returnType: TypeRef | null = null;
     if (kind === 'FUNCTION' && this.accept(':')) {
       returnType = this.type();
       if (returnType.name === 'VOID') returnType = null;
     }
+    if (kind === 'FUNCTION_BLOCK') {
+      if (this.acceptWord('EXTENDS')) oop.extends = this.expectIdent().text;
+      if (this.acceptWord('IMPLEMENTS')) oop.implements = this.identList();
+    }
+    const vars = this.pouVars(kind);
+    if (kind === 'FUNCTION_BLOCK') {
+      const methods: Method[] = [];
+      while (this.isWord('METHOD')) methods.push(this.method(false));
+      if (methods.length > 0) oop.methods = methods;
+    }
+    if (oop.isClass) {
+      this.close(end);
+      return { kind, name, returnType, vars, body: [], line: start.line, file: this.file, ...oop };
+    }
+    this.acceptKeyword('BEGIN');
+    const from = this.bodyStart();
+    const body = this.statements([end]);
+    const bodyRange = this.bodyRange(from);
+    this.close(end);
+    return { kind, name, returnType, vars, body, line: start.line, file: this.file, ...oop, bodyRange };
+  }
+
+  /** VAR_INPUT / VAR_OUTPUT / VAR_IN_OUT / VAR_TEMP / VAR sections of a block or a method */
+  private pouVars(kind: PouKind): VarDecl[] {
     this.skipHeader();
     const vars: VarDecl[] = [];
     for (;;) {
@@ -137,10 +177,102 @@ class Parser {
       if (section === 'static' && kind !== 'FUNCTION_BLOCK' && this.peek(1).text !== 'CONSTANT') section = 'temp';
       vars.push(...this.varSection(section));
     }
-    this.acceptKeyword('BEGIN');
-    const body = this.statements([end]);
-    this.close(end);
-    return { kind, name, returnType, vars, body, line: start.line, file: this.file };
+    return vars;
+  }
+
+  /** METHOD [access] [ABSTRACT | FINAL | OVERRIDE] Name [: Type] declarations [BEGIN] statements END_METHOD */
+  private method(prototype: boolean): Method {
+    const start = this.next();
+    let access: Access = 'PUBLIC';
+    let accessGiven = false;
+    let abstract = prototype;
+    let final = false;
+    let override = false;
+    for (const mod of this.modifiers(['PUBLIC', 'PRIVATE', 'PROTECTED', 'INTERNAL', 'ABSTRACT', 'FINAL', 'OVERRIDE'])) {
+      if (mod === 'ABSTRACT') abstract = true;
+      else if (mod === 'FINAL') final = true;
+      else if (mod === 'OVERRIDE') override = true;
+      else {
+        access = mod as Access;
+        accessGiven = true;
+      }
+    }
+    const name = this.expectIdent();
+    let returnType: TypeRef | null = null;
+    if (this.accept(':')) {
+      returnType = this.type();
+      if (returnType.name === 'VOID') returnType = null;
+    }
+    // a method has no static variables: VAR declares temporaries
+    const vars = this.pouVars('FUNCTION');
+    let body: Stmt[] = [];
+    let bodyRange: TextRange | undefined;
+    if (prototype || abstract) {
+      this.acceptKeyword('BEGIN');
+      if (!this.isKeyword('END_METHOD')) throw this.error(`${prototype ? 'Interface' : 'Abstract'} method '${name.text}' cannot have a body`, this.cur());
+    } else {
+      this.acceptKeyword('BEGIN');
+      const from = this.bodyStart();
+      body = this.statements(['END_METHOD']);
+      bodyRange = this.bodyRange(from);
+    }
+    this.close('END_METHOD');
+    return { name: name.text, returnType, vars, body, access, accessGiven, abstract, final, override, line: start.line, file: this.file, bodyRange };
+  }
+
+  /** INTERFACE Name [EXTENDS I1, I2] METHOD prototypes END_INTERFACE */
+  private interfaceDecl(): InterfaceDecl {
+    const start = this.next();
+    const name = this.expectIdent().text;
+    const ext = this.acceptWord('EXTENDS') ? this.identList() : [];
+    this.skipHeader();
+    const methods: Method[] = [];
+    while (this.isWord('METHOD')) methods.push(this.method(true));
+    this.close('END_INTERFACE');
+    return { name, extends: ext, methods, line: start.line, file: this.file };
+  }
+
+  /** Start of a statement list: the line after the previous token, or the first token on the same line */
+  private bodyStart(): { line: number; col: number } {
+    const prev = this.tokens[this.i - 1];
+    const first = this.cur();
+    return !prev || first.line > prev.line ? { line: (prev?.line ?? 0) + 1, col: 1 } : { line: first.line, col: first.column };
+  }
+
+  private bodyRange(from: { line: number; col: number }): TextRange {
+    const end = this.cur();
+    return { fromLine: from.line, fromCol: from.col, toLine: end.line, toCol: end.column };
+  }
+
+  /** Leading modifiers among `words`, each followed by another identifier */
+  private modifiers(words: string[]): string[] {
+    const out: string[] = [];
+    while (this.cur().type === 'ident' && this.cur().scope === null && this.peek(1).type === 'ident'
+      && words.includes(this.cur().text.toUpperCase())) {
+      out.push(this.next().text.toUpperCase());
+    }
+    return out;
+  }
+
+  private identList(): string[] {
+    const out = [this.expectIdent().text];
+    while (this.accept(',')) out.push(this.expectIdent().text);
+    return out;
+  }
+
+  /** Contextual keyword (an identifier that is not quoted nor #local) */
+  private isWord(word: string): boolean {
+    const t = this.cur();
+    return t.type === 'ident' && t.scope === null && t.text.toUpperCase() === word && this.peek(1).type === 'ident';
+  }
+
+  private acceptWord(word: string): boolean {
+    const t = this.cur();
+    if (t.type === 'ident' && t.scope === null && t.text.toUpperCase() === word) {
+      this.next();
+      return true;
+    }
+    return false;
   }
 
   private dataBlock(): DataBlock {

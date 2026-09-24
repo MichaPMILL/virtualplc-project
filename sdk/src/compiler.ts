@@ -1,4 +1,4 @@
-import type { Address, CallArg, DataBlock, Expr, Pou, Program, Stmt, TypeRef, UserType, VarDecl } from './ast.ts';
+import type { Address, CallArg, DataBlock, Expr, InterfaceDecl, Method, Pou, Program, Stmt, TypeRef, UserType, VarDecl } from './ast.ts';
 import { ByteWriter, MemoryImage } from './bytes.ts';
 import { CompileError, toDiagnostic, type Diagnostic } from './diagnostics.ts';
 import { Area, LIBRARY_BLOCKS, MathFn, Op, OPERANDS, StdFn, SysFn, Trap, VmType } from './isa.ts';
@@ -101,7 +101,76 @@ interface FunctionInfo {
   params: VarDecl[];
   returnSlot: number;
   codeOffset: number;
+  /** Function block whose members are addressed through the instance base (FB body, method) */
+  self?: string;
+  /** Block reported for runtime faults (methods: their function block) */
+  block?: string;
+  /** Method: end of its parameter block (inputs, in-outs | outputs, return value) */
+  blockEnd?: number;
+  /** Dispatcher of a virtual method (calls the implementation of the class of the instance) */
+  dispatch?: Slot;
 }
+
+/** Callee of a call with a parameter frame in D (FC, method, dispatcher) */
+interface CallTarget {
+  name: string;
+  params: VarDecl[];
+  locals: Map<string, Sym>;
+  returnSlot: number;
+  returnType: DataType | null;
+}
+
+/** Function block that takes part in object orientation (methods, EXTENDS, IMPLEMENTS) */
+interface ClassInfo {
+  pou: Pou;
+  key: string;
+  /** Class identifier, stored in the first 2 bytes of every instance */
+  id: number;
+  base: ClassInfo | null;
+  derived: ClassInfo[];
+  /** Interfaces implemented, with their base interfaces */
+  interfaces: Set<string>;
+  /** Methods callable on the class (own and inherited) */
+  methods: Map<string, MethodInfo>;
+}
+
+interface MethodInfo {
+  method: Method;
+  owner: ClassInfo;
+  /** Implementation (null: abstract) */
+  fnKey: string | null;
+  /** Method of the root class that introduced it: key of its dispatch slot */
+  root: string;
+  signature: string;
+}
+
+interface IfcInfo {
+  decl: InterfaceDecl;
+  key: string;
+  /** The interface and all its base interfaces */
+  bases: Set<string>;
+  methods: Map<string, { method: Method; owner: IfcInfo; signature: string }>;
+}
+
+/** Virtual method: the caller writes the parameters into a transfer block and calls a dispatcher */
+interface Slot {
+  key: string;
+  name: string;
+  method: Method;
+  file?: string;
+  /** implementation function -> class ids */
+  impls: Map<string, number[]>;
+  target?: CallTarget;
+  /** Offset of the transfer block in D */
+  transfer?: number;
+  fnKey: string;
+}
+
+/** Resolved method call */
+type MethodCall =
+  | { k: 'super-body'; base: ClassInfo }
+  | { k: 'method'; recv: Expr | null; mi: MethodInfo; exact: boolean; viaSuper: boolean }
+  | { k: 'interface'; recv: Expr; ifc: IfcInfo; name: string };
 
 const AREA_CODE: Record<AreaName, number> = { D: Area.D, N: Area.N, I: Area.I, Q: Area.Q, M: Area.M, C: Area.C };
 const MAX_DATA = 16 * 1024 * 1024;
@@ -138,7 +207,7 @@ export function compileSource(text: string, file = 'main.scl', options: Omit<Com
 
 class Compiler {
   private readonly diagnostics: Diagnostic[] = [];
-  private program: Program = { vars: [], pous: [], dataBlocks: [], types: [] };
+  private program: Program = { vars: [], pous: [], dataBlocks: [], types: [], interfaces: [] };
   private readonly userTypes = new Map<string, UserType>();
   private readonly structLayouts = new Map<string, Layout>();
   /** Fields of each struct layout (for start values) */
@@ -153,6 +222,9 @@ class Compiler {
   private readonly functions = new Map<string, FunctionInfo>();
   private readonly modules = new Map<string, number>();
   private readonly symbols: SymbolNode[] = [];
+  private readonly classes = new Map<string, ClassInfo>();
+  private readonly interfaces = new Map<string, IfcInfo>();
+  private readonly slots = new Map<string, Slot>();
 
   private dataTop = 0;
   private init!: MemoryImage;
@@ -187,6 +259,7 @@ class Compiler {
 
     this.collect(() => this.declareModules());
     this.collect(() => this.declareBlocks());
+    if (!this.hasErrors()) this.declareClasses();
     this.collect(() => this.declareGlobals());
     if (this.hasErrors()) return this.result();
 
@@ -212,6 +285,7 @@ class Compiler {
         this.program.pous.push(...p.pous);
         this.program.dataBlocks.push(...p.dataBlocks);
         this.program.types.push(...p.types);
+        this.program.interfaces.push(...p.interfaces);
       } catch (e) {
         this.diagnostics.push(toDiagnostic(e));
       }
@@ -260,6 +334,7 @@ class Compiler {
         }
         this.checkName(v.name, v.line);
         const type = this.resolveType(v.type);
+        this.checkInstance(type, v.line);
         if (v.section === 'constant') {
           if (!v.initial) throw this.err(`Constant '${v.name}' needs a value`, v.line);
           this.globals.set(key, { k: 'const', name: v.name, type, value: this.constValue(v.initial, type) });
@@ -285,7 +360,7 @@ class Compiler {
 
   private checkName(name: string, line: number): void {
     const key = name.toUpperCase();
-    if (RESERVED_TYPES.has(key) && !(key in LIBRARY_BLOCKS)) throw this.err(`'${name}' is a reserved keyword`, line);
+    if ((RESERVED_TYPES.has(key) && !(key in LIBRARY_BLOCKS)) || key === 'THIS' || key === 'SUPER') throw this.err(`'${name}' is a reserved keyword`, line);
   }
 
   private resolveType(t: TypeRef): DataType {
@@ -308,10 +383,237 @@ class Compiler {
     if (t.name.toUpperCase() === 'DTL') return DTL;
     const lib = libraryBlock(t.name);
     if (lib) return { k: 'fb', name: lib.key, library: true };
+    const ifc = this.interfaces.get(t.name.toUpperCase());
+    if (ifc) return { k: 'ifc', name: ifc.decl.name };
     const pou = this.pous.get(t.name.toUpperCase());
     if (pou && pou.kind === 'FUNCTION_BLOCK') return { k: 'fb', name: pou.name, library: false };
     if (pou) throw this.err(`'${t.name}' is a ${pou.kind === 'FUNCTION' ? 'function (FC)' : 'organization block'}, not a data type`, t.line);
     throw this.err(`Unknown data type '${t.name}'`, t.line);
+  }
+
+  // -------------------------------------------------------------------------
+  // Object orientation (IEC 61131-3 edition 3)
+  // -------------------------------------------------------------------------
+
+  private declareClasses(): void {
+    for (const d of this.program.interfaces) {
+      this.collect(() => {
+        this.file = d.file;
+        const key = d.name.toUpperCase();
+        if (this.interfaces.has(key) || this.pous.has(key) || this.userTypes.has(key) || this.dataBlocks.has(key)) {
+          throw this.err(`Duplicate block '${d.name}'`, d.line);
+        }
+        this.interfaces.set(key, { decl: d, key, bases: new Set([key]), methods: new Map() });
+      });
+    }
+    const ifcDone = new Set<string>();
+    const ifcBuild = (info: IfcInfo, path: string[]): void => {
+      if (ifcDone.has(info.key)) return;
+      if (path.includes(info.key)) throw this.err(`Interface '${info.decl.name}' extends itself`, info.decl.line, info.decl.file);
+      for (const b of info.decl.extends) {
+        const base = this.interfaces.get(b.toUpperCase());
+        if (!base) throw this.err(`Unknown interface '${b}'`, info.decl.line, info.decl.file);
+        ifcBuild(base, [...path, info.key]);
+        for (const k of base.bases) info.bases.add(k);
+        for (const [n, m] of base.methods) {
+          const other = info.methods.get(n);
+          if (other && other.owner !== m.owner && other.signature !== m.signature) {
+            throw this.err(`Method '${m.method.name}' is inherited with different parameters`, info.decl.line, info.decl.file);
+          }
+          info.methods.set(n, m);
+        }
+      }
+      this.file = info.decl.file;
+      for (const m of info.decl.methods) {
+        const n = m.name.toUpperCase();
+        const signature = this.signature(m);
+        const inherited = info.methods.get(n);
+        if (inherited?.owner === info) throw this.err(`Duplicate method '${m.name}' in '${info.decl.name}'`, m.line);
+        if (inherited && inherited.signature !== signature) {
+          throw this.err(`Method '${m.name}' of '${info.decl.name}' differs from '${inherited.owner.decl.name}.${m.name}'`, m.line);
+        }
+        info.methods.set(n, { method: m, owner: info, signature });
+      }
+      ifcDone.add(info.key);
+    };
+    for (const info of this.interfaces.values()) this.collect(() => ifcBuild(info, []));
+
+    // Function blocks that take part in object orientation (and their bases)
+    const oop = (p: Pou) => p.kind === 'FUNCTION_BLOCK' && (p.methods?.length || p.extends || p.implements?.length || p.isClass);
+    const classful = new Set<string>();
+    for (const p of this.pous.values()) {
+      if (p.kind !== 'FUNCTION_BLOCK' && (p.methods || p.extends || p.implements)) {
+        this.collect(() => {
+          throw this.err(`Only function blocks can have methods, EXTENDS or IMPLEMENTS`, p.line, p.file);
+        });
+      }
+      if (!oop(p)) continue;
+      classful.add(p.name.toUpperCase());
+      let base = p.extends;
+      const seen = new Set([p.name.toUpperCase()]);
+      while (base) {
+        const b = this.pous.get(base.toUpperCase());
+        if (!b || b.kind !== 'FUNCTION_BLOCK') break;
+        if (seen.has(b.name.toUpperCase())) break;
+        seen.add(b.name.toUpperCase());
+        classful.add(b.name.toUpperCase());
+        base = b.extends;
+      }
+    }
+    let nextId = 1;
+    const build = (key: string, path: string[]): ClassInfo => {
+      const done = this.classes.get(key);
+      if (done) return done;
+      const pou = this.pous.get(key)!;
+      this.file = pou.file;
+      if (path.includes(key)) throw this.err(`Function block '${pou.name}' extends itself`, pou.line);
+      let base: ClassInfo | null = null;
+      if (pou.extends) {
+        const b = this.pous.get(pou.extends.toUpperCase());
+        if (!b || b.kind !== 'FUNCTION_BLOCK') {
+          throw this.err(libraryBlock(pou.extends) ? `'${pou.name}' cannot extend the system block '${pou.extends}'`
+            : `Unknown function block '${pou.extends}' (EXTENDS)`, pou.line);
+        }
+        base = build(b.name.toUpperCase(), [...path, key]);
+        this.file = pou.file;
+        if (b.final) throw this.err(`'${pou.name}' cannot extend '${b.name}': it is FINAL`, pou.line);
+        if (b.isClass !== pou.isClass) throw this.err(`A ${pou.isClass ? 'class' : 'function block'} can only extend a ${pou.isClass ? 'class' : 'function block'}`, pou.line);
+      }
+      const cls: ClassInfo = {
+        pou, key, id: nextId++, base, derived: [],
+        interfaces: new Set(base?.interfaces ?? []), methods: new Map(base?.methods ?? []),
+      };
+      base?.derived.push(cls);
+      for (const name of pou.implements ?? []) {
+        const ifc = this.interfaces.get(name.toUpperCase());
+        if (!ifc) throw this.err(`Unknown interface '${name}' (IMPLEMENTS)`, pou.line);
+        for (const k of ifc.bases) cls.interfaces.add(k);
+      }
+      const memberNames = new Set(this.fbVars(pou).map((v) => v.name.toUpperCase()));
+      const own = new Set<string>();
+      for (const m of pou.methods ?? []) {
+        const n = m.name.toUpperCase();
+        if (own.has(n)) throw this.err(`Duplicate method '${m.name}' in '${pou.name}'`, m.line);
+        if (memberNames.has(n)) throw this.err(`'${m.name}' is both a variable and a method of '${pou.name}'`, m.line);
+        own.add(n);
+        const signature = this.signature(m);
+        // a private method of a base block is not inherited: a method of the same name is a new one
+        const inherited = cls.methods.get(n)?.method.access === 'PRIVATE' ? undefined : cls.methods.get(n);
+        if (inherited) {
+          if (inherited.method.final) throw this.err(`Method '${m.name}' is FINAL in '${inherited.owner.pou.name}' and cannot be overridden`, m.line);
+          if (inherited.signature !== signature) {
+            throw this.err(`Method '${m.name}' must have the same parameters as in '${inherited.owner.pou.name}'`, m.line);
+          }
+          if (!m.accessGiven) m.access = inherited.method.access;
+          if (inherited.method.access !== m.access) {
+            throw this.err(`Method '${m.name}' must stay ${inherited.method.access} (as in '${inherited.owner.pou.name}')`, m.line);
+          }
+        } else if (m.override) {
+          throw this.err(`Method '${m.name}' is declared OVERRIDE but '${pou.name}' inherits no such method`, m.line);
+        }
+        if (m.abstract && !pou.abstract) throw this.err(`Abstract method '${m.name}': '${pou.name}' must be declared ABSTRACT`, m.line);
+        cls.methods.set(n, {
+          method: m, owner: cls, fnKey: m.abstract ? null : `${key}.${n}`,
+          root: inherited ? inherited.root : `${key}.${n}`, signature,
+        });
+      }
+      for (const k of cls.interfaces) {
+        const ifc = this.interfaces.get(k)!;
+        for (const [n, im] of ifc.methods) {
+          const mi = cls.methods.get(n);
+          if (!mi) {
+            if (!pou.abstract) throw this.err(`'${pou.name}' must implement method '${im.method.name}' of interface '${im.owner.decl.name}'`, pou.line);
+            continue;
+          }
+          if (mi.signature !== im.signature) {
+            throw this.err(`Method '${mi.method.name}' of '${mi.owner.pou.name}' does not match '${im.owner.decl.name}.${im.method.name}'`, mi.method.line, mi.method.file);
+          }
+          if (mi.method.access !== 'PUBLIC' && mi.method.access !== 'INTERNAL') {
+            throw this.err(`Method '${mi.method.name}' implements interface '${im.owner.decl.name}': it must be PUBLIC`, mi.method.line, mi.method.file);
+          }
+        }
+      }
+      if (!pou.abstract) {
+        for (const mi of cls.methods.values()) {
+          if (!mi.fnKey) throw this.err(`'${pou.name}' must implement the abstract method '${mi.method.name}' of '${mi.owner.pou.name}' (or be declared ABSTRACT)`, pou.line);
+        }
+      }
+      this.classes.set(key, cls);
+      return cls;
+    };
+    for (const key of classful) this.collect(() => build(key, []));
+    if (this.hasErrors()) return;
+
+    // Dispatch slots: interface methods, and class methods overridden in derived classes
+    const descendants = (c: ClassInfo): ClassInfo[] => [c, ...c.derived.flatMap(descendants)];
+    for (const ifc of this.interfaces.values()) {
+      for (const [n, im] of ifc.methods) {
+        if (im.owner !== ifc) continue;
+        const slot: Slot = { key: `${ifc.key}.${n}`, name: `${ifc.decl.name}.${im.method.name}`, method: im.method, file: ifc.decl.file, impls: new Map(), fnKey: `${ifc.key}.${n}#DISPATCH` };
+        for (const c of this.classes.values()) {
+          const fn = c.interfaces.has(ifc.key) ? c.methods.get(n)?.fnKey : null;
+          if (fn && !c.pou.abstract) slot.impls.set(fn, [...(slot.impls.get(fn) ?? []), c.id]);
+        }
+        this.slots.set(slot.key, slot);
+      }
+    }
+    for (const c of this.classes.values()) {
+      for (const [n, mi] of c.methods) {
+        if (mi.owner !== c || mi.root !== `${c.key}.${n}` || mi.method.final || mi.method.access === 'PRIVATE') continue;
+        const impls = new Map<string, number[]>();
+        for (const d of descendants(c)) {
+          const fn = d.methods.get(n)?.fnKey;
+          if (fn && !d.pou.abstract) impls.set(fn, [...(impls.get(fn) ?? []), d.id]);
+        }
+        if (impls.size < 2 && mi.fnKey && !c.pou.abstract) continue;  // never overridden: static calls
+        this.slots.set(mi.root, { key: mi.root, name: `${c.pou.name}.${mi.method.name}`, method: mi.method, file: c.pou.file, impls, fnKey: `${mi.root}#DISPATCH` });
+      }
+    }
+  }
+
+  /** Parameters of a method, as a comparable string */
+  private signature(m: Method): string {
+    const saved = this.file;
+    this.file = m.file ?? this.file;
+    try {
+      const params = m.vars.filter((v) => v.section === 'input' || v.section === 'output' || v.section === 'inout')
+        .map((v) => `${v.section} ${v.name.toUpperCase()}: ${typeName(this.resolveType(v.type))}`);
+      return `${params.join('; ')} -> ${m.returnType ? typeName(this.resolveType(m.returnType)) : 'Void'}`;
+    } finally {
+      this.file = saved;
+    }
+  }
+
+  /** Variables of a function block, those of its base blocks first */
+  private fbVars(pou: Pou): VarDecl[] {
+    const out: VarDecl[] = [];
+    const seen = new Set<string>();
+    for (let p: Pou | undefined = pou; p && !seen.has(p.name.toUpperCase()); p = p.extends ? this.pous.get(p.extends.toUpperCase()) : undefined) {
+      seen.add(p.name.toUpperCase());
+      out.unshift(...p.vars);
+    }
+    return out;
+  }
+
+  private isDerived(cls: string, base: string): boolean {
+    for (let c = this.classes.get(cls.toUpperCase()); c; c = c.base ?? undefined) {
+      if (c.key === base.toUpperCase()) return true;
+    }
+    return false;
+  }
+
+  /** In-out parameters of function block type also accept instances of derived blocks */
+  private accepts(param: DataType, arg: DataType): boolean {
+    if (sameType(param, arg)) return true;
+    return param.k === 'fb' && arg.k === 'fb' && !param.library && !arg.library && this.isDerived(arg.name, param.name);
+  }
+
+  /** Abstract function blocks cannot be instantiated */
+  private checkInstance(t: DataType, line: number): void {
+    if (t.k === 'array') this.checkInstance(t.elem, line);
+    if (t.k === 'fb' && !t.library && this.pous.get(t.name.toUpperCase())?.abstract) {
+      throw this.err(`Cannot create an instance of the abstract function block '${t.name}'`, line);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -360,12 +662,25 @@ class Compiler {
     }
     this.layoutInProgress.add(key);
     const members = new Map<string, Member>();
+    // Classes: the members of the base block come first, the class id (2 bytes) before them all
+    const cls = this.classes.get(key);
     let offset = 0;
+    if (cls?.base) {
+      const base = this.fbLayout({ name: cls.base.pou.name, library: false });
+      for (const [k, m] of base.members) members.set(k, m);
+      offset = base.size;
+    } else if (cls) {
+      offset = 2;
+    }
     for (const v of pou.vars) {
       if (!['input', 'output', 'inout', 'static'].includes(v.section)) continue;
       const k = v.name.toUpperCase();
-      if (members.has(k)) throw this.err(`Duplicate declaration of '${v.name}' in '${pou.name}'`, v.line, pou.file);
+      if (members.has(k)) throw this.err(`Duplicate declaration of '${v.name}' in '${pou.name}'${cls?.base && members.get(k) ? ' (declared in a base block)' : ''}`, v.line, pou.file);
+      const saved = this.file;
+      this.file = pou.file;
       const type = this.resolveType(v.type);
+      if (v.section !== 'inout') this.checkInstance(type, v.line);
+      this.file = saved;
       const size = v.section === 'inout' ? 8 : this.sizeOf(type);
       members.set(k, { name: v.name, type, offset, section: v.section });
       offset += size;
@@ -426,12 +741,15 @@ class Compiler {
   }
 
   private allocate(): void {
+    // Interface references hold absolute pointers: address 0 means NULL and is never an instance
+    if (this.interfaces.size > 0) this.alloc(8);
     // Data block types
     for (const db of this.dataBlocks.values()) {
       this.file = db.file;
       if (db.instanceOf !== null) {
         const t = this.resolveType({ name: db.instanceOf, line: db.line });
         if (t.k !== 'fb') throw this.err(`Instance DB '${db.name}': '${db.instanceOf}' is not a function block`, db.line);
+        this.checkInstance(t, db.line);
       } else {
         this.dbLayouts.set(db.name.toUpperCase(), this.dbLayout(db));
       }
@@ -472,10 +790,27 @@ class Compiler {
       this.file = pou.file;
       this.functions.set(pou.name.toUpperCase(), this.frameFor(pou, index++));
     }
+    // Methods, and dispatchers of virtual methods
+    for (const cls of this.classes.values()) {
+      for (const mi of cls.methods.values()) {
+        if (mi.owner !== cls || !mi.fnKey) continue;
+        this.file = mi.method.file ?? cls.pou.file;
+        this.collect(() => this.functions.set(mi.fnKey!, this.methodFrame(cls, mi, index++)));
+      }
+    }
+    if (this.hasErrors()) return;
+    for (const slot of this.slots.values()) {
+      this.file = slot.file;
+      this.functions.set(slot.fnKey, this.dispatcherFrame(slot, index++));
+    }
+    if (index > 0xfffe) throw new CompileError('Too many functions (blocks and methods)');
 
     // Initial data image (start values)
     this.init = new MemoryImage(this.dataTop);
     // FC parameters are not reset by the VM: their STRING headers are set once, here.
+    for (const slot of this.slots.values()) {
+      for (const sym of slot.target!.locals.values()) if (sym.k === 'var') this.initValue(sym.offset, sym.type);
+    }
     for (const f of this.functions.values()) {
       for (const sym of f.locals.values()) {
         if (sym.k === 'var' && sym.area === 'D' && sym.offset < f.zeroOffset) this.initValue(sym.offset, sym.type);
@@ -547,8 +882,9 @@ class Compiler {
     // FB: interface lives in the instance (area N); only temps have a frame.
     if (pou.kind === 'FUNCTION_BLOCK') {
       const layout = this.fbLayout({ name: pou.name, library: false });
+      const vars = this.fbVars(pou);
       for (const m of layout.members.values()) {
-        const v = pou.vars.find((x) => x.name.toUpperCase() === m.name.toUpperCase())!;
+        const v = vars.find((x) => x.name.toUpperCase() === m.name.toUpperCase())!;
         if (v.address) throw this.err(`Only global tags can have an address ('${v.name}')`, v.line);
         add(v, m.section === 'inout'
           ? { k: 'ref', name: m.name, type: m.type, area: 'N', offset: m.offset, section: 'inout' }
@@ -600,7 +936,102 @@ class Compiler {
     }
     return {
       pou, index, locals, frameOffset, frameSize: this.dataTop - frameOffset, zeroOffset, zeroSize: this.dataTop - zeroOffset,
-      params, returnSlot, codeOffset: 0,
+      params, returnSlot, codeOffset: 0, self: pou.kind === 'FUNCTION_BLOCK' ? pou.name.toUpperCase() : undefined,
+    };
+  }
+
+  /**
+   * Method: members of the instance in area N; parameter block in D (inputs and in-outs,
+   * then outputs and return value: the same layout for every implementation of a virtual
+   * method), then temporaries.
+   */
+  private methodFrame(cls: ClassInfo, mi: MethodInfo, index: number): FunctionInfo {
+    const m = mi.method;
+    const pou: Pou = { kind: 'FUNCTION', name: `${cls.pou.name}.${m.name}`, returnType: m.returnType, vars: m.vars, body: m.body, line: m.line, file: m.file ?? cls.pou.file };
+    const locals = new Map<string, Sym>();
+    const layout = this.fbLayout({ name: cls.pou.name, library: false });
+    for (const mem of layout.members.values()) {
+      locals.set(mem.name.toUpperCase(), mem.section === 'inout'
+        ? { k: 'ref', name: mem.name, type: mem.type, area: 'N', offset: mem.offset, section: 'inout' }
+        : { k: 'var', name: mem.name, type: mem.type, area: 'N', offset: mem.offset, section: mem.section as string });
+    }
+    const own = new Set<string>();
+    const add = (v: VarDecl, sym: Sym) => {
+      const k = v.name.toUpperCase();
+      if (own.has(k)) throw this.err(`Duplicate declaration of '${v.name}' in method '${pou.name}'`, v.line);
+      if (v.address) throw this.err(`Only global tags can have an address ('${v.name}')`, v.line);
+      this.checkName(v.name, v.line);
+      own.add(k);
+      locals.set(k, sym);  // hides a member of the same name
+    };
+    const frameOffset = this.dataTop;
+    const params: VarDecl[] = [];
+    const block = this.paramBlock(m, (v, sym) => {
+      add(v, sym);
+      if (v.section !== 'output') params.push(v);
+    });
+    params.push(...m.vars.filter((v) => v.section === 'output'));
+    if (block.returnSlot >= 0) locals.set(m.name.toUpperCase(), { k: 'var', name: m.name, type: block.returnType!, area: 'D', offset: block.returnSlot, section: 'return' });
+    const blockEnd = this.dataTop;
+    for (const v of m.vars) {
+      if (v.section !== 'temp' && v.section !== 'constant' && v.section !== 'static') continue;
+      const type = this.resolveType(v.type);
+      if (v.section === 'constant') {
+        if (!v.initial) throw this.err(`Constant '${v.name}' needs a value`, v.line);
+        add(v, { k: 'const', name: v.name, type, value: this.constValue(v.initial, type) });
+        continue;
+      }
+      if (type.k === 'fb' || type.k === 'db') throw this.err(`'${v.name}': function block instances cannot be temporary`, v.line);
+      add(v, { k: 'var', name: v.name, type, area: 'D', offset: this.alloc(this.sizeOf(type)), section: 'temp' });
+    }
+    return {
+      pou, index, locals, frameOffset, frameSize: this.dataTop - frameOffset, zeroOffset: block.zeroOffset, zeroSize: this.dataTop - block.zeroOffset,
+      params, returnSlot: block.returnSlot, codeOffset: 0, self: cls.key, block: cls.pou.name, blockEnd,
+    };
+  }
+
+  /** Allocates the parameter block of a method (see methodFrame) */
+  private paramBlock(m: Method, add: (v: VarDecl, sym: Sym) => void): { zeroOffset: number; returnSlot: number; returnType: DataType | null } {
+    for (const v of m.vars.filter((x) => x.section === 'input' || x.section === 'inout')) {
+      const type = this.resolveType(v.type);
+      if (v.section === 'input' && (type.k === 'fb' || type.k === 'db')) {
+        throw this.err(`'${v.name}': function block instances can only be passed as VAR_IN_OUT`, v.line);
+      }
+      const offset = this.alloc(v.section === 'inout' ? 8 : this.sizeOf(type));
+      add(v, v.section === 'inout'
+        ? { k: 'ref', name: v.name, type, area: 'D', offset, section: 'inout' }
+        : { k: 'var', name: v.name, type, area: 'D', offset, section: 'input' });
+    }
+    const zeroOffset = this.dataTop;
+    for (const v of m.vars.filter((x) => x.section === 'output')) {
+      const type = this.resolveType(v.type);
+      if (type.k === 'fb' || type.k === 'db') throw this.err(`'${v.name}': function block instances cannot be outputs of a method`, v.line);
+      add(v, { k: 'var', name: v.name, type, area: 'D', offset: this.alloc(this.sizeOf(type)), section: 'output' });
+    }
+    let returnSlot = -1;
+    let returnType: DataType | null = null;
+    if (m.returnType) {
+      returnType = this.resolveType(m.returnType);
+      returnSlot = this.alloc(this.sizeOf(returnType));
+    }
+    return { zeroOffset, returnSlot, returnType };
+  }
+
+  /** Dispatcher of a virtual method, with its transfer block (the parameters written by the callers) */
+  private dispatcherFrame(slot: Slot, index: number): FunctionInfo {
+    const locals = new Map<string, Sym>();
+    const params: VarDecl[] = [];
+    slot.transfer = this.dataTop;
+    const block = this.paramBlock(slot.method, (v, sym) => {
+      locals.set(v.name.toUpperCase(), sym);
+      if (v.section !== 'output') params.push(v);
+    });
+    params.push(...slot.method.vars.filter((v) => v.section === 'output'));
+    slot.target = { name: slot.name, params, locals, returnSlot: block.returnSlot, returnType: block.returnType };
+    const pou: Pou = { kind: 'FUNCTION', name: slot.fnKey, returnType: null, vars: [], body: [], line: slot.method.line, file: slot.file };
+    return {
+      pou, index, locals: new Map(), frameOffset: this.dataTop, frameSize: 0, zeroOffset: this.dataTop, zeroSize: 0,
+      params: [], returnSlot: -1, codeOffset: 0, dispatch: slot, block: slot.name.split('.')[0],
     };
   }
 
@@ -624,13 +1055,15 @@ class Compiler {
         }
         const pou = this.pous.get(t.name.toUpperCase())!;
         const layout = this.fbLayout(t);
-        for (const v of pou.vars) {
+        const cls = this.classes.get(t.name.toUpperCase());
+        if (cls) this.init.write(offset, 2, 'int', cls.id);
+        for (const v of this.fbVars(pou)) {
           const m = layout.members.get(v.name.toUpperCase());
           if (!m || m.section === 'inout') continue;
           this.initValue(offset + m.offset, m.type);
           if (v.initial) {
             const saved = this.file;
-            this.file = pou.file;
+            this.file = v.file ?? pou.file;
             this.initConst(offset + m.offset, m.type, v.initial);
             this.file = saved;
           }
@@ -800,6 +1233,11 @@ class Compiler {
     this.loops = [];
     info.codeOffset = this.code.length;
     this.callGraph.set(info.pou.name.toUpperCase(), new Set());
+    if (info.dispatch) {
+      this.dispatcher(info, info.dispatch);
+      this.fn = null;
+      return;
+    }
 
     // Prologue: the VM zeroes the frame on each call, so restore the header of STRING variables
     for (const sym of info.locals.values()) {
@@ -820,6 +1258,48 @@ class Compiler {
     this.statements(info.pou.body);
     this.emit(info.pou.kind === 'ORGANIZATION_BLOCK' ? Op.HALT : Op.RET);
     this.fn = null;
+  }
+
+  /**
+   * Dispatcher: reads the class id of the instance, copies the transfer block to the parameter
+   * block of the implementation, calls it and copies the outputs back.
+   */
+  private dispatcher(info: FunctionInfo, slot: Slot): void {
+    const graph = this.callGraph.get(info.pou.name.toUpperCase())!;
+    const branches: Array<{ fn: FunctionInfo; jumps: number[] }> = [];
+    for (const [fnKey, ids] of slot.impls) {
+      const fn = this.functions.get(fnKey)!;
+      graph.add(fnKey);
+      const jumps: number[] = [];
+      for (const id of ids) {
+        this.emit(Op.LOAD, VmType.U16, Area.N, 0);
+        this.pushInt(id);
+        this.emit(Op.EQ);
+        jumps.push(this.jump(Op.JNZ));
+      }
+      branches.push({ fn, jumps });
+    }
+    this.emit(Op.TRAP, Trap.BAD_ADDRESS);  // not an instance of a class that implements the method
+    const transfer = slot.transfer!;
+    for (const b of branches) {
+      b.jumps.forEach((j) => this.bind(j));
+      const f = b.fn;
+      const inSize = f.zeroOffset - f.frameOffset;
+      const outSize = f.blockEnd! - f.zeroOffset;
+      if (inSize > 0) {
+        this.emit(Op.PUSH_ADDR, Area.D, f.frameOffset);
+        this.emit(Op.PUSH_ADDR, Area.D, transfer);
+        this.emit(Op.COPY, inSize);
+      }
+      this.emit(Op.PUSH_ADDR, Area.N, 0);
+      this.emit(Op.CALL_FB, f.index);
+      if (outSize > 0) {
+        this.emit(Op.PUSH_ADDR, Area.D, transfer + inSize);
+        this.emit(Op.PUSH_ADDR, Area.D, f.zeroOffset);
+        this.emit(Op.COPY, outSize);
+      }
+      this.emit(Op.RET);
+    }
   }
 
   /** Code that applies the start values declared in a data type to a zeroed variable. */
@@ -1089,7 +1569,11 @@ class Compiler {
     switch (e.kind) {
       case 'var': {
         const s = this.lookup(e.name, e.scope);
-        if (!s) throw this.undeclared(e);
+        if (!s) {
+          const self = this.selfRef(e);
+          if (self) return { k: 'static', type: self, area: 'N', offset: 0, name: 'THIS' };
+          throw this.undeclared(e);
+        }
         if (s.k === 'const') return { k: 'const', type: s.type, value: s.value };
         if (s.k === 'ref') {
           this.emit(Op.LOAD, VmType.PTR, AREA_CODE[s.area], s.offset);
@@ -1173,6 +1657,11 @@ class Compiler {
       return;
     }
     const t = p.type;
+    if (t.k === 'ifc') {
+      if (p.k === 'static') this.emit(Op.LOAD, VmType.PTR, AREA_CODE[p.area], p.offset);
+      else this.emit(Op.LOAD_IND, VmType.PTR);
+      return;
+    }
     if (t.k !== 'elem') {
       this.pushAddress(p);
       return;
@@ -1189,8 +1678,8 @@ class Compiler {
   /** Stores the value on top of the stack (already converted to `t`). */
   private storePlace(p: Place, t: DataType, line: number): void {
     if (p.k === 'const') throw this.err('Cannot assign to a constant', line);
-    if (t.k !== 'elem') throw this.err(`Cannot assign to ${typeName(t)}`, line);
-    const vm = ELEMENTARY[t.name].vm;
+    if (t.k !== 'elem' && t.k !== 'ifc') throw this.err(`Cannot assign to ${typeName(t)}`, line);
+    const vm = t.k === 'ifc' ? VmType.PTR : ELEMENTARY[t.name].vm;
     if (p.k === 'static') {
       if (p.bit !== undefined) this.emit(Op.STORE_BIT, AREA_CODE[p.area], p.offset, p.bit);
       else this.emit(Op.STORE, vm, AREA_CODE[p.area], p.offset);
@@ -1207,6 +1696,12 @@ class Compiler {
     }
     if (scope !== 'local') return this.globals.get(key) ?? null;
     return null;
+  }
+
+  /** THIS: the instance of the running function block (body or method) */
+  private selfRef(e: Extract<Expr, { kind: 'var' }>): Extract<DataType, { k: 'fb' }> | null {
+    if (e.scope !== null || e.name.toUpperCase() !== 'THIS' || !this.fn?.self) return null;
+    return { k: 'fb', name: this.pous.get(this.fn.self)!.name, library: false };
   }
 
   private undeclared(e: Extract<Expr, { kind: 'var' }>): CompileError {
@@ -1235,7 +1730,12 @@ class Compiler {
         return e.type === 'DTL' ? DTL : T.elem(e.type as Elementary);
       case 'var': {
         const s = this.lookup(e.name, e.scope);
-        if (!s) throw this.undeclared(e);
+        if (!s) {
+          const self = this.selfRef(e);
+          if (self) return self;
+          if (e.scope === null && e.name.toUpperCase() === 'NULL') return { k: 'null' };
+          throw this.undeclared(e);
+        }
         return s.type;
       }
       case 'addr':
@@ -1279,6 +1779,10 @@ class Compiler {
       case '<=':
       case '>':
       case '>=':
+        if (a.k === 'ifc' || b.k === 'ifc' || a.k === 'null' || b.k === 'null') {
+          if (e.op !== '=' && e.op !== '<>') throw this.err(`Interface references can only be compared with = and <>`, e.line);
+          return T.BOOL;
+        }
         if (isString(a) && isString(b)) return T.BOOL;
         if (isBool(a) && isBool(b)) {
           if (e.op !== '=' && e.op !== '<>') throw this.err(`Cannot compare Bool values with ${e.op}`, e.line);
@@ -1325,7 +1829,12 @@ class Compiler {
 
   /** Emits `e` converted to `want` (null = natural type). Returns the type of the value pushed. */
   private expr(e: Expr, want: DataType | null): DataType {
+    if (want?.k === 'ifc') {
+      this.refValue(e, want);
+      return want;
+    }
     const natural = this.typeOf(e);
+    if (natural.k === 'null') throw this.err('NULL can only be used with interface references', e.line);
     const target = want ?? (natural.k === 'anyint' ? T.DINT : natural.k === 'anyreal' ? T.LREAL : natural);
 
     // Literals are emitted directly in the target representation.
@@ -1392,6 +1901,29 @@ class Compiler {
     return this.convert(natural, target, e.line);
   }
 
+  /** Pushes an interface reference: NULL, another reference, or the address of an instance. */
+  private refValue(e: Expr, want: Extract<DataType, { k: 'ifc' }> | null): void {
+    const t = this.typeOf(e);
+    const what = want ? typeName(want) : 'an interface reference';
+    if (t.k === 'null') {
+      this.pushInt(0);
+    } else if (t.k === 'ifc') {
+      if (want && !this.interfaces.get(t.name.toUpperCase())!.bases.has(want.name.toUpperCase())) {
+        throw this.err(`Cannot use ${typeName(t)} as ${what}: '${t.name}' does not extend '${want.name}'`, e.line);
+      }
+      this.expr(e, null);
+    } else if (t.k === 'fb' && !t.library) {
+      const cls = this.classes.get(t.name.toUpperCase());
+      if (want && !cls?.interfaces.has(want.name.toUpperCase())) {
+        throw this.err(`${typeName(t)} does not implement interface '${want.name}'`, e.line);
+      }
+      if (e.kind === 'call') throw this.err(`Expected an instance of ${typeName(t)}`, e.line);
+      this.pushAddress(this.place(e));
+    } else {
+      throw this.err(`Cannot use ${typeName(t)} as ${what}`, e.line);
+    }
+  }
+
   /** Converts the value on top of the stack. */
   private convert(from: DataType, to: DataType, line: number): DataType {
     if (to.k === 'void' || sameType(from, to)) return to;
@@ -1426,6 +1958,12 @@ class Compiler {
     const b = this.typeOf(e.right);
 
     if (['=', '<>', '<', '<=', '>', '>='].includes(e.op)) {
+      if (a.k === 'ifc' || b.k === 'ifc' || a.k === 'null' || b.k === 'null') {
+        this.refValue(e.left, null);
+        this.refValue(e.right, null);
+        this.emit(e.op === '=' ? Op.EQ : Op.NE);
+        return;
+      }
       if (isString(a)) {
         this.stringValue(e.left);
         this.stringValue(e.right);
@@ -1502,6 +2040,12 @@ class Compiler {
   // -------------------------------------------------------------------------
 
   private callType(e: Extract<Expr, { kind: 'call' }>): DataType {
+    const mc = this.methodCall(e);
+    if (mc) {
+      if (mc.k === 'super-body') return T.VOID;
+      const m = mc.k === 'method' ? mc.mi.method : mc.ifc.methods.get(mc.name.toUpperCase())!.method;
+      return m.returnType ? this.resolveType(m.returnType) : T.VOID;
+    }
     const c = e.callee;
     if (c.kind === 'var' && c.scope !== 'local') {
       const key = c.name.toUpperCase();
@@ -1637,6 +2181,8 @@ class Compiler {
   }
 
   private call(e: Extract<Expr, { kind: 'call' }>): void {
+    const mc = this.methodCall(e);
+    if (mc) return this.callMethod(mc, e);
     const c = e.callee;
     if (c.kind === 'var' && c.scope !== 'local') {
       const key = c.name.toUpperCase();
@@ -1929,7 +2475,19 @@ class Compiler {
   private callFunction(pou: Pou, e: Extract<Expr, { kind: 'call' }>): void {
     const callee = this.functions.get(pou.name.toUpperCase())!;
     this.callGraph.get(this.fn!.pou.name.toUpperCase())?.add(pou.name.toUpperCase());
+    const target: CallTarget = {
+      name: pou.name, params: callee.params, locals: callee.locals, returnSlot: callee.returnSlot,
+      returnType: pou.returnType ? this.resolveType(pou.returnType) : null,
+    };
+    this.callWith(target, e, () => this.emit(Op.CALL, callee.index));
+  }
 
+  /**
+   * Call with a parameter frame in D: evaluates and stores the inputs, emits the call
+   * (`invoke`), copies the outputs and pushes the return value.
+   */
+  private callWith(callee: CallTarget, e: Extract<Expr, { kind: 'call' }>, invoke: () => void): void {
+    const pou = callee;
     const inputs = callee.params.filter((p) => p.section !== 'output');
     const byName = new Map(callee.params.map((p) => [p.name.toUpperCase(), p]));
     const given = new Map<string, CallArg>();
@@ -1952,7 +2510,7 @@ class Compiler {
       const sym = callee.locals.get(p.name.toUpperCase()) as Extract<Sym, { k: 'var' | 'ref' }>;
       if (p.section === 'inout') {
         const target = this.place(a.value);
-        if (!sameType(target.type, sym.type) && !(isString(target.type) && isString(sym.type))) {
+        if (!this.accepts(sym.type, target.type) && !(isString(target.type) && isString(sym.type))) {
           throw this.err(`In-out parameter '${p.name}' expects ${typeName(sym.type)}, got ${typeName(target.type)}`, e.line);
         }
         this.checkWritable(target, e.line);
@@ -1980,7 +2538,7 @@ class Compiler {
       }
     }
     for (const s of stores.reverse()) s();
-    this.emit(Op.CALL, callee.index);
+    invoke();
 
     // Outputs
     for (const p of callee.params.filter((x) => x.section === 'output')) {
@@ -1991,9 +2549,104 @@ class Compiler {
     }
 
     if (callee.returnSlot >= 0) {
-      const rt = this.resolveType(pou.returnType!);
-      this.loadPlace({ k: 'static', type: rt, area: 'D', offset: callee.returnSlot });
+      this.loadPlace({ k: 'static', type: callee.returnType!, area: 'D', offset: callee.returnSlot });
     }
+  }
+
+  /** Recognises method calls: inst.M(), ref.M() (interface), THIS.M(), M(), SUPER.M(), SUPER() */
+  private methodCall(e: Extract<Expr, { kind: 'call' }>): MethodCall | null {
+    const c = e.callee;
+    const self = this.fn?.self ? this.classes.get(this.fn.self) : undefined;
+    const isWord = (x: Expr, w: string) => x.kind === 'var' && x.scope === null && x.name.toUpperCase() === w && !this.lookup(x.name, null);
+    if (c.kind === 'var') {
+      if (isWord(c, 'SUPER')) {
+        if (!self?.base) throw this.err(`SUPER can only be used in a function block that extends another one`, e.line);
+        return { k: 'super-body', base: self.base };
+      }
+      if (c.scope === 'global' || this.lookup(c.name, c.scope)) return null;
+      const mi = self?.methods.get(c.name.toUpperCase());
+      return mi ? { k: 'method', recv: null, mi, exact: false, viaSuper: false } : null;
+    }
+    if (c.kind !== 'member') return null;
+    const n = c.member.toUpperCase();
+    if (isWord(c.base, 'SUPER')) {
+      const mi = self?.base?.methods.get(n);
+      if (!self?.base) throw this.err(`SUPER can only be used in a function block that extends another one`, e.line);
+      if (!mi) throw this.err(`'${self.base.pou.name}' has no method '${c.member}'`, e.line);
+      return { k: 'method', recv: null, mi, exact: true, viaSuper: true };
+    }
+    const bt = this.typeOf(c.base);
+    if (bt.k === 'ifc') {
+      const ifc = this.interfaces.get(bt.name.toUpperCase())!;
+      if (!ifc.methods.has(n)) throw this.err(`Interface '${ifc.decl.name}' has no method '${c.member}'`, e.line);
+      return { k: 'interface', recv: c.base, ifc, name: c.member };
+    }
+    if (bt.k !== 'fb' || bt.library) return null;
+    const mi = this.classes.get(bt.name.toUpperCase())?.methods.get(n);
+    if (!mi) return null;
+    return { k: 'method', recv: c.base, mi, exact: this.exactType(c.base), viaSuper: false };
+  }
+
+  /** True if the instance is statically known (not THIS nor an in-out parameter) */
+  private exactType(e: Expr): boolean {
+    let root = e;
+    while (root.kind === 'member' || root.kind === 'index') root = root.base;
+    if (root.kind !== 'var') return false;
+    const s = this.lookup(root.name, root.scope);
+    return s?.k === 'var';
+  }
+
+  private callMethod(mc: MethodCall, e: Extract<Expr, { kind: 'call' }>): void {
+    const graph = this.callGraph.get(this.fn!.pou.name.toUpperCase())!;
+    if (mc.k === 'super-body') {
+      if (e.args.length > 0) throw this.err(`SUPER() takes no parameters`, e.line);
+      const body = this.functions.get(mc.base.key)!;
+      graph.add(mc.base.key);
+      this.emit(Op.PUSH_ADDR, Area.N, 0);
+      this.emit(Op.CALL_FB, body.index);
+      return;
+    }
+    const pushRecv = (recv: Expr | null) => {
+      if (recv === null) this.emit(Op.PUSH_ADDR, Area.N, 0);
+      else this.pushAddress(this.place(recv));
+    };
+    if (mc.k === 'interface') {
+      const slot = this.slots.get(`${mc.ifc.methods.get(mc.name.toUpperCase())!.owner.key}.${mc.name.toUpperCase()}`)!;
+      const fn = this.functions.get(slot.fnKey)!;
+      graph.add(slot.fnKey);
+      this.expr(mc.recv, null);  // the reference
+      this.callWith(slot.target!, e, () => {
+        this.emit(Op.DUP);
+        const ok = this.jump(Op.JNZ);
+        this.emit(Op.TRAP, Trap.BAD_ADDRESS);  // NULL reference
+        this.bind(ok);
+        this.emit(Op.CALL_FB, fn.index);
+      });
+      return;
+    }
+    const { mi } = mc;
+    const m = mi.method;
+    const caller = this.fn!.self;
+    if (m.access === 'PRIVATE' && caller !== mi.owner.key) {
+      throw this.err(`Method '${mi.owner.pou.name}.${m.name}' is PRIVATE`, e.line);
+    }
+    if (m.access === 'PROTECTED' && !(caller && this.isDerived(caller, mi.owner.key))) {
+      throw this.err(`Method '${mi.owner.pou.name}.${m.name}' is PROTECTED: it can only be called from '${mi.owner.pou.name}' and the blocks that extend it`, e.line);
+    }
+    const slot = this.slots.get(mi.root);
+    if (slot && !mc.exact && !m.final) {
+      const fn = this.functions.get(slot.fnKey)!;
+      graph.add(slot.fnKey);
+      pushRecv(mc.recv);
+      this.callWith(slot.target!, e, () => this.emit(Op.CALL_FB, fn.index));
+      return;
+    }
+    if (!mi.fnKey) throw this.err(`Method '${mi.owner.pou.name}.${m.name}' is abstract`, e.line);
+    const fn = this.functions.get(mi.fnKey)!;
+    graph.add(mi.fnKey);
+    pushRecv(mc.recv);
+    this.callWith({ name: fn.pou.name, params: fn.params, locals: fn.locals, returnSlot: fn.returnSlot, returnType: this.callType(e) }, e,
+      () => this.emit(Op.CALL_FB, fn.index));
   }
 
   /** Copies a value from `source` into the lvalue `target` (for => outputs). */
@@ -2028,6 +2681,7 @@ class Compiler {
     }
     const layout = this.fbLayout(fbType);
     const pou = fbType.library ? null : this.pous.get(fbType.name.toUpperCase())!;
+    if (pou?.isClass) throw this.err(`'${pou.name}' is a class: call its methods (${exprName(callee)}.Method())`, e.line);
     if (pou) this.callGraph.get(this.fn!.pou.name.toUpperCase())?.add(pou.name.toUpperCase());
 
     // Instance location: static, or a pointer kept in a scratch slot.
@@ -2084,7 +2738,7 @@ class Compiler {
         inouts.push({ member: m, target: a.value });
         const target = this.place(a.value);
         this.checkWritable(target, e.line);
-        if (!sameType(target.type, m.type)) throw this.err(`In-out parameter '${m.name}' expects ${typeName(m.type)}, got ${typeName(target.type)}`, e.line);
+        if (!this.accepts(m.type, target.type)) throw this.err(`In-out parameter '${m.name}' expects ${typeName(m.type)}, got ${typeName(target.type)}`, e.line);
         this.pushAddress(target);
         stores.push(() => {
           const p = memberPlace({ ...m, type: T.LINT });
@@ -2162,8 +2816,8 @@ class Compiler {
     const visit = (name: string, path: string[]): void => {
       if (state.get(name) === 'done') return;
       if (state.get(name) === 'visiting') {
-        const cycle = [...path.slice(path.indexOf(name)), name].map((n) => this.pous.get(n)!.name).join(' -> ');
-        const pou = this.pous.get(name)!;
+        const cycle = [...path.slice(path.indexOf(name)), name].map((n) => this.functions.get(n)!.pou.name).filter((n) => !n.endsWith('#DISPATCH')).join(' -> ');
+        const pou = this.functions.get(name)!.pou;
         throw this.err(`Recursive calls are not allowed: ${cycle}`, pou.line, pou.file);
       }
       state.set(name, 'visiting');
@@ -2266,7 +2920,7 @@ class Compiler {
       ok: false,
       diagnostics: this.diagnostics,
       symbols: this.symbols,
-      functions: ordered.map((f) => ({ name: f.pou.name, kind: f.pou.kind, file: f.pou.file })),
+      functions: ordered.map((f) => ({ name: f.block ?? f.pou.name, kind: f.block ? 'FUNCTION_BLOCK' : f.pou.kind, file: f.pou.file })),
       stats: {
         code: this.code.length, data: this.dataTop, constants: this.consts.length,
         inputs: this.imageSize.I, outputs: this.imageSize.Q, memory: this.imageSize.M,
