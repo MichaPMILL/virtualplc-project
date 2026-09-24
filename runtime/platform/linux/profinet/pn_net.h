@@ -54,6 +54,11 @@ Ipv4 interfaceIp(const std::string& ifname);
 /** Sets address and mask (and the default route when a gateway is given); needs CAP_NET_ADMIN. */
 bool setInterfaceIp(const std::string& ifname, const Ipv4& ip, std::string& error);
 
+/** True when the process has the capability (CAP_NET_RAW = 13, CAP_NET_ADMIN = 12) */
+bool hasCapability(int cap);
+/** Command that gives the executable the capabilities PROFINET needs */
+std::string capabilityHint();
+
 /** Monotonic time in microseconds */
 uint64_t nowUs();
 

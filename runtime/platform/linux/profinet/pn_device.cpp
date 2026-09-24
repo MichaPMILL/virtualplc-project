@@ -65,6 +65,8 @@ void Device::attach(Stack& stack) {
     serverBoot_ = uint32_t(time(nullptr));
     loadSettings();
     stack.add(this);
+    if (config_.manageIp && !hasCapability(12))
+        log("warning: without CAP_NET_ADMIN the IP address set by the controller cannot be applied — " + capabilityHint());
     log("IO-Device \"" + stationName() + "\" on " + config_.ifname + " (" + macText(raw().mac()) + ", " + ipText(ip_.ip) + ")");
 }
 
@@ -155,7 +157,7 @@ uint64_t Device::tick(uint64_t now) {
     uint64_t watchdog = uint64_t(out_.cycleUs()) * (out_.watchdogFactor ? out_.watchdogFactor : 3);
     uint64_t activity = uint64_t(ar_.activityTimeout ? ar_.activityTimeout : 100) * 100000u;
     if (lastRx_ && now - lastRx_ > watchdog && state_ == AR_RUN) {
-        abort("watchdog: no data from the controller");
+        abort("watchdog: no data from the controller for " + std::to_string((now - lastRx_) / 1000) + " ms");
     } else if (state_ != AR_RUN && now - connectedAt_ > activity) {
         abort("parametrization timeout");
     } else if (state_ == AR_WAIT_APPREADY_RES && now - appReadySent_ > 1000000) {
@@ -353,23 +355,26 @@ void Device::onDcpSet(const EthFrame& eth, const DcpMessage& m) {
 // ---------------------------------------------------------------------------
 
 void Device::sendCyclic() {
-    uint8_t csdu[MAX_CSDU] = {0};
+    // the stack thread never waits for the scan: when the process image is being copied,
+    // the frame of the previous cycle is sent again (mapped_ only changes on this thread)
     const size_t length = std::min<size_t>(in_.dataLength, MAX_CSDU);
-    bool run;
-    {
-        std::lock_guard<std::mutex> lock(ioMutex_);
-        run = plcRun_ && nowUs() - lastWrite_ < 500000;
+    if (csdu_.size() != length) csdu_.assign(length, 0);
+    std::unique_lock<std::mutex> lock(ioMutex_, std::try_to_lock);
+    if (lock.owns_lock()) {
+        lastRun_ = plcRun_ && nowUs() - lastWrite_ < 500000;
         for (const Mapped& m : mapped_) {
             if (!m.hasIn) continue;
             if (m.imageOut >= 0)
-                for (uint16_t i = 0; i < m.inLength; i++) csdu[m.inOffset + i] = toController_[size_t(m.imageOut) + i];
-            csdu[m.inIops] = run || !m.inLength ? IOXS_GOOD : IOXS_BAD;
+                for (uint16_t i = 0; i < m.inLength; i++) csdu_[m.inOffset + i] = toController_[size_t(m.imageOut) + i];
+            csdu_[m.inIops] = lastRun_ || !m.inLength ? IOXS_GOOD : IOXS_BAD;
         }
+        lock.unlock();
+        for (const IoDataObject& o : in_.iocs)
+            if (o.frameOffset < length) csdu_[o.frameOffset] = IOXS_GOOD;
     }
-    for (const IoDataObject& o : in_.iocs)
-        if (o.frameOffset < length) csdu[o.frameOffset] = IOXS_GOOD;
     cycleCounter_ = uint16_t(cycleCounter_ + in_.sendClockFactor * in_.reductionRatio);
-    writeRtFrame(frame_, ar_.initiatorMac, raw().mac(), in_.tagHeader, in_.frameId, csdu, length, cycleCounter_, run ? DATA_STATUS_RUN : DATA_STATUS_STOP);
+    writeRtFrame(frame_, ar_.initiatorMac, raw().mac(), in_.tagHeader, in_.frameId, csdu_.data(), length, cycleCounter_,
+                 lastRun_ ? DATA_STATUS_RUN : DATA_STATUS_STOP);
     raw().send(frame_);
 }
 
@@ -379,7 +384,9 @@ void Device::onCyclic(uint16_t frameId, const uint8_t* p, size_t n) {
     const bool valid = (dataStatus & 0x04) != 0;
     const bool run = valid && (dataStatus & 0x10) != 0;
     lastRx_ = nowUs();
-    std::lock_guard<std::mutex> lock(ioMutex_);
+    // not waiting for the scan: if the image is busy, the next frame brings the data
+    std::unique_lock<std::mutex> lock(ioMutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     controllerRun_ = run;
     for (const Mapped& m : mapped_) {
         if (!m.hasOut || m.imageIn < 0) continue;
@@ -474,6 +481,15 @@ bool Device::alarm(uint16_t slot, uint16_t kind, uint32_t code) {
     return true;
 }
 
+void Device::announceDiagnoses() {
+    std::set<uint32_t> active;
+    {
+        std::lock_guard<std::mutex> lock(alarmMutex_);
+        active.swap(diagnoses_);  // alarm() only sends changes: start from an empty set
+    }
+    for (uint32_t k : active) alarm(uint16_t(k >> 16), ALARM_DIAGNOSIS, k & 0xFFFF);
+}
+
 bool Device::diagnosisActive() {
     std::lock_guard<std::mutex> lock(alarmMutex_);
     return !diagnoses_.empty();
@@ -531,9 +547,9 @@ void Device::abort(const std::string& why) {
     nextSend_ = lastRx_ = 0;
     alarmBusy_ = false;
     {
+        // the active diagnoses are kept: they are announced again to the next controller
         std::lock_guard<std::mutex> alarms(alarmMutex_);
         alarmQueue_.clear();
-        diagnoses_.clear();
     }
     std::lock_guard<std::mutex> lock(ioMutex_);
     std::fill(fromController_.begin(), fromController_.end(), 0);
@@ -572,6 +588,7 @@ bool Device::onRpc(const uint8_t* p, size_t n, const sockaddr_in& from) {
         }
         state_ = AR_RUN;
         log("data exchange with " + ar_.stationName + " started");
+        announceDiagnoses();
         return true;
     }
     return false;

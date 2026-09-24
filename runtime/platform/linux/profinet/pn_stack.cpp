@@ -2,6 +2,9 @@
 #include "pn_stack.h"
 
 #include <poll.h>
+#include <pthread.h>
+#include <sched.h>
+#include <string.h>
 #include <sys/eventfd.h>
 #include <time.h>
 #include <unistd.h>
@@ -25,6 +28,14 @@ void Stack::start() {
     wake_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     stop_ = false;
     thread_ = std::thread([this] { loop(); });
+    // real-time priority: cyclic frames and watchdogs of a few milliseconds must not wait
+    // for the other processes (needs CAP_SYS_NICE, or root, or the systemd unit)
+    sched_param sp{};
+    sp.sched_priority = 60;
+    int rc = pthread_setschedparam(thread_.native_handle(), SCHED_FIFO, &sp);
+    if (rc != 0)
+        log("PROFINET: no real-time priority for the stack thread (" + std::string(strerror(rc)) +
+            "): short update times may be disturbed by the load of the system — give the CPU CAP_SYS_NICE");
 }
 
 void Stack::stop() {

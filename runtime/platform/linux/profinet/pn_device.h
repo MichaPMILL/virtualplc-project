@@ -94,6 +94,7 @@ private:
     void alarmTick(uint64_t now);
     void sendAlarm();
     void sendRtaAck(uint16_t ackSeq, bool high);
+    void announceDiagnoses();
 
     void onFrame(const uint8_t* p, size_t n) override;
     bool onRpc(const uint8_t* p, size_t n, const sockaddr_in& from) override;
@@ -162,6 +163,8 @@ private:
     uint64_t lastWrite_ = 0;  // outputs older than 500 ms: the CPU is not running
     bool controllerRun_ = false;
     std::vector<uint8_t> frame_;
+    std::vector<uint8_t> csdu_;  // C_SDU of the last input frame (resent when the image is busy)
+    bool lastRun_ = false;
     uint32_t records_ = 0;  // parameter records received (diagnostics)
 };
 

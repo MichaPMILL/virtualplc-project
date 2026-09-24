@@ -28,7 +28,8 @@ export interface DeviceState {
   logSeq: number;
   uptimeMs: number;
   fault: { code: string; function: number; line: number; pc: number } | null;
-  io: Array<{ module: number; ok: boolean }>;
+  /** I/O modules: connection state, diagnostic text (PROFINET: state, active diagnoses, neighbour) */
+  io: Array<{ module: number; ok: boolean; diag?: string }>;
 }
 
 export interface LogEntry {

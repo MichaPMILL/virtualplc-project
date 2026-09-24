@@ -144,13 +144,16 @@ export function deviceEditor(device: Device): EditorView {
       h('div', { className: 'm-foot' }, `Emplacement 1`)));
     device.io.forEach((m, i) => {
       const ok = s.connected ? s.io?.[i]?.ok : undefined;
+      const diag = s.connected ? s.io?.[i]?.diag : undefined;
+      const hasDiag = !!diag && /(^|\n)slot \d/.test(diag);
       row.append(h('div', {
         className: `module${selected === i ? ' selected' : ''}`,
+        title: diag ?? '',
         onclick: () => { selected = i; renderRack(); renderProps(); },
         oncontextmenu: (e: Event) => contextMenu(e as MouseEvent, [{ label: t.delete, icon: 'del', run: () => { device.io.splice(i, 1); selected = -1; touch(); renderProps(); } }]),
       },
       h('div', { className: 'm-head' }, m.name),
-      h('div', { className: 'm-leds' }, led(ok === true, 'on-green'), led(ok === false, 'on-red')),
+      h('div', { className: 'm-leds' }, led(ok === true && !hasDiag, 'on-green'), led(ok === false || hasDiag, hasDiag && ok ? 'on-yellow' : 'on-red')),
       h('div', { className: 'm-body' }, MODULE_LABELS[m.kind],
         m.kind === 'modbus-tcp' || m.kind === 'iolink-master' ? h('div', null, `${m.host}:${m.port ?? 502}`)
           : m.kind === 'profinet-device' ? h('div', null, m.stationName)
@@ -426,9 +429,15 @@ export function onlineEditor(device: Device): EditorView {
       h('div', { className: 'operator', style: 'margin:12px 0 0' },
         h('div', { className: 'op-title' }, 'Modules d\'E/S'),
         h('table', { className: 'grid' },
-          h('tr', null, h('th', { style: 'width:60px' }, 'État'), h('th', null, 'Module'), h('th', null, 'Type')),
-          ...device.io.map((m, i) => h('tr', null, h('td', null, svg(s.io?.[i]?.ok ? icons.ok : icons.error)), h('td', null, m.name), h('td', null, MODULE_LABELS[m.kind]))),
-          device.io.length === 0 ? h('tr', null, h('td', { colSpan: '3', className: 'muted' }, 'Aucun module configuré')) : null)),
+          h('tr', null, h('th', { style: 'width:60px' }, 'État'), h('th', null, 'Module'), h('th', null, 'Type'), h('th', null, 'Diagnostic')),
+          ...device.io.map((m, i) => {
+            const st = s.io?.[i];
+            const diag = st?.diag ?? '';
+            const icon = !st?.ok ? icons.error : /(^|\n)slot \d/.test(diag) ? icons.warning : icons.ok;
+            return h('tr', null, h('td', null, svg(icon)), h('td', null, m.name), h('td', null, MODULE_LABELS[m.kind]),
+              h('td', { style: 'white-space:pre-line' }, diag));
+          }),
+          device.io.length === 0 ? h('tr', null, h('td', { colSpan: '4', className: 'muted' }, 'Aucun module configuré')) : null)),
       h('div', { className: 'operator', style: 'margin:12px 0 0' },
         h('div', { className: 'op-title' }, 'Tampon de diagnostic'),
         h('table', { className: 'grid' },

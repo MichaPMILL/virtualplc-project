@@ -167,6 +167,9 @@ const INSTRUCTIONS: Completion[] = [
   snippetCompletion('SCALE_X(MIN := ${}, VALUE := , MAX := )', { label: 'SCALE_X', type: 'function', detail: 'Mettre à l\'échelle' }),
   snippetCompletion('CONCAT(IN1 := ${}, IN2 := )', { label: 'CONCAT', type: 'function', detail: 'Chaîne' }),
   snippetCompletion('LOG(${})', { label: 'LOG', type: 'function', detail: 'Tampon de diagnostic' }),
+  snippetCompletion('DEVICE_OK(${})', { label: 'DEVICE_OK', type: 'function', detail: 'Module d\'E/S en échange de données' }),
+  snippetCompletion('DEVICE_DIAG(${})', { label: 'DEVICE_DIAG', type: 'function', detail: 'Diagnostic actif sur le module' }),
+  snippetCompletion('PN_ALARM(MODULE := ${}, SLOT := 1, KIND := 1, CODE := 1)', { label: 'PN_ALARM', type: 'function', detail: 'Alarme PROFINET vers le maître' }),
 ];
 
 function completionSource(src: CompletionSource) {

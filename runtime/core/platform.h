@@ -27,6 +27,9 @@ public:
     virtual void readInputs(uint8_t* image, uint32_t size) = 0;
     // Called at the end of each scan (and with an all-zero image in STOP/FAULT).
     virtual void writeOutputs(const uint8_t* image, uint32_t size) = 0;
+    // Messages of platform threads (I/O, PROFINET...) for the diagnostic buffer: the CPU
+    // calls this from its own thread and records each message.
+    virtual void drainMessages(void (*record)(void* ctx, const char* message), void* ctx) { (void)record; (void)ctx; }
     // Diagnostic text of a module for the Studio (active diagnoses, one per line); 0 = none
     virtual size_t moduleDiagnostics(uint16_t index, char* out, size_t cap) { (void)index; (void)out; (void)cap; return 0; }
 };

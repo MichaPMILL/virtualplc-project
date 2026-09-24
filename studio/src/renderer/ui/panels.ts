@@ -216,6 +216,11 @@ const INSTRUCTIONS: Array<[string, IconName, Instruction[]]> = [
     { name: 'REGION', desc: 'Structurer le code', snippet: 'REGION \n    \nEND_REGION\n' },
     { name: 'EXIT', desc: 'Quitter la boucle', snippet: 'EXIT;' }, { name: 'RETURN', desc: 'Quitter le bloc', snippet: 'RETURN;' },
   ]],
+  ['Communication', 'network', [
+    { name: 'DEVICE_OK', desc: 'Module d\'E/S en échange de données', snippet: 'DEVICE_OK()' },
+    { name: 'DEVICE_DIAG', desc: 'Diagnostic actif sur un module (PROFINET)', snippet: 'DEVICE_DIAG()' },
+    { name: 'PN_ALARM', desc: 'Alarme vers le maître PROFINET (1 diagnostic, 12 fin de diagnostic, 2 processus)', snippet: 'PN_ALARM(MODULE := , SLOT := 1, KIND := 1, CODE := 1)' },
+  ]],
   ['Chaînes de caractères', 'string', [
     { name: 'CONCAT', desc: 'Concaténer', snippet: 'CONCAT(IN1 := , IN2 := )' }, { name: 'LEN', desc: 'Longueur', snippet: 'LEN()' },
     { name: 'LOG', desc: 'Écrire dans le tampon de diagnostic', snippet: "LOG('');" },

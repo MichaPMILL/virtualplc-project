@@ -95,10 +95,25 @@ In-house PROFINET IO stack (RT_CLASS_1, no third-party code) in `vplc-cpu` for L
   CPU finds the device by its name, gives it its IP address, writes the default parameter
   records of the GSDML, and exchanges data every cycle (`DEVICE_OK(PN_1)` in the program).
 
-Requirements: raw Ethernet access (`CAP_NET_RAW`, and `CAP_NET_ADMIN` for the IP set by DCP —
-see `deploy/vplc-cpu.service`). Not yet supported: IRT / RT_CLASS_3, alarms and diagnosis from
-the devices, shared devices, both roles on the same interface. Use a vendor ID assigned by PI
-for devices you distribute (0x0000 is for trials).
+- **Alarms and diagnostics**: alarms of the devices (diagnosis appears / disappears with the
+  channel error, process, pull / plug) are acknowledged and written to the diagnostic buffer;
+  *En ligne & diagnostic* shows the active diagnoses of each device (yellow when a device has
+  a diagnosis) and `DEVICE_DIAG(PN_1)` tells the program. As IO-Device, the program sends
+  alarms to its controller with `PN_ALARM(MODULE := PN_IO_Device_1, SLOT := 1, KIND := 1,
+  CODE := 16#0006)` (KIND 1 diagnosis, 12 end of diagnosis, 2 process alarm); active
+  diagnoses are announced again after a reconnection.
+- Both roles can share the same network interface; **LLDP** announces the station and shows
+  the neighbour (topology).
+
+Requirements: raw Ethernet access and real-time priority for the PROFINET thread
+(`CAP_NET_RAW`, `CAP_NET_ADMIN` for the IP set by DCP, `CAP_SYS_NICE`). `cmake --install` gives
+them to `vplc-cpu` (setcap) and `deploy/vplc-cpu.service` sets them for the service; without
+them the diagnostic buffer and the Studio show the exact command to run.
+
+Not supported: **IRT (RT_CLASS_3)** — it needs a dedicated PROFINET ASIC (clock synchronisation
+and time-scheduled switching in hardware), which standard Ethernet interfaces do not have;
+shared devices, media redundancy (MRP). Use a vendor ID assigned by PI for devices you
+distribute (0x0000 is for trials).
 
 ### Ladder (CONT)
 

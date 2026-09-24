@@ -53,6 +53,21 @@ void LinuxPlatform::log(const char* message) {
     fflush(stdout);
 }
 
+void LinuxPlatform::note(const std::string& message) {
+    log(message.c_str());
+    std::lock_guard<std::mutex> lock(notesMutex_);
+    if (notes_.size() < 256) notes_.push_back(message);
+}
+
+void LinuxPlatform::drainMessages(void (*record)(void* ctx, const char* message), void* ctx) {
+    std::vector<std::string> pending;
+    {
+        std::lock_guard<std::mutex> lock(notesMutex_);
+        pending.swap(notes_);
+    }
+    for (const std::string& m : pending) record(ctx, m.c_str());
+}
+
 bool LinuxPlatform::clock(bool local, int64_t& ns) {
     timespec ts{};
     if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return false;
@@ -107,7 +122,7 @@ void LinuxPlatform::failed(Module& m, const std::string& what) {
         char msg[200];
         snprintf(msg, sizeof msg, "I/O module %s offline: %s (retry in %us)", m.info.host[0] ? m.info.host : "gpio", what.c_str(),
                  unsigned(m.backoff / 1000));
-        log(msg);
+        note(msg);
     }
     m.ok = false;
     if (m.modbus) m.modbus->close();
@@ -181,10 +196,10 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
                 m.supported = false;
                 snprintf(msg, sizeof msg, "I/O module %u: analog GPIO is not supported on Linux", unsigned(modules_.size()));
         }
-        log(msg);
+        note(msg);
         modules_.push_back(std::move(m));
     }
-    if (reader.count() != modules_.size()) log("Warning: malformed I/O configuration");
+    if (reader.count() != modules_.size()) note("Warning: malformed I/O configuration");
     configureProfinet();
     return uint16_t(modules_.size());
 }
@@ -202,7 +217,7 @@ void LinuxPlatform::configureProfinet() {
     pn::ControllerConfig ctl;
     bool haveDevice = false;
     pnRemoteIndex_.assign(modules_.size(), 0);
-    auto logger = [this](const std::string& text) { log(text.c_str()); };
+    auto logger = [this](const std::string& text) { note(text); };
     for (size_t k = 0; k < modules_.size(); k++) {
         const IoModuleInfo& i = modules_[k].info;
         char key[512];
@@ -222,7 +237,7 @@ void LinuxPlatform::configureProfinet() {
             deviceKey = key;
         } else if (IoModule(i.kind) == IoModule::IO_PROFINET_REMOTE) {
             if (!ctl.devices.empty() && ctl.ifname != i.ifname) {
-                log("PROFINET: all the IO-Devices must be on the same interface");
+                note("PROFINET: all the IO-Devices must be on the same interface");
                 continue;
             }
             ctl.ifname = i.ifname;
@@ -260,17 +275,20 @@ void LinuxPlatform::configureProfinet() {
     if (deviceKey == pnDeviceKey_ && controllerKey == pnControllerKey_) return;  // unchanged: keep the connections
     // (re)build: stacks first (their threads use the roles), then the roles
     pnStacks_.clear();
+    pnLldp_.clear();
     pnDevice_.reset();
     pnController_.reset();
     pnDeviceKey_ = deviceKey;
     pnControllerKey_ = controllerKey;
+    pnError_.clear();
     auto stackFor = [&](const std::string& ifname) -> pn::Stack* {
         for (auto& s : pnStacks_)
             if (s->ifname() == ifname) return s.get();
         auto s = std::make_unique<pn::Stack>(ifname, logger);
         std::string err;
         if (!s->open(err)) {
-            log(("PROFINET on " + ifname + ": " + err).c_str());
+            pnError_ = "PROFINET on " + ifname + ": " + err;
+            note(pnError_.c_str());
             return nullptr;
         }
         pnStacks_.push_back(std::move(s));
@@ -291,6 +309,16 @@ void LinuxPlatform::configureProfinet() {
             pnController_->attach(*s);
         }
     }
+    // LLDP on each interface: name of station of the IO-Device role, else of the controller
+    for (auto& s : pnStacks_) {
+        pn::Device* device = pnDevice_ && dev.ifname == s->ifname() ? pnDevice_.get() : nullptr;
+        std::string fallback = ctl.stationName.empty() ? "virtualplc" : ctl.stationName;
+        std::string ifname = s->ifname();
+        pnLldp_.push_back(std::make_unique<pn::Lldp>(
+            [device, fallback] { return device ? device->stationName() : fallback; },
+            [ifname] { return pn::interfaceIp(ifname).ip; }, logger));
+        pnLldp_.back()->attach(*s);
+    }
     for (auto& s : pnStacks_) s->start();
 }
 
@@ -309,13 +337,22 @@ bool LinuxPlatform::moduleDiag(uint16_t index) {
 size_t LinuxPlatform::moduleDiagnostics(uint16_t index, char* out, size_t cap) {
     if (index >= modules_.size() || !cap) return 0;
     std::string text;
-    if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFINET_REMOTE && pnController_ && index < pnRemoteIndex_.size()) {
+    if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFINET_REMOTE && !pnController_) {
+        text = pnError_.empty() ? "PROFINET not started (see the diagnostic buffer)" : pnError_;
+    } else if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFINET_REMOTE && index < pnRemoteIndex_.size()) {
         const size_t k = pnRemoteIndex_[index];
         text = pnController_->diagnostics(k);
         if (!pnController_->deviceOk(k)) text = pnController_->status(k) + (text.empty() ? "" : "\n" + text);
     } else if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFINET_DEVICE) {
         if (pnDevice_) text = pnDevice_->status();
-        else text = "PROFINET not started (see the diagnostic buffer)";
+        else text = pnError_.empty() ? "PROFINET not started (see the diagnostic buffer)" : pnError_;
+    }
+    // neighbour (LLDP) on the interface of the module
+    const std::string ifname = modules_[index].info.ifname;
+    for (size_t k = 0; k < pnStacks_.size() && k < pnLldp_.size(); k++) {
+        if (pnStacks_[k]->ifname() != ifname) continue;
+        std::string n = pnLldp_[k]->neighbour();
+        if (!n.empty()) text += (text.empty() ? "" : "\n") + std::string("neighbour: ") + n;
     }
     size_t n = text.size() < cap - 1 ? text.size() : cap - 1;
     memcpy(out, text.data(), n);
@@ -377,7 +414,7 @@ void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
                 m.backoff = 1000;
                 char msg[400];
                 snprintf(msg, sizeof msg, "I/O module %s online", i.host);
-                log(msg);
+                note(msg);
             }
         }
 #ifdef VPLC_HAVE_GPIO

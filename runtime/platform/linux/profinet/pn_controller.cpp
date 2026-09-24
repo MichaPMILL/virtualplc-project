@@ -230,7 +230,7 @@ void Controller::step(Dev& d, uint64_t now) {
     }
     if (state == S_RUN) {
         uint64_t watchdog = uint64_t(d.in.cycleUs()) * d.in.watchdogFactor;
-        if (now - d.lastRx > watchdog) lost(d, "watchdog: no data from the device");
+        if (now - d.lastRx > watchdog) lost(d, "watchdog: no data from the device for " + std::to_string((now - d.lastRx) / 1000) + " ms");
         return;
     }
     if (d.deadline && now < d.deadline) return;
@@ -368,7 +368,9 @@ void Controller::onFrame(const uint8_t* p, size_t n) {
         const uint8_t dataStatus = c[d.in.dataLength + 2];
         const bool valid = (dataStatus & 0x04) != 0;
         d.lastRx = nowUs();
-        std::lock_guard<std::mutex> lock(ioMutex_);
+        // not waiting for the scan: if the image is busy, the next frame brings the data
+        std::unique_lock<std::mutex> lock(ioMutex_, std::try_to_lock);
+        if (!lock.owns_lock()) return;
         size_t pos = 0;
         for (size_t i = 0; i < d.cfg.submodules.size(); i++) {
             const RemoteSubmodule& s = d.cfg.submodules[i];
@@ -682,25 +684,26 @@ void Controller::onAppReady(const RpcHeader& h, const uint8_t* body, const socka
 }
 
 void Controller::sendCyclic(Dev& d) {
-    uint8_t csdu[1440] = {0};
-    bool run;
-    {
-        std::lock_guard<std::mutex> lock(ioMutex_);
-        run = plcRun_ && d.state == S_RUN && nowUs() - lastWrite_ < 500000;
+    // never waits for the scan: when the image is being copied, the previous data are sent again
+    if (d.csdu.size() != d.out.dataLength) d.csdu.assign(d.out.dataLength, 0);
+    std::unique_lock<std::mutex> lock(ioMutex_, std::try_to_lock);
+    if (lock.owns_lock()) {
+        d.run = plcRun_ && d.state == S_RUN && nowUs() - lastWrite_ < 500000;
         for (size_t i = 0; i < d.cfg.submodules.size(); i++) {
             const RemoteSubmodule& s = d.cfg.submodules[i];
             const Dev::Layout& l = d.layout[i];
             if (!l.hasOut) continue;
             for (uint16_t k = 0; k < s.outLength; k++)
-                if (uint32_t(s.outByte) + k < outputs_.size()) csdu[l.outOffset + k] = run ? outputs_[s.outByte + k] : 0;
-            csdu[l.outIops] = run ? IOXS_GOOD : IOXS_BAD;
+                d.csdu[l.outOffset + k] = d.run && uint32_t(s.outByte) + k < outputs_.size() ? outputs_[s.outByte + k] : 0;
+            d.csdu[l.outIops] = d.run ? IOXS_GOOD : IOXS_BAD;
         }
+        lock.unlock();
+        for (const IoDataObject& o : d.out.iocs)
+            if (o.frameOffset < d.csdu.size()) d.csdu[o.frameOffset] = IOXS_GOOD;
     }
-    for (const IoDataObject& o : d.out.iocs)
-        if (o.frameOffset < sizeof(csdu)) csdu[o.frameOffset] = IOXS_GOOD;
     d.cycleCounter = uint16_t(d.cycleCounter + d.out.sendClockFactor * d.out.reductionRatio);
-    writeRtFrame(frame_, d.mac, raw().mac(), d.out.tagHeader, d.outFrameId, csdu, d.out.dataLength, d.cycleCounter,
-                 run ? DATA_STATUS_RUN : DATA_STATUS_STOP);
+    writeRtFrame(frame_, d.mac, raw().mac(), d.out.tagHeader, d.outFrameId, d.csdu.data(), d.csdu.size(), d.cycleCounter,
+                 d.run ? DATA_STATUS_RUN : DATA_STATUS_STOP);
     raw().send(frame_);
 }
 

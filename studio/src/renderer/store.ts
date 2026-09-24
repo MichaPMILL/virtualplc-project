@@ -33,7 +33,7 @@ export interface OnlineState {
   cycleMs?: number;
   forces?: number;
   fault?: { code: string; function: number; line: number; pc: number } | null;
-  io?: Array<{ module: number; ok: boolean }>;
+  io?: Array<{ module: number; ok: boolean; diag?: string }>;
   logs: Array<{ seq: number; t: number; msg: string }>;
   host?: string;
 }

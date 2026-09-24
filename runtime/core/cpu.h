@@ -38,6 +38,8 @@ public:
     const Program& program() const { return program_; }
     Vm& vm() { return vm_; }
     void log(const char* message);
+    // Diagnostic buffer only (the platform already printed the message)
+    void record(const char* message);
 
     // Direct control (also used by the protocol)
     const char* start(bool cold);

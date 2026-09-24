@@ -89,6 +89,7 @@ if(UNIX)
     platform/linux/profinet/pn_proto.cpp
     platform/linux/profinet/pn_net.cpp
     platform/linux/profinet/pn_stack.cpp
+    platform/linux/profinet/pn_lldp.cpp
     platform/linux/profinet/pn_device.cpp
     platform/linux/profinet/pn_controller.cpp)
   target_include_directories(vplc-cpu PRIVATE platform/linux)
@@ -104,4 +105,18 @@ if(UNIX)
     target_link_libraries(vplc-opcua-probe open62541)
   endif()
   install(TARGETS vplc-cpu RUNTIME DESTINATION bin)
+  # PROFINET (raw Ethernet, IP set by the controller) and port 102 without running as root
+  install(CODE "
+    find_program(SETCAP setcap PATHS /usr/sbin /sbin)
+    set(exe \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/vplc-cpu\")
+    if(SETCAP AND NOT DEFINED ENV{DESTDIR})
+      execute_process(COMMAND \${SETCAP} cap_net_raw,cap_net_admin,cap_net_bind_service,cap_sys_nice+ep \${exe} RESULT_VARIABLE rc)
+      if(rc EQUAL 0)
+        message(STATUS \"Network capabilities given to \${exe} (PROFINET, S7 port 102)\")
+      else()
+        message(WARNING \"setcap failed: run as root, or use deploy/vplc-cpu.service\")
+      endif()
+    else()
+      message(STATUS \"Give the network capabilities: sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service,cap_sys_nice+ep \${exe}\")
+    endif()")
 endif()

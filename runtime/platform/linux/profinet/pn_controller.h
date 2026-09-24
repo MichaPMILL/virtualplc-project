@@ -98,6 +98,8 @@ private:
         int ackTries = 0;
         struct Diag { uint16_t slot, subslot, channel, errorType; };
         std::vector<Diag> diags;
+        std::vector<uint8_t> csdu;  // last output C_SDU (resent when the image is busy)
+        bool run = false;
     };
 
     void onFrame(const uint8_t* p, size_t n) override;

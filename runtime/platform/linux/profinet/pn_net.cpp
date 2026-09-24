@@ -18,6 +18,24 @@
 namespace vplc {
 namespace pn {
 
+bool hasCapability(int cap) {
+    FILE* f = fopen("/proc/self/status", "r");
+    if (!f) return false;
+    char line[256];
+    unsigned long long eff = 0;
+    while (fgets(line, sizeof line, f))
+        if (sscanf(line, "CapEff: %llx", &eff) == 1) break;
+    fclose(f);
+    return (eff >> cap) & 1;
+}
+
+std::string capabilityHint() {
+    char exe[512] = {0};
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    std::string path = n > 0 ? std::string(exe, size_t(n)) : "/usr/local/bin/vplc-cpu";
+    return "sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service,cap_sys_nice+ep " + path + " (or the capabilities of deploy/vplc-cpu.service)";
+}
+
 uint64_t nowUs() {
     timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -28,7 +46,7 @@ bool RawSocket::open(const std::string& ifname, std::string& error) {
     close();
     fd_ = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(ETH_P_ALL));
     if (fd_ < 0) {
-        error = std::string("raw socket: ") + strerror(errno) + (errno == EPERM ? " (CAP_NET_RAW needed)" : "");
+        error = std::string("raw Ethernet access refused: ") + strerror(errno) + (errno == EPERM ? " — give the CPU the network capabilities: " + capabilityHint() : "");
         return false;
     }
     ifreq ifr{};
@@ -60,6 +78,9 @@ bool RawSocket::open(const std::string& ifname, std::string& error) {
     mr.mr_type = PACKET_MR_MULTICAST;
     mr.mr_alen = 6;
     memcpy(mr.mr_address, DCP_IDENTIFY_MULTICAST.data(), 6);
+    setsockopt(fd_, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mr, sizeof(mr));
+    static const uint8_t lldp[6] = {0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E};
+    memcpy(mr.mr_address, lldp, 6);
     setsockopt(fd_, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mr, sizeof(mr));
     return true;
 }

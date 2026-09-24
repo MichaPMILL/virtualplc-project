@@ -113,7 +113,12 @@ test('PROFINET: IO-Controller and IO-Device (DCP, connect, cyclic data, watchdog
     await until(() => /diagnosis gone: short circuit/.test(logs.ctl), 10000, () => `alarms not received:\n${logs.ctl}\n${logs.dev}`);
     assert.match(logs.ctl, /test-device: slot 2\.1: diagnosis: short circuit \(0x0001\)/);
     assert.match(logs.ctl, /test-device: slot 2\.1: process alarm \(value 0x0000002A\)/);
-    const [m] = await ctl.read([{ area: 'M', offset: 20, length: 1 }]);
+    // LLDP: each side sees the other; diagnostic text of the modules in the CPU state
+    await until(() => /neighbour on vpnc: test-device \/ port-001/.test(logs.ctl) && /neighbour on vpnd: test-controller \/ port-001/.test(logs.dev),
+      12000, () => `LLDP neighbours not seen:\n${logs.ctl}\n${logs.dev}`);
+    const state = await ctl.state();
+    assert.match(state.io[1].diag ?? '', /neighbour: test-device \/ port-001/);
+        const [m] = await ctl.read([{ area: 'M', offset: 20, length: 1 }]);
     assert.equal(m[0] & 3, 1, 'DEVICE_DIAG was TRUE while the diagnosis was active, FALSE after');
 
     // device lost: watchdog, then reconnection once it is back (name and IP were kept)

@@ -40,11 +40,15 @@ void Cpu::setPassword(const char* password) {
     snprintf(password_, sizeof password_, "%s", password ? password : "");
 }
 
-void Cpu::log(const char* message) {
+void Cpu::record(const char* message) {
     LogEntry& e = logs_[logSeq_ % VPLC_LOG_ENTRIES];
     e.seq = ++logSeq_;
     e.time = platform_.millis();
     snprintf(e.text, sizeof e.text, "%s", message);
+}
+
+void Cpu::log(const char* message) {
+    record(message);
     platform_.log(message);
 }
 
@@ -128,6 +132,7 @@ void Cpu::applyForces(uint8_t area, uint8_t* image, uint32_t size) {
 }
 
 uint32_t Cpu::loop() {
+    platform_.drainMessages([](void* cpu, const char* m) { static_cast<Cpu*>(cpu)->record(m); }, this);
     if (state_ != RUN) return 20;
     uint32_t now = platform_.millis();
     uint32_t cycle = program_.cycleMs;
