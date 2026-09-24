@@ -1,0 +1,15 @@
+{
+  "id": "blk-traffic-lights-6",
+  "name": "Crossroads_DB",
+  "type": "DB",
+  "number": 1,
+  "instanceOf": "Crossroads",
+  "interface": {
+    "input": [],
+    "output": [],
+    "inout": [],
+    "static": [],
+    "temp": [],
+    "constant": []
+  }
+}

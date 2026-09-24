@@ -1,0 +1,23 @@
+// Carrefour à feux tricolores - table de variables API
+VAR_GLOBAL
+    // Entrées
+    "S_On" AT %I0.0 : Bool;              // commutateur marche (FALSE = orange clignotant)
+    "S_Night" AT %I0.1 : Bool;           // mode nuit (orange clignotant)
+    "BP_Pedestrian" AT %I0.2 : Bool;     // bouton d'appel piétons (traversée de la rue principale)
+    "B_SideVehicle" AT %I0.3 : Bool;     // boucle de détection des véhicules de la rue secondaire
+    // Feux de la rue principale
+    "H_Main_Red" AT %Q0.0 : Bool;
+    "H_Main_Amber" AT %Q0.1 : Bool;
+    "H_Main_Green" AT %Q0.2 : Bool;
+    // Feux de la rue secondaire
+    "H_Side_Red" AT %Q0.3 : Bool;
+    "H_Side_Amber" AT %Q0.4 : Bool;
+    "H_Side_Green" AT %Q0.5 : Bool;
+    // Feux piétons (traversée de la rue principale)
+    "H_Ped_Red" AT %Q0.6 : Bool;
+    "H_Ped_Green" AT %Q0.7 : Bool;
+    "H_Ped_Wait" AT %Q1.0 : Bool;        // voyant « attendez » du bouton d'appel
+    // Diagnostic
+    "Phase" AT %MW20 : Int;              // phase en cours
+    "Cycles" AT %MD22 : DInt;            // cycles complets
+END_VAR

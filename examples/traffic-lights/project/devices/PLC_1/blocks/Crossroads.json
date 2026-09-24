@@ -1,0 +1,115 @@
+{
+  "id": "blk-traffic-lights-4",
+  "name": "Crossroads",
+  "type": "FB",
+  "number": 1,
+  "interface": {
+    "input": [
+      {
+        "name": "Enable",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Night",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PedRequest",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideVehicle",
+        "dataType": "Bool"
+      }
+    ],
+    "output": [
+      {
+        "name": "MainRed",
+        "dataType": "Bool"
+      },
+      {
+        "name": "MainAmber",
+        "dataType": "Bool"
+      },
+      {
+        "name": "MainGreen",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideRed",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideAmber",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideGreen",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PedRed",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PedGreen",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PedWait",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Phase",
+        "dataType": "Int"
+      },
+      {
+        "name": "Cycles",
+        "dataType": "DInt"
+      }
+    ],
+    "inout": [],
+    "static": [
+      {
+        "name": "PhaseTimer",
+        "dataType": "TON"
+      },
+      {
+        "name": "Blink",
+        "dataType": "TON"
+      },
+      {
+        "name": "BlinkOn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "PedMemory",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SideMemory",
+        "dataType": "Bool"
+      },
+      {
+        "name": "LastPhase",
+        "dataType": "Int",
+        "defaultValue": "-1"
+      }
+    ],
+    "temp": [
+      {
+        "name": "duration",
+        "dataType": "Time"
+      },
+      {
+        "name": "next",
+        "dataType": "Int"
+      },
+      {
+        "name": "flashing",
+        "dataType": "Bool"
+      }
+    ],
+    "constant": []
+  }
+}

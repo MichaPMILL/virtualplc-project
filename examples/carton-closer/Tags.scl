@@ -1,0 +1,33 @@
+// Fermeuse de cartons - table de variables API (entrées / sorties câblées)
+VAR_GLOBAL
+    // Pupitre
+    "BP_Start" AT %I0.0 : Bool;          // bouton marche (NO)
+    "BP_Stop" AT %I0.1 : Bool;           // bouton arrêt (NF : TRUE = pas d'arrêt demandé)
+    "AU_Ok" AT %I0.2 : Bool;             // chaîne d'arrêt d'urgence (NF : TRUE = pas d'arrêt d'urgence)
+    "BP_Reset" AT %I0.3 : Bool;          // acquittement des défauts
+    // Détection carton
+    "B_BoxAtStation" AT %I0.4 : Bool;    // carton en position de fermeture
+    "B_BoxOut" AT %I0.5 : Bool;          // carton en sortie de machine
+    // Capteurs des vérins
+    "B_Stopper_Out" AT %I1.0 : Bool;     // butée sortie (carton bloqué)
+    "B_Stopper_In" AT %I1.1 : Bool;      // butée rentrée
+    "B_SideFlaps_Out" AT %I1.2 : Bool;   // plieur de rabats latéraux sorti
+    "B_SideFlaps_In" AT %I1.3 : Bool;    // plieur de rabats latéraux rentré
+    "B_FrontFlaps_Out" AT %I1.4 : Bool;  // plieur de rabats avant/arrière sorti (un seul capteur)
+    "B_Press_Out" AT %I1.5 : Bool;       // presse descendue
+    "B_Press_In" AT %I1.6 : Bool;        // presse remontée
+    // Moteurs et voyants
+    "M_ConveyorIn" AT %Q0.0 : Bool;      // convoyeur d'entrée
+    "M_ConveyorOut" AT %Q0.1 : Bool;     // convoyeur de sortie
+    "H_Running" AT %Q0.2 : Bool;         // voyant marche (vert)
+    "H_Fault" AT %Q0.3 : Bool;           // voyant défaut (rouge, clignotant)
+    // Distributeurs pneumatiques
+    "YV_Stopper" AT %Q1.0 : Bool;        // butée (monostable, rappel ressort)
+    "YV_SideFlaps" AT %Q1.1 : Bool;      // rabats latéraux (monostable)
+    "YV_FrontFlaps" AT %Q1.2 : Bool;     // rabats avant/arrière (monostable)
+    "YV_PressDown" AT %Q1.3 : Bool;      // presse : bobine descente (bistable)
+    "YV_PressUp" AT %Q1.4 : Bool;        // presse : bobine montée (bistable)
+    "YV_Glue" AT %Q1.5 : Bool;           // pistolet à colle
+    // Compteur de production (visible par un pupitre opérateur)
+    "BoxCount" AT %MD10 : DInt;
+END_VAR

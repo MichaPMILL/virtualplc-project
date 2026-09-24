@@ -1,0 +1,1 @@
+IsRetracted := NOT Cmd AND SensorIn AND NOT SensorOut;

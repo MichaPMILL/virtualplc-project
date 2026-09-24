@@ -1,0 +1,15 @@
+{
+  "id": "blk-carton-closer-15",
+  "name": "Machine",
+  "type": "DB",
+  "number": 1,
+  "instanceOf": "CartonCloser",
+  "interface": {
+    "input": [],
+    "output": [],
+    "inout": [],
+    "static": [],
+    "temp": [],
+    "constant": []
+  }
+}

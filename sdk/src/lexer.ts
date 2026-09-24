@@ -33,8 +33,8 @@ const TWO_CHAR = new Set([':=', '=>', '+=', '-=', '*=', '/=', '**', '<>', '<=', 
 const ONE_CHAR = new Set([';', ':', '.', '<', '>', ',', '(', ')', '[', ']', '+', '-', '*', '/', '=', '&']);
 const TYPED_PREFIXES = new Set(['BOOL', 'BYTE', 'WORD', 'DWORD', 'LWORD', 'SINT', 'INT', 'DINT', 'LINT', 'USINT', 'UINT', 'UDINT', 'ULINT', 'REAL', 'LREAL']);
 const isDigit = (c: string | undefined) => c !== undefined && c >= '0' && c <= '9';
-const isAlpha = (c: string | undefined) => c !== undefined && /[A-Za-z_]/.test(c);
-const isAlnum = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_]/.test(c);
+const isAlpha = (c: string | undefined) => c !== undefined && /[\p{L}_]/u.test(c);
+const isAlnum = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}_]/u.test(c);
 
 /**
  * SCL lexer (IEC 61131-3):
@@ -240,6 +240,10 @@ export function tokenize(source: string): Token[] {
       }
       if (upper === 'TRUE' || upper === 'FALSE') {
         return { type: 'bool', text: upper, value: upper === 'TRUE', line: l, column: c };
+      }
+      if (upper === 'REGION') {
+        // the title of a region is free text (apostrophes, quotes…)
+        while (source[pos] !== undefined && source[pos] !== '\n' && source[pos] !== '\r') advance();
       }
       if (KEYWORDS.has(upper)) return { type: 'keyword', text: upper, line: l, column: c };
       return { type: 'ident', text: word, scope: null, line: l, column: c };

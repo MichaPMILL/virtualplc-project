@@ -1,0 +1,143 @@
+// Carrefour à feux tricolores - programme classique (sans POO) : une machine d'états dans un FB.
+//
+// Phases :
+//   0  orange clignotant (commutateur sur arrêt, mode nuit, mise en service)
+//   1  tout rouge avant le démarrage
+//   2  vert principal (au moins MainGreenMin ; la rue secondaire ne passe au vert que sur
+//      demande : véhicule détecté ou appel piéton)
+//   3  orange principal
+//   4  tout rouge (dégagement)
+//   5  vert secondaire, piétons au vert pendant PedGreen
+//   6  orange secondaire
+//   7  tout rouge (dégagement), puis retour en 2
+
+FUNCTION_BLOCK "Crossroads"
+VERSION : 0.1
+   VAR_INPUT
+      Enable : Bool;
+      Night : Bool;
+      PedRequest : Bool;
+      SideVehicle : Bool;
+   END_VAR
+   VAR_OUTPUT
+      MainRed : Bool;
+      MainAmber : Bool;
+      MainGreen : Bool;
+      SideRed : Bool;
+      SideAmber : Bool;
+      SideGreen : Bool;
+      PedRed : Bool;
+      PedGreen : Bool;
+      PedWait : Bool;
+      Phase : Int;
+      Cycles : DInt;
+   END_VAR
+   VAR
+      PhaseTimer : TON;         // durée de la phase en cours
+      Blink : TON;
+      BlinkOn : Bool;
+      PedMemory : Bool;         // appel piéton mémorisé
+      SideMemory : Bool;        // demande de la rue secondaire mémorisée
+      LastPhase : Int := -1;
+   END_VAR
+   VAR_TEMP
+      duration : Time;
+      next : Int;
+      flashing : Bool;
+   END_VAR
+BEGIN
+    REGION Clignoteur 1 Hz
+        Blink(IN := NOT Blink.Q, PT := T#500MS);
+        IF Blink.Q THEN
+            BlinkOn := NOT BlinkOn;
+        END_IF;
+    END_REGION
+
+    REGION Demandes
+        IF PedRequest THEN
+            PedMemory := TRUE;
+        END_IF;
+        IF SideVehicle THEN
+            SideMemory := TRUE;
+        END_IF;
+    END_REGION
+
+    REGION Machine d'états
+        flashing := NOT Enable OR Night;
+        IF flashing THEN
+            Phase := 0;
+        END_IF;
+        // la temporisation repart à chaque changement de phase (et reste à zéro en clignotant)
+        PhaseTimer(IN := Phase = LastPhase AND NOT flashing, PT := T#24D);
+        LastPhase := Phase;
+        next := Phase;
+        CASE Phase OF
+            0:  // orange clignotant
+                IF NOT flashing AND PhaseTimer.ET >= "Timings".StartupFlash THEN
+                    next := 1;
+                END_IF;
+            1:  // tout rouge avant le démarrage
+                IF PhaseTimer.ET >= "Timings".AllRed THEN
+                    next := 2;
+                END_IF;
+            2:  // vert principal
+                IF PhaseTimer.ET >= "Timings".MainGreenMin AND (PedMemory OR SideMemory OR "Timings".SideAlways) THEN
+                    next := 3;
+                END_IF;
+            3:  // orange principal
+                IF PhaseTimer.ET >= "Timings".Amber THEN
+                    next := 4;
+                END_IF;
+            4:  // dégagement
+                IF PhaseTimer.ET >= "Timings".AllRed THEN
+                    next := 5;
+                    PedMemory := FALSE;       // la demande est servie
+                    SideMemory := FALSE;
+                END_IF;
+            5:  // vert secondaire (et piétons)
+                IF PhaseTimer.ET >= "Timings".SideGreen THEN
+                    next := 6;
+                END_IF;
+            6:  // orange secondaire
+                IF PhaseTimer.ET >= "Timings".Amber THEN
+                    next := 7;
+                END_IF;
+            7:  // dégagement
+                IF PhaseTimer.ET >= "Timings".AllRed THEN
+                    next := 2;
+                    Cycles := Cycles + 1;
+                END_IF;
+        ELSE
+            next := 0;
+        END_CASE;
+        Phase := next;
+    END_REGION
+
+    REGION Feux
+        MainRed := Phase = 1 OR Phase >= 4;
+        MainAmber := (Phase = 0 AND BlinkOn) OR Phase = 3;
+        MainGreen := Phase = 2;
+        SideRed := Phase >= 1 AND Phase <= 4 OR Phase = 7;
+        SideAmber := (Phase = 0 AND BlinkOn) OR Phase = 6;
+        SideGreen := Phase = 5;
+        // piétons : vert au début du vert secondaire, rouge ensuite ; éteints en clignotant
+        PedGreen := Phase = 5 AND PhaseTimer.ET < "Timings".PedGreen;
+        PedRed := Phase <> 0 AND NOT PedGreen;
+        PedWait := PedMemory AND Phase <> 0;
+    END_REGION
+END_FUNCTION_BLOCK
+
+DATA_BLOCK "Crossroads_DB"
+"Crossroads"
+BEGIN
+END_DATA_BLOCK
+
+ORGANIZATION_BLOCK "Main"
+VERSION : 0.1
+BEGIN
+    "Crossroads_DB"(Enable := "S_On", Night := "S_Night", PedRequest := "BP_Pedestrian", SideVehicle := "B_SideVehicle",
+                    MainRed => "H_Main_Red", MainAmber => "H_Main_Amber", MainGreen => "H_Main_Green",
+                    SideRed => "H_Side_Red", SideAmber => "H_Side_Amber", SideGreen => "H_Side_Green",
+                    PedRed => "H_Ped_Red", PedGreen => "H_Ped_Green", PedWait => "H_Ped_Wait",
+                    Phase => "Phase", Cycles => "Cycles");
+END_ORGANIZATION_BLOCK

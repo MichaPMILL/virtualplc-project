@@ -1,0 +1,2 @@
+RetractTimer(IN := NOT Cmd, PT := RetractTime);
+SUPER();   // code du bloc de base (distributeur et surveillance)

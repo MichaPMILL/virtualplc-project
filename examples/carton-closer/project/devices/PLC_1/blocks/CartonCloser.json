@@ -1,0 +1,182 @@
+{
+  "id": "blk-carton-closer-16",
+  "name": "CartonCloser",
+  "type": "FB",
+  "number": 4,
+  "interface": {
+    "input": [
+      {
+        "name": "Start",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Stop",
+        "dataType": "Bool"
+      },
+      {
+        "name": "EmergencyOk",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Reset",
+        "dataType": "Bool"
+      },
+      {
+        "name": "BoxAtStation",
+        "dataType": "Bool"
+      },
+      {
+        "name": "BoxOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Stopper",
+        "dataType": "\"ICylinder\""
+      },
+      {
+        "name": "SideFlaps",
+        "dataType": "\"ICylinder\""
+      },
+      {
+        "name": "FrontFlaps",
+        "dataType": "\"ICylinder\""
+      },
+      {
+        "name": "Press",
+        "dataType": "\"ICylinder\""
+      },
+      {
+        "name": "GlueTime",
+        "dataType": "Time",
+        "defaultValue": "T#800MS"
+      }
+    ],
+    "output": [
+      {
+        "name": "ConveyorIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "ConveyorOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Glue",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Running",
+        "dataType": "Bool"
+      },
+      {
+        "name": "FaultLamp",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Step",
+        "dataType": "Int"
+      },
+      {
+        "name": "Count",
+        "dataType": "DInt"
+      }
+    ],
+    "inout": [],
+    "static": [
+      {
+        "name": "Auto",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Faulted",
+        "dataType": "Bool"
+      },
+      {
+        "name": "All",
+        "dataType": "Array[1..4] of \"ICylinder\""
+      },
+      {
+        "name": "GlueTimer",
+        "dataType": "TON"
+      },
+      {
+        "name": "Blink",
+        "dataType": "TON"
+      },
+      {
+        "name": "BlinkOn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "OutEdge",
+        "dataType": "R_TRIG"
+      }
+    ],
+    "temp": [
+      {
+        "name": "i",
+        "dataType": "Int"
+      },
+      {
+        "name": "allRetracted",
+        "dataType": "Bool"
+      },
+      {
+        "name": "anyFault",
+        "dataType": "Bool"
+      }
+    ],
+    "constant": [
+      {
+        "name": "ST_INIT",
+        "dataType": "Int",
+        "defaultValue": "0"
+      },
+      {
+        "name": "ST_IDLE",
+        "dataType": "Int",
+        "defaultValue": "10"
+      },
+      {
+        "name": "ST_FEED",
+        "dataType": "Int",
+        "defaultValue": "20"
+      },
+      {
+        "name": "ST_FOLD_SIDE",
+        "dataType": "Int",
+        "defaultValue": "30"
+      },
+      {
+        "name": "ST_FOLD_FRONT",
+        "dataType": "Int",
+        "defaultValue": "40"
+      },
+      {
+        "name": "ST_PRESS",
+        "dataType": "Int",
+        "defaultValue": "50"
+      },
+      {
+        "name": "ST_GLUE",
+        "dataType": "Int",
+        "defaultValue": "60"
+      },
+      {
+        "name": "ST_OPEN",
+        "dataType": "Int",
+        "defaultValue": "70"
+      },
+      {
+        "name": "ST_EJECT",
+        "dataType": "Int",
+        "defaultValue": "80"
+      },
+      {
+        "name": "ST_FAULT",
+        "dataType": "Int",
+        "defaultValue": "99"
+      }
+    ]
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "id": "wt-carton-closer-3",
+  "name": "Table de visualisation_1",
+  "rows": [
+    {
+      "name": "BP_Start"
+    },
+    {
+      "name": "BP_Stop"
+    },
+    {
+      "name": "AU_Ok"
+    },
+    {
+      "name": "BP_Reset"
+    },
+    {
+      "name": "\"Machine\".Step",
+      "comment": "étape de la séquence"
+    },
+    {
+      "name": "BoxCount"
+    },
+    {
+      "name": "B_BoxAtStation"
+    },
+    {
+      "name": "B_BoxOut"
+    },
+    {
+      "name": "M_ConveyorIn"
+    },
+    {
+      "name": "M_ConveyorOut"
+    },
+    {
+      "name": "YV_Stopper"
+    },
+    {
+      "name": "YV_SideFlaps"
+    },
+    {
+      "name": "YV_FrontFlaps"
+    },
+    {
+      "name": "YV_PressDown"
+    },
+    {
+      "name": "YV_PressUp"
+    },
+    {
+      "name": "YV_Glue"
+    },
+    {
+      "name": "\"Stopper\".Fault"
+    },
+    {
+      "name": "\"SideFlaps\".Fault"
+    },
+    {
+      "name": "\"FrontFlaps\".Fault"
+    },
+    {
+      "name": "\"Press\".Fault"
+    }
+  ]
+}

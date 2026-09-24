@@ -1,0 +1,20 @@
+{
+  "id": "blk-carton-closer-13",
+  "name": "BistableCylinder",
+  "type": "FB",
+  "number": 3,
+  "extends": "Cylinder",
+  "interface": {
+    "input": [],
+    "output": [
+      {
+        "name": "ValveIn",
+        "dataType": "Bool"
+      }
+    ],
+    "inout": [],
+    "static": [],
+    "temp": [],
+    "constant": []
+  }
+}

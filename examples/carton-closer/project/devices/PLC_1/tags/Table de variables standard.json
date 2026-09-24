@@ -1,0 +1,147 @@
+{
+  "id": "tt-carton-closer-2",
+  "name": "Table de variables standard",
+  "tags": [
+    {
+      "name": "Stopper",
+      "dataType": "Cylinder",
+      "address": ""
+    },
+    {
+      "name": "SideFlaps",
+      "dataType": "Cylinder",
+      "address": ""
+    },
+    {
+      "name": "FrontFlaps",
+      "dataType": "CylinderOneSensor",
+      "address": ""
+    },
+    {
+      "name": "Press",
+      "dataType": "BistableCylinder",
+      "address": ""
+    },
+    {
+      "name": "BP_Start",
+      "dataType": "Bool",
+      "address": "%I0.0"
+    },
+    {
+      "name": "BP_Stop",
+      "dataType": "Bool",
+      "address": "%I0.1"
+    },
+    {
+      "name": "AU_Ok",
+      "dataType": "Bool",
+      "address": "%I0.2"
+    },
+    {
+      "name": "BP_Reset",
+      "dataType": "Bool",
+      "address": "%I0.3"
+    },
+    {
+      "name": "B_BoxAtStation",
+      "dataType": "Bool",
+      "address": "%I0.4"
+    },
+    {
+      "name": "B_BoxOut",
+      "dataType": "Bool",
+      "address": "%I0.5"
+    },
+    {
+      "name": "B_Stopper_Out",
+      "dataType": "Bool",
+      "address": "%I1.0"
+    },
+    {
+      "name": "B_Stopper_In",
+      "dataType": "Bool",
+      "address": "%I1.1"
+    },
+    {
+      "name": "B_SideFlaps_Out",
+      "dataType": "Bool",
+      "address": "%I1.2"
+    },
+    {
+      "name": "B_SideFlaps_In",
+      "dataType": "Bool",
+      "address": "%I1.3"
+    },
+    {
+      "name": "B_FrontFlaps_Out",
+      "dataType": "Bool",
+      "address": "%I1.4"
+    },
+    {
+      "name": "B_Press_Out",
+      "dataType": "Bool",
+      "address": "%I1.5"
+    },
+    {
+      "name": "B_Press_In",
+      "dataType": "Bool",
+      "address": "%I1.6"
+    },
+    {
+      "name": "M_ConveyorIn",
+      "dataType": "Bool",
+      "address": "%Q0.0"
+    },
+    {
+      "name": "M_ConveyorOut",
+      "dataType": "Bool",
+      "address": "%Q0.1"
+    },
+    {
+      "name": "H_Running",
+      "dataType": "Bool",
+      "address": "%Q0.2"
+    },
+    {
+      "name": "H_Fault",
+      "dataType": "Bool",
+      "address": "%Q0.3"
+    },
+    {
+      "name": "YV_Stopper",
+      "dataType": "Bool",
+      "address": "%Q1.0"
+    },
+    {
+      "name": "YV_SideFlaps",
+      "dataType": "Bool",
+      "address": "%Q1.1"
+    },
+    {
+      "name": "YV_FrontFlaps",
+      "dataType": "Bool",
+      "address": "%Q1.2"
+    },
+    {
+      "name": "YV_PressDown",
+      "dataType": "Bool",
+      "address": "%Q1.3"
+    },
+    {
+      "name": "YV_PressUp",
+      "dataType": "Bool",
+      "address": "%Q1.4"
+    },
+    {
+      "name": "YV_Glue",
+      "dataType": "Bool",
+      "address": "%Q1.5"
+    },
+    {
+      "name": "BoxCount",
+      "dataType": "DInt",
+      "address": "%MD10"
+    }
+  ],
+  "constants": []
+}

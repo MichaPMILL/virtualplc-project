@@ -1,0 +1,135 @@
+{
+  "id": "blk-carton-closer-4",
+  "name": "Cylinder",
+  "type": "FB",
+  "number": 1,
+  "implements": [
+    "ICylinder"
+  ],
+  "interface": {
+    "input": [
+      {
+        "name": "SensorOut",
+        "dataType": "Bool"
+      },
+      {
+        "name": "SensorIn",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Timeout",
+        "dataType": "Time",
+        "defaultValue": "T#2000MS"
+      }
+    ],
+    "output": [
+      {
+        "name": "Valve",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Fault",
+        "dataType": "Bool"
+      }
+    ],
+    "inout": [],
+    "static": [
+      {
+        "name": "Cmd",
+        "dataType": "Bool"
+      },
+      {
+        "name": "Watchdog",
+        "dataType": "TON"
+      }
+    ],
+    "temp": [],
+    "constant": []
+  },
+  "methods": [
+    {
+      "id": "mth-carton-closer-5",
+      "name": "Extend",
+      "returnType": "Void",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      },
+      "file": "Extend"
+    },
+    {
+      "id": "mth-carton-closer-6",
+      "name": "Retract",
+      "returnType": "Void",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      },
+      "file": "Retract"
+    },
+    {
+      "id": "mth-carton-closer-7",
+      "name": "IsExtended",
+      "returnType": "Bool",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      },
+      "file": "IsExtended"
+    },
+    {
+      "id": "mth-carton-closer-8",
+      "name": "IsRetracted",
+      "returnType": "Bool",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      },
+      "file": "IsRetracted"
+    },
+    {
+      "id": "mth-carton-closer-9",
+      "name": "InFault",
+      "returnType": "Bool",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      },
+      "file": "InFault"
+    },
+    {
+      "id": "mth-carton-closer-10",
+      "name": "Reset",
+      "returnType": "Void",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      },
+      "file": "Reset"
+    }
+  ]
+}

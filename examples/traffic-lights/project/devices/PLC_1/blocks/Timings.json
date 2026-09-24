@@ -1,0 +1,51 @@
+{
+  "id": "blk-traffic-lights-7",
+  "name": "Timings",
+  "type": "DB",
+  "number": 2,
+  "interface": {
+    "input": [],
+    "output": [],
+    "inout": [],
+    "static": [],
+    "temp": [],
+    "constant": []
+  },
+  "members": [
+    {
+      "name": "MainGreenMin",
+      "dataType": "Time",
+      "defaultValue": "T#20000MS"
+    },
+    {
+      "name": "SideAlways",
+      "dataType": "Bool",
+      "defaultValue": "FALSE"
+    },
+    {
+      "name": "Amber",
+      "dataType": "Time",
+      "defaultValue": "T#3000MS"
+    },
+    {
+      "name": "AllRed",
+      "dataType": "Time",
+      "defaultValue": "T#2000MS"
+    },
+    {
+      "name": "SideGreen",
+      "dataType": "Time",
+      "defaultValue": "T#10000MS"
+    },
+    {
+      "name": "PedGreen",
+      "dataType": "Time",
+      "defaultValue": "T#7000MS"
+    },
+    {
+      "name": "StartupFlash",
+      "dataType": "Time",
+      "defaultValue": "T#5000MS"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+// Pilotage du distributeur
+Valve := Cmd;
+// Surveillance du mouvement : IsExtended() / IsRetracted() sont virtuelles,
+// un bloc dérivé peut les redéfinir.
+Watchdog(IN := NOT (IsExtended() OR IsRetracted()), PT := Timeout);
+IF Watchdog.Q THEN
+    Fault := TRUE;
+END_IF;

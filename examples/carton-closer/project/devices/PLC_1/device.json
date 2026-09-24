@@ -1,0 +1,13 @@
+{
+  "id": "dev-carton-closer-1",
+  "name": "PLC_1",
+  "type": "linux",
+  "cpu": {
+    "cycleMs": 10
+  },
+  "connection": {
+    "host": "192.168.0.10",
+    "port": 20105
+  },
+  "io": []
+}

@@ -1,0 +1,57 @@
+{
+  "id": "wt-traffic-lights-3",
+  "name": "Table de visualisation_1",
+  "rows": [
+    {
+      "name": "S_On"
+    },
+    {
+      "name": "S_Night"
+    },
+    {
+      "name": "BP_Pedestrian"
+    },
+    {
+      "name": "B_SideVehicle"
+    },
+    {
+      "name": "Phase"
+    },
+    {
+      "name": "Cycles"
+    },
+    {
+      "name": "H_Main_Red"
+    },
+    {
+      "name": "H_Main_Amber"
+    },
+    {
+      "name": "H_Main_Green"
+    },
+    {
+      "name": "H_Side_Red"
+    },
+    {
+      "name": "H_Side_Amber"
+    },
+    {
+      "name": "H_Side_Green"
+    },
+    {
+      "name": "H_Ped_Red"
+    },
+    {
+      "name": "H_Ped_Green"
+    },
+    {
+      "name": "H_Ped_Wait"
+    },
+    {
+      "name": "\"Timings\".MainGreenMin"
+    },
+    {
+      "name": "\"Timings\".SideGreen"
+    }
+  ]
+}

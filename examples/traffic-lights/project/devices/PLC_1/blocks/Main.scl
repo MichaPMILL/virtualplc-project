@@ -1,0 +1,5 @@
+"Crossroads_DB"(Enable := "S_On", Night := "S_Night", PedRequest := "BP_Pedestrian", SideVehicle := "B_SideVehicle",
+                MainRed => "H_Main_Red", MainAmber => "H_Main_Amber", MainGreen => "H_Main_Green",
+                SideRed => "H_Side_Red", SideAmber => "H_Side_Amber", SideGreen => "H_Side_Green",
+                PedRed => "H_Ped_Red", PedGreen => "H_Ped_Green", PedWait => "H_Ped_Wait",
+                Phase => "Phase", Cycles => "Cycles");

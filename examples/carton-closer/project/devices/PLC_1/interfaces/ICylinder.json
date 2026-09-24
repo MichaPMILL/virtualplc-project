@@ -1,0 +1,84 @@
+{
+  "id": "ifc-carton-closer-17",
+  "name": "ICylinder",
+  "methods": [
+    {
+      "id": "mth-carton-closer-18",
+      "name": "Extend",
+      "returnType": "Void",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      }
+    },
+    {
+      "id": "mth-carton-closer-19",
+      "name": "Retract",
+      "returnType": "Void",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      }
+    },
+    {
+      "id": "mth-carton-closer-20",
+      "name": "IsExtended",
+      "returnType": "Bool",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      }
+    },
+    {
+      "id": "mth-carton-closer-21",
+      "name": "IsRetracted",
+      "returnType": "Bool",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      }
+    },
+    {
+      "id": "mth-carton-closer-22",
+      "name": "InFault",
+      "returnType": "Bool",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      }
+    },
+    {
+      "id": "mth-carton-closer-23",
+      "name": "Reset",
+      "returnType": "Void",
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "id": "blk-carton-closer-11",
+  "name": "CylinderOneSensor",
+  "type": "FB",
+  "number": 2,
+  "extends": "Cylinder",
+  "interface": {
+    "input": [
+      {
+        "name": "RetractTime",
+        "dataType": "Time",
+        "defaultValue": "T#500MS"
+      }
+    ],
+    "output": [],
+    "inout": [],
+    "static": [
+      {
+        "name": "RetractTimer",
+        "dataType": "TON"
+      }
+    ],
+    "temp": [],
+    "constant": []
+  },
+  "methods": [
+    {
+      "id": "mth-carton-closer-12",
+      "name": "IsRetracted",
+      "returnType": "Bool",
+      "override": true,
+      "interface": {
+        "input": [],
+        "output": [],
+        "inout": [],
+        "static": [],
+        "temp": [],
+        "constant": []
+      },
+      "file": "IsRetracted"
+    }
+  ]
+}

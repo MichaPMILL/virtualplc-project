@@ -1,0 +1,82 @@
+{
+  "id": "tt-traffic-lights-2",
+  "name": "Table de variables standard",
+  "tags": [
+    {
+      "name": "S_On",
+      "dataType": "Bool",
+      "address": "%I0.0"
+    },
+    {
+      "name": "S_Night",
+      "dataType": "Bool",
+      "address": "%I0.1"
+    },
+    {
+      "name": "BP_Pedestrian",
+      "dataType": "Bool",
+      "address": "%I0.2"
+    },
+    {
+      "name": "B_SideVehicle",
+      "dataType": "Bool",
+      "address": "%I0.3"
+    },
+    {
+      "name": "H_Main_Red",
+      "dataType": "Bool",
+      "address": "%Q0.0"
+    },
+    {
+      "name": "H_Main_Amber",
+      "dataType": "Bool",
+      "address": "%Q0.1"
+    },
+    {
+      "name": "H_Main_Green",
+      "dataType": "Bool",
+      "address": "%Q0.2"
+    },
+    {
+      "name": "H_Side_Red",
+      "dataType": "Bool",
+      "address": "%Q0.3"
+    },
+    {
+      "name": "H_Side_Amber",
+      "dataType": "Bool",
+      "address": "%Q0.4"
+    },
+    {
+      "name": "H_Side_Green",
+      "dataType": "Bool",
+      "address": "%Q0.5"
+    },
+    {
+      "name": "H_Ped_Red",
+      "dataType": "Bool",
+      "address": "%Q0.6"
+    },
+    {
+      "name": "H_Ped_Green",
+      "dataType": "Bool",
+      "address": "%Q0.7"
+    },
+    {
+      "name": "H_Ped_Wait",
+      "dataType": "Bool",
+      "address": "%Q1.0"
+    },
+    {
+      "name": "Phase",
+      "dataType": "Int",
+      "address": "%MW20"
+    },
+    {
+      "name": "Cycles",
+      "dataType": "DInt",
+      "address": "%MD22"
+    }
+  ],
+  "constants": []
+}

@@ -1,0 +1,14 @@
+// Carrefour à feux tricolores - durées réglables (depuis un pupitre ou une table de visualisation)
+DATA_BLOCK "Timings"
+VERSION : 0.1
+   STRUCT
+      MainGreenMin : Time := T#20S;     // vert minimal de la rue principale
+      SideAlways : Bool := FALSE;       // TRUE : la rue secondaire passe au vert à chaque cycle
+      Amber : Time := T#3S;
+      AllRed : Time := T#2S;            // dégagement (tout rouge)
+      SideGreen : Time := T#10S;
+      PedGreen : Time := T#7S;          // vert piétons (pendant le vert secondaire)
+      StartupFlash : Time := T#5S;      // orange clignotant à la mise en service
+   END_STRUCT;
+BEGIN
+END_DATA_BLOCK

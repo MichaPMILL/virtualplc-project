@@ -1,0 +1,2 @@
+# Project files are text with LF line endings on every platform
+* text=auto eol=lf

@@ -1,0 +1,79 @@
+REGION Clignoteur 1 Hz
+    Blink(IN := NOT Blink.Q, PT := T#500MS);
+    IF Blink.Q THEN
+        BlinkOn := NOT BlinkOn;
+    END_IF;
+END_REGION
+
+REGION Demandes
+    IF PedRequest THEN
+        PedMemory := TRUE;
+    END_IF;
+    IF SideVehicle THEN
+        SideMemory := TRUE;
+    END_IF;
+END_REGION
+
+REGION Machine d'états
+    flashing := NOT Enable OR Night;
+    IF flashing THEN
+        Phase := 0;
+    END_IF;
+    // la temporisation repart à chaque changement de phase (et reste à zéro en clignotant)
+    PhaseTimer(IN := Phase = LastPhase AND NOT flashing, PT := T#24D);
+    LastPhase := Phase;
+    next := Phase;
+    CASE Phase OF
+        0:  // orange clignotant
+            IF NOT flashing AND PhaseTimer.ET >= "Timings".StartupFlash THEN
+                next := 1;
+            END_IF;
+        1:  // tout rouge avant le démarrage
+            IF PhaseTimer.ET >= "Timings".AllRed THEN
+                next := 2;
+            END_IF;
+        2:  // vert principal
+            IF PhaseTimer.ET >= "Timings".MainGreenMin AND (PedMemory OR SideMemory OR "Timings".SideAlways) THEN
+                next := 3;
+            END_IF;
+        3:  // orange principal
+            IF PhaseTimer.ET >= "Timings".Amber THEN
+                next := 4;
+            END_IF;
+        4:  // dégagement
+            IF PhaseTimer.ET >= "Timings".AllRed THEN
+                next := 5;
+                PedMemory := FALSE;       // la demande est servie
+                SideMemory := FALSE;
+            END_IF;
+        5:  // vert secondaire (et piétons)
+            IF PhaseTimer.ET >= "Timings".SideGreen THEN
+                next := 6;
+            END_IF;
+        6:  // orange secondaire
+            IF PhaseTimer.ET >= "Timings".Amber THEN
+                next := 7;
+            END_IF;
+        7:  // dégagement
+            IF PhaseTimer.ET >= "Timings".AllRed THEN
+                next := 2;
+                Cycles := Cycles + 1;
+            END_IF;
+    ELSE
+        next := 0;
+    END_CASE;
+    Phase := next;
+END_REGION
+
+REGION Feux
+    MainRed := Phase = 1 OR Phase >= 4;
+    MainAmber := (Phase = 0 AND BlinkOn) OR Phase = 3;
+    MainGreen := Phase = 2;
+    SideRed := Phase >= 1 AND Phase <= 4 OR Phase = 7;
+    SideAmber := (Phase = 0 AND BlinkOn) OR Phase = 6;
+    SideGreen := Phase = 5;
+    // piétons : vert au début du vert secondaire, rouge ensuite ; éteints en clignotant
+    PedGreen := Phase = 5 AND PhaseTimer.ET < "Timings".PedGreen;
+    PedRed := Phase <> 0 AND NOT PedGreen;
+    PedWait := PedMemory AND Phase <> 0;
+END_REGION

@@ -1,0 +1,105 @@
+// Fermeuse de cartons - vérins pneumatiques (programmation orientée objet)
+//
+// L'interface "ICylinder" décrit ce que la séquence attend d'un vérin. Trois blocs
+// l'implémentent :
+//   "Cylinder"          vérin simple effet, un capteur par position ;
+//   "CylinderOneSensor" vérin avec un seul capteur (sortie) : la position rentrée
+//                       est estimée par un temps (redéfinition de IsRetracted) ;
+//   "BistableCylinder"  vérin double effet sur distributeur bistable (deux bobines).
+// La séquence ne manipule que des références "ICylinder" : on peut changer de vérin
+// sans toucher à la séquence.
+
+INTERFACE "ICylinder"
+    METHOD Extend
+    END_METHOD
+    METHOD Retract
+    END_METHOD
+    METHOD IsExtended : Bool
+    END_METHOD
+    METHOD IsRetracted : Bool
+    END_METHOD
+    METHOD InFault : Bool
+    END_METHOD
+    METHOD Reset
+    END_METHOD
+END_INTERFACE
+
+FUNCTION_BLOCK "Cylinder" IMPLEMENTS "ICylinder"
+VERSION : 0.1
+   VAR_INPUT
+      SensorOut : Bool;          // capteur de position sortie
+      SensorIn : Bool;           // capteur de position rentrée
+      Timeout : Time := T#2S;    // temps maximal de mouvement
+   END_VAR
+   VAR_OUTPUT
+      Valve : Bool;              // bobine du distributeur (TRUE = sortie)
+      Fault : Bool;              // mouvement non terminé dans le temps imparti
+   END_VAR
+   VAR
+      Cmd : Bool;                // position demandée (TRUE = sortie)
+      Watchdog : TON;
+   END_VAR
+
+   METHOD Extend
+      Cmd := TRUE;
+   END_METHOD
+
+   METHOD Retract
+      Cmd := FALSE;
+   END_METHOD
+
+   METHOD IsExtended : Bool
+      IsExtended := Cmd AND SensorOut AND NOT SensorIn;
+   END_METHOD
+
+   METHOD IsRetracted : Bool
+      IsRetracted := NOT Cmd AND SensorIn AND NOT SensorOut;
+   END_METHOD
+
+   METHOD InFault : Bool
+      InFault := Fault;
+   END_METHOD
+
+   METHOD Reset
+      Fault := FALSE;
+   END_METHOD
+
+BEGIN
+    // Pilotage du distributeur
+    Valve := Cmd;
+    // Surveillance du mouvement : IsExtended() / IsRetracted() sont virtuelles,
+    // un bloc dérivé peut les redéfinir.
+    Watchdog(IN := NOT (IsExtended() OR IsRetracted()), PT := Timeout);
+    IF Watchdog.Q THEN
+        Fault := TRUE;
+    END_IF;
+END_FUNCTION_BLOCK
+
+FUNCTION_BLOCK "CylinderOneSensor" EXTENDS "Cylinder"
+VERSION : 0.1
+   VAR_INPUT
+      RetractTime : Time := T#500MS;   // durée de rentrée (pas de capteur)
+   END_VAR
+   VAR
+      RetractTimer : TON;
+   END_VAR
+
+   METHOD OVERRIDE IsRetracted : Bool
+      IsRetracted := NOT Cmd AND RetractTimer.Q AND NOT SensorOut;
+   END_METHOD
+
+BEGIN
+    RetractTimer(IN := NOT Cmd, PT := RetractTime);
+    SUPER();   // code du bloc de base (distributeur et surveillance)
+END_FUNCTION_BLOCK
+
+FUNCTION_BLOCK "BistableCylinder" EXTENDS "Cylinder"
+VERSION : 0.1
+   VAR_OUTPUT
+      ValveIn : Bool;    // bobine de rentrée
+   END_VAR
+BEGIN
+    SUPER();
+    // Une seule bobine alimentée à la fois
+    ValveIn := NOT Cmd;
+END_FUNCTION_BLOCK

@@ -1,0 +1,15 @@
+{
+  "id": "blk-carton-closer-14",
+  "name": "Main",
+  "type": "OB",
+  "number": 1,
+  "event": "ProgramCycle",
+  "interface": {
+    "input": [],
+    "output": [],
+    "inout": [],
+    "static": [],
+    "temp": [],
+    "constant": []
+  }
+}

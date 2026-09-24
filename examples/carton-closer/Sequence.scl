@@ -1,0 +1,180 @@
+// Fermeuse de cartons - séquence de la machine
+//
+// Cycle : amener le carton contre la butée, plier les rabats latéraux puis avant/arrière,
+// presser et encoller, puis évacuer le carton.
+// Marche / arrêt (arrêt en fin de cycle), arrêt d'urgence et défauts des vérins :
+// arrêt immédiat, voyant défaut clignotant, acquittement par BP_Reset.
+
+FUNCTION_BLOCK "CartonCloser"
+VERSION : 0.1
+   VAR_INPUT
+      Start : Bool;
+      Stop : Bool;              // NF
+      EmergencyOk : Bool;       // NF
+      Reset : Bool;
+      BoxAtStation : Bool;
+      BoxOut : Bool;
+      Stopper : "ICylinder";    // vérins : n'importe quel bloc qui implémente "ICylinder"
+      SideFlaps : "ICylinder";
+      FrontFlaps : "ICylinder";
+      Press : "ICylinder";
+      GlueTime : Time := T#800MS;
+   END_VAR
+   VAR_OUTPUT
+      ConveyorIn : Bool;
+      ConveyorOut : Bool;
+      Glue : Bool;
+      Running : Bool;           // voyant marche
+      FaultLamp : Bool;         // voyant défaut
+      Step : Int;               // étape en cours (diagnostic)
+      Count : DInt;             // cartons fermés
+   END_VAR
+   VAR
+      Auto : Bool;              // marche automatique demandée
+      Faulted : Bool;
+      All : Array[1..4] of "ICylinder";
+      GlueTimer : TON;
+      Blink : TON;
+      BlinkOn : Bool;
+      OutEdge : R_TRIG;
+   END_VAR
+   VAR_TEMP
+      i : Int;
+      allRetracted : Bool;
+      anyFault : Bool;
+   END_VAR
+   VAR CONSTANT
+      ST_INIT : Int := 0;
+      ST_IDLE : Int := 10;
+      ST_FEED : Int := 20;
+      ST_FOLD_SIDE : Int := 30;
+      ST_FOLD_FRONT : Int := 40;
+      ST_PRESS : Int := 50;
+      ST_GLUE : Int := 60;
+      ST_OPEN : Int := 70;
+      ST_EJECT : Int := 80;
+      ST_FAULT : Int := 99;
+   END_VAR
+BEGIN
+    REGION Vérins
+        All[1] := Stopper;
+        All[2] := SideFlaps;
+        All[3] := FrontFlaps;
+        All[4] := Press;
+        allRetracted := TRUE;
+        anyFault := FALSE;
+        FOR i := 1 TO 4 DO
+            IF All[i] = NULL THEN
+                anyFault := TRUE;           // vérin non câblé
+            ELSE
+                IF All[i].InFault() THEN
+                    anyFault := TRUE;
+                END_IF;
+                IF All[i] <> Stopper AND NOT All[i].IsRetracted() THEN
+                    allRetracted := FALSE;
+                END_IF;
+            END_IF;
+        END_FOR;
+    END_REGION
+
+    REGION Marche / arrêt / défauts
+        IF NOT EmergencyOk OR anyFault THEN
+            Faulted := TRUE;
+            Auto := FALSE;
+        END_IF;
+        IF Faulted AND Reset AND EmergencyOk THEN
+            FOR i := 1 TO 4 DO
+                IF All[i] <> NULL THEN
+                    All[i].Reset();
+                END_IF;
+            END_FOR;
+            Faulted := FALSE;
+            Step := ST_INIT;
+        END_IF;
+        IF Start AND Stop AND NOT Faulted THEN
+            Auto := TRUE;
+        END_IF;
+        IF NOT Stop THEN
+            Auto := FALSE;               // arrêt en fin de cycle
+        END_IF;
+        IF Faulted THEN
+            Step := ST_FAULT;
+        END_IF;
+    END_REGION
+
+    REGION Séquence
+        ConveyorIn := FALSE;
+        ConveyorOut := Auto;             // le convoyeur de sortie tourne pendant la marche
+        Glue := FALSE;
+        CASE Step OF
+            0:  // ST_INIT : tout rentrer, butée sortie
+                SideFlaps.Retract();
+                FrontFlaps.Retract();
+                Press.Retract();
+                Stopper.Extend();
+                IF allRetracted AND Stopper.IsExtended() THEN
+                    Step := ST_IDLE;
+                END_IF;
+            10: // ST_IDLE
+                IF Auto THEN
+                    Step := ST_FEED;
+                END_IF;
+            20: // ST_FEED : amener le carton contre la butée
+                Stopper.Extend();
+                IF BoxAtStation AND Stopper.IsExtended() THEN
+                    Step := ST_FOLD_SIDE;
+                ELSIF Stopper.IsExtended() THEN
+                    ConveyorIn := TRUE;
+                END_IF;
+            30: // ST_FOLD_SIDE
+                SideFlaps.Extend();
+                IF SideFlaps.IsExtended() THEN
+                    Step := ST_FOLD_FRONT;
+                END_IF;
+            40: // ST_FOLD_FRONT
+                FrontFlaps.Extend();
+                IF FrontFlaps.IsExtended() THEN
+                    Step := ST_PRESS;
+                END_IF;
+            50: // ST_PRESS
+                Press.Extend();
+                IF Press.IsExtended() THEN
+                    Step := ST_GLUE;
+                END_IF;
+            60: // ST_GLUE : encollage pendant le pressage
+                Glue := TRUE;
+                IF GlueTimer.Q THEN
+                    Step := ST_OPEN;
+                END_IF;
+            70: // ST_OPEN : remonter la presse et rentrer les plieurs
+                Press.Retract();
+                SideFlaps.Retract();
+                FrontFlaps.Retract();
+                IF allRetracted THEN
+                    Step := ST_EJECT;
+                END_IF;
+            80: // ST_EJECT : effacer la butée et évacuer le carton
+                Stopper.Retract();
+                ConveyorOut := TRUE;
+                IF OutEdge.Q THEN
+                    Count := Count + 1;
+                    Step := ST_INIT;     // puis IDLE : nouveau cycle si la marche est toujours demandée
+                END_IF;
+            99: // ST_FAULT : arrêt immédiat
+                ;
+        ELSE
+            Step := ST_INIT;
+        END_CASE;
+        GlueTimer(IN := Step = ST_GLUE, PT := GlueTime);
+        OutEdge(CLK := BoxOut);
+    END_REGION
+
+    REGION Voyants
+        Blink(IN := NOT Blink.Q, PT := T#500MS);   // impulsion toutes les 500 ms
+        IF Blink.Q THEN
+            BlinkOn := NOT BlinkOn;
+        END_IF;
+        Running := Auto;
+        FaultLamp := Faulted AND BlinkOn;
+    END_REGION
+END_FUNCTION_BLOCK

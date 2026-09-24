@@ -1,0 +1,15 @@
+{
+  "id": "blk-traffic-lights-5",
+  "name": "Main",
+  "type": "OB",
+  "number": 1,
+  "event": "ProgramCycle",
+  "interface": {
+    "input": [],
+    "output": [],
+    "inout": [],
+    "static": [],
+    "temp": [],
+    "constant": []
+  }
+}

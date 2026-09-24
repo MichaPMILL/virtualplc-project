@@ -1,0 +1,8 @@
+{
+  "format": "virtualplc-project",
+  "version": 1,
+  "layout": "folder",
+  "name": "Feux tricolores",
+  "comment": "Exemple sans POO : carrefour à feux avec appel piétons, détection de véhicules et mode nuit.",
+  "created": "2026-01-01T00:00:00.000Z"
+}

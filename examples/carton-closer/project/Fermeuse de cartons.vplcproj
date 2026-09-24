@@ -1,0 +1,8 @@
+{
+  "format": "virtualplc-project",
+  "version": 1,
+  "layout": "folder",
+  "name": "Fermeuse de cartons",
+  "comment": "Exemple POO : interface \"ICylinder\", vérins dérivés (EXTENDS), séquence de fermeture de cartons.",
+  "created": "2026-01-01T00:00:00.000Z"
+}
