@@ -436,3 +436,18 @@ body.simulation .toolbar .brand::after { content: 'SIMULATION'; margin-left: 10p
 .sim-lamp.red.on { background: radial-gradient(circle at 35% 35%, #ffb3a8, #e0301e); border-color: #9e1c0f; box-shadow: 0 0 6px #ff4a33; }
 .sim-lamp.green.on { background: radial-gradient(circle at 35% 35%, #b9f5c9, #1fae55); border-color: #137a3a; box-shadow: 0 0 6px #2ad066; }
 .sim-lamp.amber.on { background: radial-gradient(circle at 35% 35%, #ffe0a3, #f59300); border-color: #b86e00; box-shadow: 0 0 6px #ffa51f; }
+
+/* Network view */
+.net-view { flex: 1; overflow: auto; padding: 14px 18px; background: var(--panel-alt); }
+.net-row { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+.net-bus { position: relative; margin: 26px 0 14px; height: 6px; background: #1a9e5e; border-radius: 3px; }
+.net-bus.usb { background: #6b6b6b; }
+.net-bus span { position: absolute; left: 8px; top: -18px; font-size: 11px; color: var(--muted); }
+.net-card { background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 6px 10px; min-width: 190px; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.net-card.cpu { border-top: 4px solid var(--accent); cursor: default; }
+.net-card.cpu.online { border-top-color: var(--online); }
+.net-card.pc { border-top: 4px solid #3d78a8; }
+.net-title { font-weight: 600; display: flex; align-items: center; gap: 4px; }
+.net-state { color: var(--online-dark); font-weight: 600; }
+.net-peers { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.net-card.peer { min-width: 150px; border-top: 3px solid #b8932e; font-size: 12px; }

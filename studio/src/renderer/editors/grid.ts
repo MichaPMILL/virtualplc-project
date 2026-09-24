@@ -13,7 +13,7 @@ export interface Column<T> {
   set?(row: T, value: string): void;
   options?: string[] | (() => string[]);
   /** datalist suggestions for text inputs */
-  suggestions?: () => string[];
+  suggestions?: () => Array<string | { value: string; label: string }>;
   /** returns an error message, or null when valid */
   validate?(value: string, row: T): string | null;
   className?: string | ((row: T) => string);
@@ -157,7 +157,9 @@ export class Grid<T> {
       input.setAttribute('list', id);
       input.addEventListener('focus', () => {
         document.getElementById(id)?.remove();
-        document.body.append(h('datalist', { id }, ...c.suggestions!().map((s) => h('option', { value: s }))));
+        document.body.append(h('datalist', { id }, ...c.suggestions!().map((s) => (typeof s === 'string'
+          ? h('option', { value: s })
+          : h('option', { value: s.value, label: s.label })))));
       }, { once: false });
     }
     const commit = () => {

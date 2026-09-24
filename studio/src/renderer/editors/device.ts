@@ -1,5 +1,5 @@
 // Device configuration ("Configuration des appareils") and online & diagnostics.
-import { DEVICE_TYPES, ioLinkTags, isSerialPort, parseIodd, type Device, type IoLinkPort, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
+import { DEVICE_TYPES, ioChannels, ioLinkTags, isSerialPort, parseIodd, type Device, type IoLinkPort, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
 import { host } from '../host.ts';
 import { alertDialog } from '../ui/dialogs.ts';
 import * as A from '../actions.ts';
@@ -10,6 +10,25 @@ import { store } from '../store.ts';
 import { contextMenu } from '../ui/chrome.ts';
 import type { EditorView } from './types.ts';
 import { addGsdmlDevice, newPnDevice, pnDeviceProps, pnRemoteProps } from './profinet.ts';
+
+/** One tag per channel of the module that no tag uses yet */
+function createTags(device: Device, m: IoModuleConfig): void {
+  const table = device.tagTables[0];
+  const used = new Set(device.tagTables.flatMap((tt) => tt.tags.map((x) => x.address.toUpperCase())));
+  const names = new Set(device.tagTables.flatMap((tt) => tt.tags.map((x) => x.name.toLowerCase())));
+  let added = 0;
+  for (const c of ioChannels(device).filter((x) => x.module === m.name)) {
+    if (used.has(c.address)) continue;
+    let name = c.name;
+    for (let i = 2; names.has(name.toLowerCase()); i++) name = `${c.name}_${i}`;
+    names.add(name.toLowerCase());
+    table.tags.push({ name, dataType: c.dataType, address: c.address, comment: `${m.name} — ${c.detail}` });
+    added++;
+  }
+  store.touch();
+  store.addMessage({ severity: added ? 'ok' : 'info', text: added ? `${added} variable(s) créée(s) dans « ${table.name} » pour ${m.name}.` : `Toutes les entrées / sorties de ${m.name} ont déjà une variable.`, path: device.name });
+  if (added) A.openEditor({ kind: 'tagTable', deviceId: device.id, tableId: table.id });
+}
 
 type ModuleKind = IoModuleConfig['kind'];
 
@@ -209,7 +228,9 @@ export function deviceEditor(device: Device): EditorView {
     const m = device.io[selected];
     if (!m) return;
     props.append(h('h3', null, `${m.name} — ${MODULE_LABELS[m.kind]}`),
-      field(t.name, textInput(m.name, (v) => { if (/^[A-Za-z_]\w*$/.test(v)) { m.name = v; touch(); } }), 'Utilisable dans le programme : DEVICE_OK(' + m.name + ')'));
+      field(t.name, textInput(m.name, (v) => { if (/^[A-Za-z_]\w*$/.test(v)) { m.name = v; touch(); } }), 'Utilisable dans le programme : DEVICE_OK(' + m.name + ')'),
+      field('Variables API', h('button', { className: 'button', onclick: () => createTags(device, m) }, svg(icons.tagTable), ' Créer les variables'),
+        'Ajoute à la table de variables standard une variable par entrée / sortie du module qui n\'en a pas encore'));
     if (m.kind === 'modbus-tcp') {
       const range = (label: string, key: 'di' | 'coils' | 'ir' | 'hr', area: string, unit: string) => {
         const r = (m[key] ??= { byte: 0, count: 0 });
@@ -256,7 +277,8 @@ export function deviceEditor(device: Device): EditorView {
   renderProps();
   const unsubscribe = store.on((topic) => { if (topic === 'online') renderRack(); });
   const element = h('div', { className: 'editor-host' },
-    h('div', { className: 'subtabs' }, h('div', { className: 'tab active' }, svg(icons.device), 'Vue des appareils'), h('div', { className: 'tab' }, svg(icons.network), 'Vue du réseau')),
+    h('div', { className: 'subtabs' }, h('div', { className: 'tab active' }, svg(icons.device), 'Vue des appareils'),
+      h('div', { className: 'tab', onclick: () => A.openEditor({ kind: 'network' }) }, svg(icons.network), 'Vue du réseau')),
     h('div', { style: 'flex:1;display:grid;grid-template-rows:minmax(240px,45%) 1fr;min-height:0' },
       rack,
       h('div', { style: 'display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--border)' },

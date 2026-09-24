@@ -13,6 +13,7 @@ import { watchTableEditor } from '../editors/watchTable.ts';
 import { dataTypeEditor } from '../editors/dataType.ts';
 import { interfaceEditor, methodEditor } from '../editors/method.ts';
 import { simulationEditor } from '../editors/simulation.ts';
+import { networkEditor } from '../editors/network.ts';
 import * as V from '../versioning.ts';
 import { historyEditor } from '../versioning.ts';
 import { branchesEditor } from '../branches.ts';
@@ -58,6 +59,7 @@ function createView(ref: EditorRef): EditorView | null {
   if (ref.kind === 'overview') return overviewEditor();
   if (ref.kind === 'history') return historyEditor();
   if (ref.kind === 'branches') return branchesEditor();
+  if (ref.kind === 'network') return networkEditor();
   const device = store.device(ref.deviceId);
   if (!device || device.id !== ref.deviceId) return null;
   switch (ref.kind) {
@@ -231,6 +233,7 @@ function labelOf(ref: EditorRef): string {
   if (ref.kind === 'overview') return t.overview;
   if (ref.kind === 'history') return 'Historique des versions';
   if (ref.kind === 'branches') return 'Branches';
+  if (ref.kind === 'network') return 'Vue du réseau';
   const d = store.device(ref.deviceId);
   switch (ref.kind) {
     case 'block': {

@@ -266,6 +266,97 @@ export function saveProject(project: Project): string {
   return JSON.stringify(project, null, 2) + '\n';
 }
 
+/** One input or output provided by an I/O module of the device configuration */
+export interface IoChannel {
+  address: string;
+  area: 'I' | 'Q';
+  dataType: 'Bool' | 'Int' | 'Byte';
+  /** Module name */
+  module: string;
+  /** What the channel is on the module (GPIO pin, register...) */
+  detail: string;
+  /** Tag name proposed when tags are created from the module */
+  name: string;
+}
+
+const MAX_CHANNELS_PER_RANGE = 256;
+
+/** The addresses %I / %Q that the configured I/O modules read or write, in module order. */
+export function ioChannels(device: Device): IoChannel[] {
+  const out: IoChannel[] = [];
+  const clean = (s: string) => s.replace(/[^A-Za-z0-9_]/g, '_');
+  const bits = (m: IoModuleConfig, area: 'I' | 'Q', byte: number, count: number, what: string, prefix: string) => {
+    for (let k = 0; k < Math.min(count, MAX_CHANNELS_PER_RANGE); k++) {
+      out.push({ address: `%${area}${byte + (k >> 3)}.${k & 7}`, area, dataType: 'Bool', module: m.name, detail: `${what} ${k}`, name: `${clean(m.name)}_${prefix}${k}` });
+    }
+  };
+  const words = (m: IoModuleConfig, area: 'I' | 'Q', byte: number, count: number, what: string, prefix: string) => {
+    for (let k = 0; k < Math.min(count, MAX_CHANNELS_PER_RANGE); k++) {
+      out.push({ address: `%${area}W${byte + 2 * k}`, area, dataType: 'Int', module: m.name, detail: `${what} ${k}`, name: `${clean(m.name)}_${prefix}${k}` });
+    }
+  };
+  const bytes = (m: IoModuleConfig, area: 'I' | 'Q', byte: number, count: number, what: string, prefix: string) => {
+    for (let k = 0; k < Math.min(count, MAX_CHANNELS_PER_RANGE); k++) {
+      out.push({ address: `%${area}B${byte + k}`, area, dataType: 'Byte', module: m.name, detail: `${what} octet ${k}`, name: `${clean(m.name)}_${prefix}${k}` });
+    }
+  };
+  for (const m of device.io) {
+    switch (m.kind) {
+      case 'gpio-di':
+      case 'gpio-do': {
+        const area = m.kind === 'gpio-di' ? 'I' : 'Q';
+        out.push({ address: `%${area}${m.byte}.${m.bit}`, area, dataType: 'Bool', module: m.name, detail: `GPIO ${m.pin}`, name: clean(m.name) });
+        break;
+      }
+      case 'gpio-ai':
+      case 'gpio-ao': {
+        const area = m.kind === 'gpio-ai' ? 'I' : 'Q';
+        out.push({ address: `%${area}W${m.byte}`, area, dataType: 'Int', module: m.name, detail: `GPIO ${m.pin} (analogique)`, name: clean(m.name) });
+        break;
+      }
+      case 'modbus-tcp':
+        if (m.di) bits(m, 'I', m.di.byte, m.di.count, 'entrée TOR', 'DI');
+        if (m.coils) bits(m, 'Q', m.coils.byte, m.coils.count, 'sortie TOR', 'DO');
+        if (m.ir) words(m, 'I', m.ir.byte, m.ir.count, 'registre d’entrée', 'AI');
+        if (m.hr) words(m, 'Q', m.hr.byte, m.hr.count, 'registre de maintien', 'AO');
+        break;
+      case 'iolink-master':
+        for (const p of m.ports) {
+          bytes(m, 'I', p.inByte, p.inLength, `port ${p.port}, entrée`, `P${p.port}_IN`);
+          bytes(m, 'Q', p.outByte, p.outLength, `port ${p.port}, sortie`, `P${p.port}_OUT`);
+        }
+        break;
+      case 'profinet-device':
+        bytes(m, 'I', m.inByte, m.inLength, 'données du maître,', 'IN');
+        bytes(m, 'Q', m.outByte, m.outLength, 'données vers le maître,', 'OUT');
+        break;
+      case 'profinet-remote':
+        for (const x of m.submodules) {
+          bytes(m, 'I', x.inByte, x.inLength, `emplacement ${x.slot}.${x.subslot}, entrée`, `S${x.slot}_IN`);
+          bytes(m, 'Q', x.outByte, x.outLength, `emplacement ${x.slot}.${x.subslot}, sortie`, `S${x.slot}_OUT`);
+        }
+        break;
+    }
+  }
+  return out;
+}
+
+/** The module channel that covers an address (a bit of a byte / word channel counts), or null */
+export function ioChannelFor(channels: IoChannel[], address: string): IoChannel | null {
+  const a = parseAddress(address);
+  if (!a || a.area === 'M') return null;
+  const size = { X: 1, B: 8, W: 16, D: 32 }[a.size];
+  const start = a.byte * 8 + (a.size === 'X' ? a.bit : 0);
+  for (const c of channels) {
+    const ca = parseAddress(c.address)!;
+    if (ca.area !== a.area) continue;
+    const cs = { X: 1, B: 8, W: 16, D: 32 }[ca.size];
+    const cstart = ca.byte * 8 + (ca.size === 'X' ? ca.bit : 0);
+    if (start >= cstart && start + size <= cstart + cs) return c;
+  }
+  return null;
+}
+
 export function blockLabel(b: Block): string {
   return `${b.name} [${b.type}${b.number}]`;
 }

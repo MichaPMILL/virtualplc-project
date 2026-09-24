@@ -15,6 +15,7 @@ export type EditorRef =
   | { kind: 'method'; deviceId: string; blockId: string; methodId: string }
   | { kind: 'interface'; deviceId: string; interfaceId: string }
   | { kind: 'simulation'; deviceId: string }
+  | { kind: 'network' }
   | { kind: 'history' }
   | { kind: 'branches' };
 

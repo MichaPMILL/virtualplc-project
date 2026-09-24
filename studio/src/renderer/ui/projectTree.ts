@@ -177,7 +177,7 @@ function projectNodes(): NodeSpec[] {
     menu: [{ label: t.addDevice, icon: 'cpu', run: () => void A.addDeviceCmd() }, { label: t.saveProject, icon: 'save', run: () => void A.saveProjectCmd() }],
     children: () => [
       { key: 'adddev', label: t.addDevice, icon: 'add', depth: 1, className: 'add', onActivate: () => void A.addDeviceCmd() },
-      { key: 'devnet', label: t.devicesNetworks, icon: 'network', depth: 1, open: { kind: 'overview' } },
+      { key: 'devnet', label: t.devicesNetworks, icon: 'network', depth: 1, open: { kind: 'network' } },
       ...p.devices.map((d): NodeSpec => {
         const s = store.onlineOf(d.id);
         const stateIcon: IconName | null = s.connected ? (s.state === 'RUN' ? 'run' : s.state === 'FAULT' ? 'error' : 'stop') : null;

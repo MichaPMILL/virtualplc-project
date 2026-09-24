@@ -1,5 +1,5 @@
 // PLC tag table editor ("Variables API").
-import { parseAddress, type Device, type Tag, type TagTable, type UserConstant } from '../../../../sdk/src/browser.ts';
+import { ioChannelFor, ioChannels, parseAddress, type Device, type IoChannel, type Tag, type TagTable, type UserConstant } from '../../../../sdk/src/browser.ts';
 import { store } from '../store.ts';
 import { clear, h, svg } from '../dom.ts';
 import { icons } from '../icons.ts';
@@ -56,6 +56,29 @@ function nameValidator(all: () => Array<{ name: string }>) {
   };
 }
 
+/**
+ * Addresses of the configured I/O modules for the address column: free channels first, then
+ * those already used by a tag.
+ */
+export function addressSuggestions(device: Device, row?: { address: string }): Array<{ value: string; label: string }> {
+  const used = new Map<string, string>();
+  for (const tt of device.tagTables) for (const tag of tt.tags) if (tag !== row && tag.address) used.set(tag.address.toUpperCase(), tag.name);
+  const channels = ioChannels(device);
+  const label = (c: IoChannel) => `${c.area === 'I' ? 'Entrée' : 'Sortie'} ${c.dataType} — ${c.module}, ${c.detail}`;
+  return [
+    ...channels.filter((c) => !used.has(c.address)).map((c) => ({ value: c.address, label: label(c) })),
+    ...channels.filter((c) => used.has(c.address)).map((c) => ({ value: c.address, label: `${label(c)} (déjà utilisée : ${used.get(c.address)})` })),
+  ];
+}
+
+/** Module that reads / writes the address of a tag, for the "Module" column */
+function moduleOf(device: Device, address: string): string {
+  const a = parseAddress(address);
+  if (!a || a.area === 'M') return '';
+  const c = ioChannelFor(ioChannels(device), address);
+  return c ? `${c.module} (${c.detail})` : '— aucun module (simulation)';
+}
+
 export function tagTableEditor(device: Device, table: TagTable | null): EditorView {
   const tables = () => (table ? [table] : device.tagTables);
   const allTags = () => device.tagTables.flatMap((x) => x.tags);
@@ -68,7 +91,19 @@ export function tagTableEditor(device: Device, table: TagTable | null): EditorVi
       { title: t.name, width: '24%', kind: 'text', primary: true, get: (r) => r.name, set: (r, v) => { r.name = v.trim(); }, validate: nameValidator(allTags) },
       ...(table ? [] : [{ title: 'Table de variables', width: '16%', kind: 'readonly' as const, get: (r: Tag & { _table?: string }) => r._table ?? '' }]),
       { title: t.dataType, width: '13%', kind: 'text', get: (r) => r.dataType, set: (r, v) => { r.dataType = v.trim(); }, suggestions: () => DATA_TYPES.filter((x) => !x.startsWith('Array')) },
-      { title: t.address, width: '11%', kind: 'text', mono: true, get: (r) => r.address, set: (r, v) => { r.address = v.trim().toUpperCase(); }, validate: (v, r) => validateAddress(v, r.dataType) },
+      {
+        title: t.address, width: '11%', kind: 'text', mono: true, get: (r) => r.address,
+        set: (r, v) => {
+          r.address = v.trim().toUpperCase();
+          // an address picked from a module gives its data type to a new tag
+          const c = ioChannels(device).find((x) => x.address === r.address);
+          if (c && validateAddress(r.address, r.dataType)) r.dataType = c.dataType;
+          tagGrid.render();
+        },
+        validate: (v, r) => validateAddress(v, r.dataType),
+        suggestions: () => addressSuggestions(device),
+      },
+      { title: 'Module d\'E/S', width: '16%', kind: 'readonly', get: (r) => moduleOf(device, r.address), className: (r) => (/^%[IQ]/i.test(r.address) && !ioChannelFor(ioChannels(device), r.address) ? 'muted' : '') },
       { title: t.comment, kind: 'text', get: (r) => r.comment ?? '', set: (r, v) => { r.comment = v; } },
       ...hmiColumns<Tag>(),
       { title: t.monitorValue, width: '15%', kind: 'monitor', get: () => '' },
