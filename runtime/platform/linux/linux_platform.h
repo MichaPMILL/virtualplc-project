@@ -7,6 +7,8 @@
 
 #include "cpu.h"
 #include "modbus.h"
+#include "profinet/pn_controller.h"
+#include "profinet/pn_device.h"
 
 namespace vplc {
 
@@ -46,9 +48,16 @@ private:
     void failed(Module& m, const std::string& what);
     bool openGpio(Module& m, bool output);
 
+    void configureProfinet();
+
     std::string dataDir_;
     std::string gpioChip_;
     std::vector<Module> modules_;
+    // PROFINET: this CPU as IO-Device, and / or IO-Controller of remote devices
+    std::unique_ptr<pn::Device> pnDevice_;
+    std::unique_ptr<pn::Controller> pnController_;
+    std::string pnDeviceKey_, pnControllerKey_;
+    std::vector<uint16_t> pnRemoteIndex_;  // module index -> device index of the controller
 };
 
 }  // namespace vplc

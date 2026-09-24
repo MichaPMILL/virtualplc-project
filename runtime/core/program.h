@@ -59,6 +59,18 @@ struct IoModuleInfo {
         uint16_t inRegister = 0, inByte = 0, outRegister = 0, outByte = 0;
         uint8_t inLength = 0, outLength = 0;
     } ports[16];
+    // PROFINET (device role and remote IO-Devices): host = IP address of a remote device
+    char ifname[32] = {0};
+    char station[241] = {0};
+    uint16_t vendorId = 0, deviceId = 0;
+    uint16_t inByte = 0, inLength = 0, outByte = 0, outLength = 0;  // device role
+    uint16_t cycleMs = 8, watchdog = 3;                              // remote device
+    uint8_t subCount = 0;
+    struct PnSub {
+        uint16_t slot = 0, subslot = 0;
+        uint32_t moduleIdent = 0, submoduleIdent = 0;
+        uint16_t inLength = 0, inByte = 0, outLength = 0, outByte = 0;
+    } subs[64];
 };
 
 class IoModuleReader {

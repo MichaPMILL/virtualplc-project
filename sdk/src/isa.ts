@@ -346,6 +346,8 @@ export const IoModule = {
   GPIO_AI: 4,
   GPIO_AO: 5,
   IOLINK_MASTER: 6,
+  PROFINET_DEVICE: 7,
+  PROFINET_REMOTE: 8,
 } as const;
 
 export const Command = {

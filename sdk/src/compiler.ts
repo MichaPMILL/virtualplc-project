@@ -2470,5 +2470,9 @@ function ioUsage(m: IoModuleConfig): Array<['I' | 'Q', number, number, 'bits' | 
       return [['Q', m.byte, 1, 'words']];
     case 'iolink-master':
       return m.ports.flatMap((p): Array<['I' | 'Q', number, number, 'bytes']> => [['I', p.inByte, p.inLength, 'bytes'], ['Q', p.outByte, p.outLength, 'bytes']]);
+    case 'profinet-device':
+      return [['I', m.inByte, m.inLength, 'bytes'], ['Q', m.outByte, m.outLength, 'bytes']];
+    case 'profinet-remote':
+      return m.submodules.flatMap((x): Array<['I' | 'Q', number, number, 'bytes']> => [['I', x.inByte, x.inLength, 'bytes'], ['Q', x.outByte, x.outLength, 'bytes']]);
   }
 }

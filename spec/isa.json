@@ -802,7 +802,9 @@
     "GPIO_DO": 3,
     "GPIO_AI": 4,
     "GPIO_AO": 5,
-    "IOLINK_MASTER": 6
+    "IOLINK_MASTER": 6,
+    "PROFINET_DEVICE": 7,
+    "PROFINET_REMOTE": 8
   },
   "protocol": {
     "port": 20105,

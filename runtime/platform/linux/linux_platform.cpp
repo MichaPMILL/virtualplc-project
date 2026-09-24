@@ -65,7 +65,17 @@ bool LinuxPlatform::clock(bool local, int64_t& ns) {
     return true;
 }
 
-bool LinuxPlatform::moduleOk(uint16_t index) { return index < modules_.size() && modules_[index].ok; }
+bool LinuxPlatform::moduleOk(uint16_t index) {
+    if (index >= modules_.size()) return false;
+    switch (IoModule(modules_[index].info.kind)) {
+        case IoModule::IO_PROFINET_DEVICE:
+            return pnDevice_ && pnDevice_->running();
+        case IoModule::IO_PROFINET_REMOTE:
+            return pnController_ && index < pnRemoteIndex_.size() && pnController_->deviceOk(pnRemoteIndex_[index]);
+        default:
+            return modules_[index].ok;
+    }
+}
 
 bool LinuxPlatform::storeProgram(const uint8_t* image, size_t length) {
     std::string path = dataDir_ + "/program.vplc", tmp = path + ".tmp";
@@ -140,7 +150,7 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
     while (reader.next(info)) {
         Module m;
         m.info = info;
-        char msg[160];
+        char msg[400];
         switch (IoModule(info.kind)) {
             case IoModule::IO_MODBUS_TCP:
                 m.modbus = std::make_unique<ModbusClient>(info.host, info.port, info.unit, 300);
@@ -160,6 +170,13 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
                 snprintf(msg, sizeof msg, "I/O module %u: IO-Link master %s:%u (%u ports)", unsigned(modules_.size()), info.host,
                          unsigned(info.port), unsigned(info.portCount));
                 break;
+            case IoModule::IO_PROFINET_DEVICE:
+                snprintf(msg, sizeof msg, "I/O module %u: PROFINET IO-Device \"%s\" on %s", unsigned(modules_.size()), info.station, info.ifname);
+                break;
+            case IoModule::IO_PROFINET_REMOTE:
+                snprintf(msg, sizeof msg, "I/O module %u: PROFINET IO-Device \"%s\" (%s) driven by this controller", unsigned(modules_.size()),
+                         info.station, info.host);
+                break;
             default:
                 m.supported = false;
                 snprintf(msg, sizeof msg, "I/O module %u: analog GPIO is not supported on Linux", unsigned(modules_.size()));
@@ -168,6 +185,7 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
         modules_.push_back(std::move(m));
     }
     if (reader.count() != modules_.size()) log("Warning: malformed I/O configuration");
+    configureProfinet();
     return uint16_t(modules_.size());
 }
 
@@ -177,7 +195,87 @@ static void setBit(uint8_t* image, uint32_t size, uint32_t byte, uint32_t bit, b
     else image[byte] &= uint8_t(~(1u << bit));
 }
 
+void LinuxPlatform::configureProfinet() {
+    // keep the running stacks when their configuration did not change (no reconnection)
+    std::string deviceKey, controllerKey;
+    pn::DeviceConfig dev;
+    pn::ControllerConfig ctl;
+    bool haveDevice = false;
+    pnRemoteIndex_.assign(modules_.size(), 0);
+    auto logger = [this](const std::string& text) { log(text.c_str()); };
+    for (size_t k = 0; k < modules_.size(); k++) {
+        const IoModuleInfo& i = modules_[k].info;
+        char key[512];
+        if (IoModule(i.kind) == IoModule::IO_PROFINET_DEVICE && !haveDevice) {
+            haveDevice = true;
+            dev.ifname = i.ifname;
+            dev.stationName = i.station;
+            dev.dataDir = dataDir_;
+            dev.vendorId = i.vendorId;
+            dev.deviceId = i.deviceId;
+            dev.inByte = i.inByte;
+            dev.inLength = i.inLength;
+            dev.outByte = i.outByte;
+            dev.outLength = i.outLength;
+            dev.log = logger;
+            snprintf(key, sizeof key, "%s|%s|%u|%u|%u|%u|%u|%u", i.ifname, i.station, i.vendorId, i.deviceId, i.inByte, i.inLength, i.outByte, i.outLength);
+            deviceKey = key;
+        } else if (IoModule(i.kind) == IoModule::IO_PROFINET_REMOTE) {
+            if (!ctl.devices.empty() && ctl.ifname != i.ifname) {
+                log("PROFINET: all the IO-Devices must be on the same interface");
+                continue;
+            }
+            ctl.ifname = i.ifname;
+            pn::RemoteDevice r;
+            r.stationName = i.station;
+            r.ip = i.host;
+            r.vendorId = i.vendorId;
+            r.deviceId = i.deviceId;
+            r.cycleMs = i.cycleMs;
+            r.watchdog = i.watchdog;
+            for (uint8_t s = 0; s < i.subCount; s++) {
+                const IoModuleInfo::PnSub& x = i.subs[s];
+                r.submodules.push_back({x.slot, x.subslot, x.moduleIdent, x.submoduleIdent, x.inLength, x.inByte, x.outLength, x.outByte});
+                snprintf(key, sizeof key, "%u.%u:%x/%x:%u@%u:%u@%u;", x.slot, x.subslot, x.moduleIdent, x.submoduleIdent, x.inLength, x.inByte, x.outLength,
+                         x.outByte);
+                controllerKey += key;
+            }
+            snprintf(key, sizeof key, "|%s|%s|%s|%u|%u|%u|%u#", i.ifname, i.station, i.host, i.vendorId, i.deviceId, i.cycleMs, i.watchdog);
+            controllerKey += key;
+            pnRemoteIndex_[k] = uint16_t(ctl.devices.size());
+            ctl.devices.push_back(r);
+        }
+    }
+    if (haveDevice && !ctl.devices.empty() && dev.ifname == ctl.ifname) {
+        log("PROFINET: IO-Device and IO-Controller on the same interface are not supported yet (IO-Controller disabled)");
+        ctl.devices.clear();
+        controllerKey.clear();
+    }
+    if (deviceKey != pnDeviceKey_) {
+        pnDevice_.reset();
+        pnDeviceKey_ = deviceKey;
+        if (haveDevice) {
+            pnDevice_ = std::make_unique<pn::Device>(dev);
+            std::string err;
+            if (!pnDevice_->start(err)) log(("PROFINET IO-Device: " + err).c_str());
+        }
+    }
+    if (controllerKey != pnControllerKey_) {
+        pnController_.reset();
+        pnControllerKey_ = controllerKey;
+        if (!ctl.devices.empty()) {
+            ctl.stationName = "virtualplc";
+            ctl.log = logger;
+            pnController_ = std::make_unique<pn::Controller>(ctl);
+            std::string err;
+            if (!pnController_->start(err)) log(("PROFINET IO-Controller: " + err).c_str());
+        }
+    }
+}
+
 void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
+    if (pnDevice_) pnDevice_->readInputs(image, size);
+    if (pnController_) pnController_->readInputs(image, size);
     uint32_t now = millis();
     for (Module& m : modules_) {
         const IoModuleInfo& i = m.info;
@@ -222,7 +320,7 @@ void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
             } else if (!m.ok) {
                 m.ok = true;
                 m.backoff = 1000;
-                char msg[160];
+                char msg[400];
                 snprintf(msg, sizeof msg, "I/O module %s online", i.host);
                 log(msg);
             }
@@ -238,6 +336,8 @@ void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
 }
 
 void LinuxPlatform::writeOutputs(const uint8_t* image, uint32_t size) {
+    if (pnDevice_) pnDevice_->writeOutputs(image, size, true);
+    if (pnController_) pnController_->writeOutputs(image, size, true);
     uint32_t now = millis();
     for (Module& m : modules_) {
         const IoModuleInfo& i = m.info;

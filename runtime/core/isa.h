@@ -193,6 +193,8 @@ enum class IoModule : uint8_t {
     IO_GPIO_AI = 4,
     IO_GPIO_AO = 5,
     IO_IOLINK_MASTER = 6,
+    IO_PROFINET_DEVICE = 7,
+    IO_PROFINET_REMOTE = 8,
 };
 
 enum class Command : uint8_t {

@@ -85,8 +85,14 @@ if(UNIX)
   add_executable(vplc-cpu
     platform/linux/main.cpp
     platform/linux/linux_platform.cpp
-    platform/linux/modbus.cpp)
-  target_link_libraries(vplc-cpu vplc_core m)
+    platform/linux/modbus.cpp
+    platform/linux/profinet/pn_proto.cpp
+    platform/linux/profinet/pn_net.cpp
+    platform/linux/profinet/pn_device.cpp
+    platform/linux/profinet/pn_controller.cpp)
+  target_include_directories(vplc-cpu PRIVATE platform/linux)
+  find_package(Threads REQUIRED)
+  target_link_libraries(vplc-cpu vplc_core m Threads::Threads)
   target_compile_options(vplc-cpu PRIVATE -Wall -Wextra)
   if(VPLC_OPCUA)
     target_sources(vplc-cpu PRIVATE platform/linux/opcua.cpp)

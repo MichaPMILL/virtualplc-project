@@ -183,6 +183,44 @@ bool IoModuleReader::next(IoModuleInfo& m) {
             }
             break;
         }
+        case IoModule::IO_PROFINET_DEVICE:
+        case IoModule::IO_PROFINET_REMOTE: {
+            auto str = [&](char* dst, size_t cap) {
+                if (!need(1)) return false;
+                uint8_t n = *p_++;
+                if (!need(n)) return false;
+                size_t copy = n < cap - 1 ? n : cap - 1;
+                memcpy(dst, p_, copy);
+                dst[copy] = 0;
+                p_ += n;
+                return true;
+            };
+            if (!str(m.ifname, sizeof(m.ifname)) || !str(m.station, sizeof(m.station))) return false;
+            if (IoModule(m.kind) == IoModule::IO_PROFINET_DEVICE) {
+                if (!need(12)) return false;
+                m.vendorId = rd16le(p_); m.deviceId = rd16le(p_ + 2);
+                m.inByte = rd16le(p_ + 4); m.inLength = rd16le(p_ + 6);
+                m.outByte = rd16le(p_ + 8); m.outLength = rd16le(p_ + 10);
+                p_ += 12;
+                break;
+            }
+            if (!str(m.host, sizeof(m.host)) || !need(9)) return false;
+            m.vendorId = rd16le(p_); m.deviceId = rd16le(p_ + 2);
+            m.cycleMs = rd16le(p_ + 4); m.watchdog = rd16le(p_ + 6);
+            uint8_t count = p_[8];
+            p_ += 9;
+            if (!need(size_t(count) * 20)) return false;
+            m.subCount = count < 64 ? count : 64;
+            for (uint8_t i = 0; i < count; i++, p_ += 20) {
+                if (i >= 64) continue;
+                IoModuleInfo::PnSub& x = m.subs[i];
+                x.slot = rd16le(p_); x.subslot = rd16le(p_ + 2);
+                x.moduleIdent = rd32le(p_ + 4); x.submoduleIdent = rd32le(p_ + 8);
+                x.inLength = rd16le(p_ + 12); x.inByte = rd16le(p_ + 14);
+                x.outLength = rd16le(p_ + 16); x.outByte = rd16le(p_ + 18);
+            }
+            break;
+        }
         default:
             return false;
     }

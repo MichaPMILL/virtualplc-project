@@ -32,7 +32,47 @@ export type IoModuleConfig =
     /** Modbus function used to read the input process data: 3 = holding registers (default), 4 = input registers */
     inFunction?: 3 | 4;
     ports: IoLinkPort[];
+   }
+  | {
+    /** This CPU as a PROFINET IO-Device of an external IO-Controller */
+    kind: 'profinet-device'; name: string;
+    /** Network interface (e.g. eth0) */
+    interface: string;
+    /** Initial name of station (the controller's engineering tool may change it with DCP) */
+    stationName: string;
+    vendorId?: number; deviceId?: number;
+    /** Controller outputs are written to %I from inByte (inLength bytes max), controller inputs are read from %Q */
+    inByte: number; inLength: number;
+    outByte: number; outLength: number;
+  }
+  | {
+    /** An IO-Device driven by this CPU as PROFINET IO-Controller */
+    kind: 'profinet-remote'; name: string;
+    interface: string;
+    stationName: string;
+    /** IP address given to the device (DCP) */
+    ip: string;
+    vendorId: number; deviceId: number;
+    /** Update time in ms (default 8) */
+    cycleMs?: number;
+    /** Watchdog factor (default 3) */
+    watchdog?: number;
+    submodules: PnSubmodule[];
   };
+
+/** A submodule of a PROFINET IO-Device (from its GSDML), mapped to the process image. */
+export interface PnSubmodule {
+  slot: number;
+  subslot: number;
+  moduleIdent: number;
+  submoduleIdent: number;
+  /** Input data (device → controller): length in bytes and %I byte */
+  inLength: number;
+  inByte: number;
+  /** Output data (controller → device): length and %Q byte */
+  outLength: number;
+  outByte: number;
+}
 
 /** One port of an IO-Link master: its process data mapped to the process image. */
 export interface IoLinkPort {
@@ -182,6 +222,17 @@ function writeModule(w: ByteWriter, m: IoModuleConfig): void {
     case 'iolink-master':
       w.u8(IoModule.IOLINK_MASTER).str8(m.host).u16(m.port ?? 502).u8(m.unit ?? 1).u16(m.pollMs ?? 0).u8(m.inFunction ?? 3).u8(m.ports.length);
       for (const p of m.ports) w.u8(p.port).u16(p.inRegister).u16(p.inByte).u8(p.inLength).u16(p.outRegister).u16(p.outByte).u8(p.outLength);
+      break;
+    case 'profinet-device':
+      w.u8(IoModule.PROFINET_DEVICE).str8(m.interface).str8(m.stationName).u16(m.vendorId ?? 0).u16(m.deviceId ?? 1)
+        .u16(m.inByte).u16(m.inLength).u16(m.outByte).u16(m.outLength);
+      break;
+    case 'profinet-remote':
+      w.u8(IoModule.PROFINET_REMOTE).str8(m.interface).str8(m.stationName).str8(m.ip).u16(m.vendorId).u16(m.deviceId)
+        .u16(m.cycleMs ?? 8).u16(m.watchdog ?? 3).u8(m.submodules.length);
+      for (const x of m.submodules) {
+        w.u16(x.slot).u16(x.subslot).u32(x.moduleIdent).u32(x.submoduleIdent).u16(x.inLength).u16(x.inByte).u16(x.outLength).u16(x.outByte);
+      }
       break;
   }
 }
