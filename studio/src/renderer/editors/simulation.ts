@@ -34,15 +34,23 @@ export function simulationEditor(device: Device): EditorView {
   const cells = new Map<string, (text: string | undefined) => void>();
   let timer: number | undefined;
   let busy = false;
+  // Writes are sent one after the other; a read started before a write is ignored (stale)
+  let writes: Promise<void> = Promise.resolve();
+  let generation = 0;
 
-  const write = async (io: IoTag, text: string) => {
-    try {
-      await call('write', device.id, io.path, text);
-      values.set(io.path, text);
-      poll();
-    } catch (e) {
-      store.addMessage({ severity: 'error', text: `Simulation : ${io.tag.name} : ${(e as Error).message}`, path: device.name });
-    }
+  const write = (io: IoTag, text: string): Promise<void> => {
+    generation++;
+    values.set(io.path, text);
+    cells.get(io.path)?.(text);
+    writes = writes.then(async () => {
+      try {
+        await call('write', device.id, io.path, text);
+      } catch (e) {
+        store.addMessage({ severity: 'error', text: `Simulation : ${io.tag.name} : ${(e as Error).message}`, path: device.name });
+      }
+      generation++;
+    });
+    return writes;
   };
 
   const render = () => {
@@ -56,8 +64,16 @@ export function simulationEditor(device: Device): EditorView {
         const sw = h('button', { className: 'sim-switch', title: 'Commutateur : un clic change l\'état' });
         const push = h('button', { className: 'sim-push', title: 'Bouton poussoir : TRUE tant qu\'il est appuyé' }, 'Impulsion');
         sw.onclick = () => void write(io, values.get(io.path) === 'TRUE' ? 'FALSE' : 'TRUE');
-        push.onmousedown = () => void write(io, 'TRUE');
-        push.onmouseup = push.onmouseleave = () => { if (values.get(io.path) === 'TRUE') void write(io, 'FALSE'); };
+        let pressed = false;
+        push.onmousedown = () => {
+          pressed = true;
+          void write(io, 'TRUE');
+        };
+        push.onmouseup = push.onmouseleave = () => {
+          if (!pressed) return;
+          pressed = false;
+          void write(io, 'FALSE');
+        };
         cells.set(io.path, (text) => {
           sw.classList.toggle('on', text === 'TRUE');
           sw.textContent = text === 'TRUE' ? '1' : '0';
@@ -98,7 +114,9 @@ export function simulationEditor(device: Device): EditorView {
     const paths = [...cells.keys()];
     if (!paths.length) return;
     busy = true;
+    const started = generation;
     call('read', device.id, paths).then((list) => {
+      if (started !== generation) return;   // a write happened meanwhile: wait for the next read
       for (const v of list) {
         if (v.text !== undefined) values.set(v.path, v.text);
         cells.get(v.path)?.(v.text);
