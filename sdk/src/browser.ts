@@ -11,4 +11,4 @@ export type { SymbolNode } from './symbols.ts';
 export { decodeValue, encodeValue, formatValue, formatTime } from './values.ts';
 export type { PlcValue } from './values.ts';
 export type { Diagnostic } from './diagnostics.ts';
-export type { IoModuleConfig } from './image.ts';
+export type { DbEntry, HmiSymbol, IoLinkPort, IoModuleConfig, ServicesConfig } from './image.ts';

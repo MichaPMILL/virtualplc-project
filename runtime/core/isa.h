@@ -173,6 +173,9 @@ enum class Section : uint8_t {
     SEC_ENTRIES = 7,
     SEC_LINES = 8,
     SEC_IOCONF = 9,
+    SEC_SYMS = 10,
+    SEC_DBS = 11,
+    SEC_SERVICES = 12,
 };
 
 enum class IoModule : uint8_t {
@@ -181,6 +184,7 @@ enum class IoModule : uint8_t {
     IO_GPIO_DO = 3,
     IO_GPIO_AI = 4,
     IO_GPIO_AO = 5,
+    IO_IOLINK_MASTER = 6,
 };
 
 enum class Command : uint8_t {

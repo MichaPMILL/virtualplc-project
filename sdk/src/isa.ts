@@ -325,6 +325,9 @@ export const Section = {
   ENTRIES: 7,
   LINES: 8,
   IOCONF: 9,
+  SYMS: 10,
+  DBS: 11,
+  SERVICES: 12,
 } as const;
 
 export const IoModule = {
@@ -333,6 +336,7 @@ export const IoModule = {
   GPIO_DO: 3,
   GPIO_AI: 4,
   GPIO_AO: 5,
+  IOLINK_MASTER: 6,
 } as const;
 
 export const Command = {

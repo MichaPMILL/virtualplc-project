@@ -780,14 +780,18 @@
     "FUNCS": 6,
     "ENTRIES": 7,
     "LINES": 8,
-    "IOCONF": 9
+    "IOCONF": 9,
+    "SYMS": 10,
+    "DBS": 11,
+    "SERVICES": 12
   },
   "ioModules": {
     "MODBUS_TCP": 1,
     "GPIO_DI": 2,
     "GPIO_DO": 3,
     "GPIO_AI": 4,
-    "GPIO_AO": 5
+    "GPIO_AO": 5,
+    "IOLINK_MASTER": 6
   },
   "protocol": {
     "port": 20105,

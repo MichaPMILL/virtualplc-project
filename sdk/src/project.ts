@@ -1,7 +1,7 @@
 // VirtualPLC Studio project model (.vplcproj) and its compilation.
 import type { Diagnostic } from './diagnostics.ts';
 import { compile, type CompileResult } from './compiler.ts';
-import type { IoModuleConfig } from './image.ts';
+import type { IoModuleConfig, ServicesConfig } from './image.ts';
 import { parse, parseAddress } from './parser.ts';
 import type { TypeRef, Expr } from './ast.ts';
 
@@ -18,6 +18,10 @@ export interface Member {
   comment?: string;
   /** Members of an anonymous structure (dataType 'Struct') */
   members?: Member[];
+  /** Accessible from HMI / OPC UA (default true) */
+  hmiVisible?: boolean;
+  /** Writable from HMI / OPC UA (default true) */
+  hmiWritable?: boolean;
 }
 
 /** PLC data type (UDT) */
@@ -62,6 +66,10 @@ export interface Tag {
   /** %I0.0, %QW2, %MD10 … ; empty = optimized memory */
   address: string;
   comment?: string;
+  /** Accessible from HMI / OPC UA (default true) */
+  hmiVisible?: boolean;
+  /** Writable from HMI / OPC UA (default true) */
+  hmiWritable?: boolean;
 }
 
 export interface UserConstant {
@@ -105,6 +113,8 @@ export interface Device {
   watchTables: WatchTable[];
   /** PLC data types (UDT) */
   types: DataTypeDef[];
+  /** OPC UA server and S7 communication (HMI / SCADA access) */
+  services?: ServicesConfig;
 }
 
 export interface Project {
@@ -347,6 +357,30 @@ function checkDevice(device: Device): ProjectDiagnostic[] {
   return out;
 }
 
+/** HMI access flags of tags, DB members and FB interfaces, as paths for the compiler. */
+export function hmiAccess(device: Device): { hidden: string[]; readOnly: string[] } {
+  const hidden: string[] = [];
+  const readOnly: string[] = [];
+  const add = (path: string, x: { hmiVisible?: boolean; hmiWritable?: boolean }) => {
+    if (x.hmiVisible === false) hidden.push(path);
+    else if (x.hmiWritable === false) readOnly.push(path);
+  };
+  const members = (prefix: string, list: Member[]) => {
+    for (const m of list) {
+      add(`${prefix}.${m.name}`, m);
+      if (m.members) members(`${prefix}.${m.name}`, m.members);
+    }
+  };
+  for (const t of device.tagTables) for (const tag of t.tags) add(tag.name, tag);
+  for (const b of device.blocks) {
+    if (b.type !== 'DB') continue;
+    if (b.members) members(b.name, b.members);
+    const fb = b.instanceOf ? device.blocks.find((x) => x.type === 'FB' && x.name === b.instanceOf) : undefined;
+    if (fb) members(b.name, [...fb.interface.input, ...fb.interface.output, ...fb.interface.inout, ...fb.interface.static]);
+  }
+  return { hidden, readOnly };
+}
+
 export function compileDevice(project: Project, device: Device): ProjectCompileResult {
   const sources = [...(device.types ?? []).map(dataTypeSource), ...device.tagTables.map(tagTableSource), ...device.blocks.map(blockSource)];
   const pre = checkDevice(device);
@@ -361,6 +395,9 @@ export function compileDevice(project: Project, device: Device): ProjectCompileR
       cycleMs: device.cpu.cycleMs,
       mainOb: main?.name,
       startupOb: startup?.name,
+      hmi: hmiAccess(device),
+      dbNumbers: Object.fromEntries(device.blocks.filter((b) => b.type === 'DB').map((b) => [b.name, b.number])),
+      services: device.services,
     });
   const byFile = new Map(sources.map((s) => [s.file.toUpperCase(), s]));
   const diagnostics: ProjectDiagnostic[] = [...pre, ...result.diagnostics.map((d) => {

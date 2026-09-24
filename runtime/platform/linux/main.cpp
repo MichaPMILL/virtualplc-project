@@ -3,6 +3,11 @@
 //   vplc-cpu [--data DIR] [--listen ADDR] [--port 20105] [--name PLC_1] [--password SECRET]
 //            [--modbus-port 5020] [--gpio-chip /dev/gpiochip0] [--watchdog-ms 1000]
 //            [--max-program BYTES] [--max-data BYTES] [--stopped]
+//            [--s7-port N] [--opcua-port N] [--hmi-user NAME --hmi-password-file FILE]
+//
+// The S7 communication and OPC UA servers are enabled in the CPU properties of the
+// project (downloaded with the program); --s7-port / --opcua-port override the port
+// (0 disables the server).
 //
 // Environment variables VPLC_PASSWORD, VPLC_DATA_DIR... override nothing: the
 // password should come from a file readable by the service only (--password-file).
@@ -29,6 +34,10 @@
 #include "linux_platform.h"
 #include "modbus.h"
 #include "protocol.h"
+#include "s7.h"
+#ifdef VPLC_WITH_OPCUA
+#include "opcua.h"
+#endif
 
 using namespace vplc;
 
@@ -50,6 +59,9 @@ struct Options {
     size_t maxProgram = 1 << 20;
     size_t maxData = 8 << 20;
     bool stopped = false;
+    int s7Port = -1;     // -1: from the project, 0: disabled
+    int opcuaPort = -1;  // -1: from the project, 0: disabled
+    std::string hmiUser, hmiPassword;
 };
 
 void usage() {
@@ -65,7 +77,11 @@ void usage() {
         "  --watchdog-ms N       maximum scan time before FAULT (default 1000)\n"
         "  --max-program BYTES   maximum program size (default 1 MiB)\n"
         "  --max-data BYTES      maximum data memory (default 8 MiB)\n"
-        "  --stopped             do not start the stored program automatically\n",
+        "  --stopped             do not start the stored program automatically\n"
+        "  --s7-port N           S7 communication (HMI) port, 0 = disabled (default: project, 102)\n"
+        "  --opcua-port N        OPC UA server port, 0 = disabled (default: project, 4840)\n"
+        "  --hmi-user NAME       OPC UA user name (with --hmi-password-file)\n"
+        "  --hmi-password-file F OPC UA password (first line of F)\n",
         VPLC_FIRMWARE_VERSION, unsigned(PROTOCOL_PORT));
 }
 
@@ -86,13 +102,16 @@ bool parse(int argc, char** argv, Options& o) {
         else if (a == "--watchdog-ms") o.watchdogMs = uint32_t(atoi(v));
         else if (a == "--max-program") o.maxProgram = size_t(atoll(v));
         else if (a == "--max-data") o.maxData = size_t(atoll(v));
-        else if (a == "--password-file") {
+        else if (a == "--s7-port") o.s7Port = atoi(v);
+        else if (a == "--opcua-port") o.opcuaPort = atoi(v);
+        else if (a == "--hmi-user") o.hmiUser = v;
+        else if (a == "--password-file" || a == "--hmi-password-file") {
             FILE* f = fopen(v, "r");
             char line[64] = {0};
             if (!f || !fgets(line, sizeof line, f)) { fprintf(stderr, "Cannot read %s\n", v); if (f) fclose(f); return false; }
             fclose(f);
             line[strcspn(line, "\r\n")] = 0;
-            o.password = line;
+            (a == "--password-file" ? o.password : o.hmiPassword) = line;
         } else {
             fprintf(stderr, "Unknown option %s\n", a.c_str());
             return false;
@@ -133,15 +152,49 @@ bool sendAll(int fd, const uint8_t* data, size_t len) {
     return true;
 }
 
+enum class Kind { DEVICE, MODBUS, S7 };
+
 struct Client {
     int fd;
-    bool modbus;  // Modbus HMI connection or device protocol
+    Kind kind;
     Session session;
-    std::unique_ptr<FrameParser> parser;
-    std::vector<uint8_t> buffer;  // Modbus receive buffer
+    std::unique_ptr<FrameParser> parser;  // device protocol
+    std::vector<uint8_t> buffer;          // Modbus receive buffer
+    std::unique_ptr<S7Session> s7;
 };
 
-constexpr size_t MAX_CLIENTS = 16;
+struct Listener {
+    int fd = -1;
+    Kind kind;
+    int port = 0;
+};
+
+constexpr size_t MAX_CLIENTS = 32;
+
+bool sendToFd(void* ctx, const uint8_t* data, size_t length) { return sendAll(*static_cast<int*>(ctx), data, length); }
+
+void serveModbus(Client& c, Cpu& cpu, std::vector<int>& closed) {
+    while (c.buffer.size() >= 7) {
+        uint16_t len = uint16_t(c.buffer[4] << 8 | c.buffer[5]);
+        if (c.buffer[2] || c.buffer[3] || len < 2 || len > 254) { closed.push_back(c.fd); return; }
+        if (c.buffer.size() < size_t(6 + len)) return;
+        ModbusAreas areas;
+        uint32_t isz = 0, msz = 0;
+        areas.i = cpu.vm().area(uint8_t(Area::I), isz);
+        areas.m = cpu.vm().area(uint8_t(Area::M), msz);
+        areas.iSize = isz;
+        areas.mSize = msz;
+        std::vector<uint8_t> pdu = areas.i || areas.m
+            ? modbusServe(c.buffer.data() + 7, len - 1, areas)
+            : std::vector<uint8_t>{uint8_t(c.buffer[7] | 0x80), 4};
+        std::vector<uint8_t> adu(c.buffer.begin(), c.buffer.begin() + 7);
+        adu[4] = uint8_t((pdu.size() + 1) >> 8);
+        adu[5] = uint8_t(pdu.size() + 1);
+        adu.insert(adu.end(), pdu.begin(), pdu.end());
+        c.buffer.erase(c.buffer.begin(), c.buffer.begin() + 6 + len);
+        if (!sendAll(c.fd, adu.data(), adu.size())) { closed.push_back(c.fd); return; }
+    }
+}
 
 }  // namespace
 
@@ -162,48 +215,110 @@ int main(int argc, char** argv) {
     cpu.setPassword(opt.password.c_str());
     cpu.setWatchdog(opt.watchdogMs);
 
-    int server = listenOn(opt.listen, opt.port);
-    if (server < 0) {
+    std::vector<Listener> listeners;
+    listeners.push_back({listenOn(opt.listen, opt.port), Kind::DEVICE, opt.port});
+    if (listeners[0].fd < 0) {
         fprintf(stderr, "Cannot listen on %s:%d: %s\n", opt.listen.c_str(), opt.port, strerror(errno));
         return 1;
     }
-    int modbusServer = opt.modbusPort > 0 ? listenOn(opt.listen, opt.modbusPort) : -1;
-    if (opt.modbusPort > 0 && modbusServer < 0) {
-        fprintf(stderr, "Cannot listen on Modbus port %d: %s\n", opt.modbusPort, strerror(errno));
-        return 1;
+    if (opt.modbusPort > 0) {
+        listeners.push_back({listenOn(opt.listen, opt.modbusPort), Kind::MODBUS, opt.modbusPort});
+        if (listeners.back().fd < 0) {
+            fprintf(stderr, "Cannot listen on Modbus port %d: %s\n", opt.modbusPort, strerror(errno));
+            return 1;
+        }
     }
-    char msg[160];
+    char msg[200];
     snprintf(msg, sizeof msg, "VirtualPLC CPU %s '%s' listening on %s:%d%s%s", VPLC_FIRMWARE_VERSION, opt.name.c_str(),
-             opt.listen.c_str(), opt.port, modbusServer >= 0 ? ", Modbus HMI server on port " : "",
-             modbusServer >= 0 ? std::to_string(opt.modbusPort).c_str() : "");
+             opt.listen.c_str(), opt.port, opt.modbusPort > 0 ? ", Modbus HMI server on port " : "",
+             opt.modbusPort > 0 ? std::to_string(opt.modbusPort).c_str() : "");
     platform.log(msg);
     if (opt.password.empty()) platform.log("Warning: no password set (use --password-file on untrusted networks)");
 
     cpu.begin(!opt.stopped);
 
     std::vector<Client> clients;
+    auto closeClient = [&](int fd) {
+        close(fd);
+        for (size_t k = 0; k < clients.size(); k++) {
+            if (clients[k].fd == fd) { clients.erase(clients.begin() + long(k)); break; }
+        }
+    };
+
+    // S7 communication server: follows the CPU properties of the loaded program
+    Listener s7{-1, Kind::S7, 0};
+    int s7Failed = 0;
+    auto reconcileS7 = [&]() {
+        const Program::Services& sv = cpu.program().services;
+        bool loaded = cpu.state() != 0 && cpu.program().id != 0;
+        int want = opt.s7Port >= 0 ? (loaded ? opt.s7Port : 0) : (loaded && sv.s7 ? sv.s7Port : 0);
+        if (want == s7.port) return;
+        if (s7.fd >= 0) {
+            close(s7.fd);
+            std::vector<int> drop;
+            for (Client& c : clients) if (c.kind == Kind::S7) drop.push_back(c.fd);
+            for (int fd : drop) closeClient(fd);
+            platform.log("S7 communication server stopped");
+        }
+        s7 = {-1, Kind::S7, want};
+        if (!want) return;
+        s7.fd = listenOn(opt.listen, want);
+        if (s7.fd < 0) {
+            if (s7Failed != want) {
+                snprintf(msg, sizeof msg, "Cannot open S7 communication port %d: %s%s", want, strerror(errno),
+                         want < 1024 ? " (the service needs CAP_NET_BIND_SERVICE for ports below 1024)" : "");
+                platform.log(msg);
+            }
+            s7Failed = want;
+            return;
+        }
+        s7Failed = 0;
+        snprintf(msg, sizeof msg, "S7 communication server on port %d (%s)", want, sv.s7Write ? "read/write" : "read only");
+        platform.log(msg);
+    };
+
+#ifdef VPLC_WITH_OPCUA
+    OpcUaServer opcua(cpu, platform);
+    opcua.setUser(opt.hmiUser, opt.hmiPassword);
+    auto reconcileOpcUa = [&]() {
+        const Program::Services& sv = cpu.program().services;
+        bool loaded = cpu.state() != 0 && cpu.program().id != 0;
+        int want = opt.opcuaPort >= 0 ? (loaded ? opt.opcuaPort : 0) : (loaded && sv.opcua ? sv.opcuaPort : 0);
+        opcua.configure(uint16_t(want), sv.opcuaWrite, sv.opcuaAnonymous, opt.name);
+    };
+#endif
+
     while (!stopRequested) {
         uint32_t wait = cpu.loop();
+        reconcileS7();
+#ifdef VPLC_WITH_OPCUA
+        reconcileOpcUa();
+        opcua.iterate();
+        if (opcua.running() && wait > 10) wait = 10;
+#endif
 
         std::vector<pollfd> fds;
-        fds.push_back({server, POLLIN, 0});
-        if (modbusServer >= 0) fds.push_back({modbusServer, POLLIN, 0});
+        std::vector<Listener> active = listeners;
+        if (s7.fd >= 0) active.push_back(s7);
+        for (const Listener& l : active) fds.push_back({l.fd, POLLIN, 0});
         for (const Client& c : clients) fds.push_back({c.fd, POLLIN, 0});
         int ready = poll(fds.data(), fds.size(), int(wait > 50 ? 50 : wait));
         if (ready <= 0) continue;
 
-        size_t base = modbusServer >= 0 ? 2 : 1;
+        size_t base = active.size();
+        std::vector<Client> accepted;
         for (size_t k = 0; k < base; k++) {
             if (!(fds[k].revents & POLLIN)) continue;
             int fd = accept(fds[k].fd, nullptr, nullptr);
             if (fd < 0) continue;
-            if (clients.size() >= MAX_CLIENTS) { close(fd); continue; }
+            if (clients.size() + accepted.size() >= MAX_CLIENTS) { close(fd); continue; }
             int one = 1;
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
             fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-            Client c{fd, fds[k].fd == modbusServer, Session(), nullptr, {}};
-            if (!c.modbus) c.parser = std::make_unique<FrameParser>();
-            clients.push_back(std::move(c));
+            Client c{fd, active[k].kind, Session(), nullptr, {}, nullptr};
+            if (c.kind == Kind::DEVICE) c.parser = std::make_unique<FrameParser>();
+            if (c.kind == Kind::S7) c.s7 = std::make_unique<S7Session>();
+            accepted.push_back(std::move(c));
         }
 
         std::vector<int> closed;
@@ -217,28 +332,15 @@ int main(int argc, char** argv) {
                 closed.push_back(c.fd);
                 continue;
             }
-            if (c.modbus) {
+            if (c.kind == Kind::MODBUS) {
                 c.buffer.insert(c.buffer.end(), buf, buf + n);
-                while (c.buffer.size() >= 7) {
-                    uint16_t len = uint16_t(c.buffer[4] << 8 | c.buffer[5]);
-                    if (c.buffer[2] || c.buffer[3] || len < 2 || len > 254) { closed.push_back(c.fd); break; }
-                    if (c.buffer.size() < size_t(6 + len)) break;
-                    ModbusAreas areas;
-                    uint32_t isz = 0, msz = 0;
-                    areas.i = cpu.vm().area(uint8_t(Area::I), isz);
-                    areas.m = cpu.vm().area(uint8_t(Area::M), msz);
-                    areas.iSize = isz;
-                    areas.mSize = msz;
-                    std::vector<uint8_t> pdu = areas.i || areas.m
-                        ? modbusServe(c.buffer.data() + 7, len - 1, areas)
-                        : std::vector<uint8_t>{uint8_t(c.buffer[7] | 0x80), 4};
-                    std::vector<uint8_t> adu(c.buffer.begin(), c.buffer.begin() + 7);
-                    adu[4] = uint8_t((pdu.size() + 1) >> 8);
-                    adu[5] = uint8_t(pdu.size() + 1);
-                    adu.insert(adu.end(), pdu.begin(), pdu.end());
-                    c.buffer.erase(c.buffer.begin(), c.buffer.begin() + 6 + len);
-                    if (!sendAll(c.fd, adu.data(), adu.size())) { closed.push_back(c.fd); break; }
-                }
+                serveModbus(c, cpu, closed);
+            } else if (c.kind == Kind::S7) {
+                S7Session::Options o;
+                o.allowWrite = cpu.program().services.s7Write;
+                o.name = opt.name.c_str();
+                int fd = c.fd;
+                if (!c.s7->receive(buf, size_t(n), cpu.vm(), cpu.program(), o, sendToFd, &fd)) closed.push_back(c.fd);
             } else {
                 for (ssize_t b = 0; b < n; b++) {
                     FrameParser::Result r = c.parser->feed(buf[b]);
@@ -255,18 +357,14 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        for (int fd : closed) {
-            close(fd);
-            for (size_t k = 0; k < clients.size(); k++) {
-                if (clients[k].fd == fd) { clients.erase(clients.begin() + long(k)); break; }
-            }
-        }
+        for (int fd : closed) closeClient(fd);
+        for (Client& c : accepted) clients.push_back(std::move(c));
     }
 
     platform.log("Shutting down: outputs off");
     cpu.stop();
     for (Client& c : clients) close(c.fd);
-    close(server);
-    if (modbusServer >= 0) close(modbusServer);
+    for (const Listener& l : listeners) close(l.fd);
+    if (s7.fd >= 0) close(s7.fd);
     return 0;
 }

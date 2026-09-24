@@ -82,6 +82,19 @@ const char* parseProgram(const uint8_t* image, size_t len, Program& out) {
                 break;
             case Section::SEC_LINES: out.lines = b; break;
             case Section::SEC_IOCONF: out.ioconf = b; break;
+            case Section::SEC_SYMS: out.syms = b; break;
+            case Section::SEC_DBS: out.dbs = b; break;
+            case Section::SEC_SERVICES:
+                if (size >= 6) {
+                    out.services.opcuaPort = rd16le(b.data);
+                    out.services.opcua = b.data[2] & 1;
+                    out.services.opcuaWrite = b.data[2] & 2;
+                    out.services.opcuaAnonymous = b.data[2] & 4;
+                    out.services.s7Port = rd16le(b.data + 3);
+                    out.services.s7 = b.data[5] & 1;
+                    out.services.s7Write = b.data[5] & 2;
+                }
+                break;
             default: break;  // unknown sections are ignored (forward compatibility)
         }
         pos += 5 + size;
@@ -142,6 +155,34 @@ bool IoModuleReader::next(IoModuleInfo& m) {
             m.pin = p_[0]; m.byte = rd16le(p_ + 1);
             p_ += 3;
             break;
+        case IoModule::IO_IOLINK_MASTER: {
+            if (!need(1)) return false;
+            uint8_t n = *p_++;
+            if (!need(n + 2 + 1 + 2 + 1 + 1)) return false;
+            uint8_t copy = n < sizeof(m.host) - 1 ? n : uint8_t(sizeof(m.host) - 1);
+            memcpy(m.host, p_, copy);
+            p_ += n;
+            m.port = rd16le(p_);
+            m.unit = p_[2];
+            m.pollMs = rd16le(p_ + 3);
+            m.inFunction = p_[5];
+            uint8_t count = p_[6];
+            p_ += 7;
+            if (!need(size_t(count) * 11)) return false;
+            m.portCount = count < 16 ? count : 16;
+            for (uint8_t i = 0; i < count; i++, p_ += 11) {
+                if (i >= 16) continue;
+                IoModuleInfo::IoLinkPort& q = m.ports[i];
+                q.port = p_[0];
+                q.inRegister = rd16le(p_ + 1);
+                q.inByte = rd16le(p_ + 3);
+                q.inLength = p_[5];
+                q.outRegister = rd16le(p_ + 6);
+                q.outByte = rd16le(p_ + 8);
+                q.outLength = p_[10];
+            }
+            break;
+        }
         default:
             return false;
     }

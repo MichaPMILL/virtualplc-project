@@ -169,3 +169,71 @@ test('Linux CPU: download, run, monitor, remote I/O, persistence, password', { s
     io.server.close();
   }
 });
+
+test('Linux CPU: S7 communication for HMIs (absolute %I/%Q/%M and DB access)', { skip, timeout: 30000 }, async () => {
+  const { S7Client, AREA } = await import('./s7client.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'vplc-s7-'));
+  const [port, modbusPort, s7Port] = [await freePort(), await freePort(), await freePort()];
+  const result = compile({
+    sources: [{ file: 'main.scl', text: `
+      VAR_GLOBAL
+        Start AT %I0.0 : Bool;
+        Lamp AT %Q0.1 : Bool;
+        Speed AT %MW10 : Int;
+        Limit AT %MW12 : Int := 1500;
+      END_VAR
+      DATA_BLOCK "Recipe"
+        STRUCT
+          Temperature : Real := 21.5;
+          Count : DInt;
+          Enabled : Bool;
+        END_STRUCT;
+      BEGIN END_DATA_BLOCK
+      ORGANIZATION_BLOCK "Main" BEGIN
+        Lamp := "Recipe".Enabled;
+        "Recipe".Count := "Recipe".Count + 1;
+      END_ORGANIZATION_BLOCK` }],
+    name: 'S7',
+    cycleMs: 5,
+    dbNumbers: { Recipe: 3 },
+    hmi: { readOnly: ['Limit'] },
+    services: { s7: { enabled: true, write: true } },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  const cpu = startCpu(dir, port, modbusPort, ['--s7-port', String(s7Port)]);
+  const client = new DeviceClient('127.0.0.1', port);
+  const s7 = new S7Client();
+  try {
+    await until(async () => client.connect().then(() => true, () => false), 'CPU to listen');
+    await client.download(result.image!);
+    await client.start();
+    await until(async () => s7.connect('127.0.0.1', s7Port).then(() => true, () => false), 'S7 server');
+    assert.equal(s7.pdu, 480);
+
+    // DB3: Temperature (Real, DBD0), Count (DInt, DBD4), Enabled (Bool, DBX8.0)
+    const t = await s7.read(AREA.DB, 3, 0, 4);
+    assert.equal(t.code, 0xff);
+    assert.equal(t.data.readFloatBE(0), 21.5);
+    const c1 = (await s7.read(AREA.DB, 3, 4, 4)).data.readInt32BE(0);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok((await s7.read(AREA.DB, 3, 4, 4)).data.readInt32BE(0) > c1, 'values follow the running program');
+
+    // HMI writes a DB bit -> program sets the output
+    assert.equal(await s7.write(AREA.DB, 3, 8, Buffer.from([1])), 0xff);
+    await until(async () => ((await s7.read(AREA.Q, 0, 0, 1, 1)).data[0] ?? 0) === 1, 'output from HMI command');
+    // %M word write / read
+    assert.equal(await s7.write(AREA.M, 0, 10, Buffer.from([0x03, 0xe8])), 0xff);
+    assert.equal((await s7.read(AREA.M, 0, 10, 2)).data.readInt16BE(0), 1000);
+    assert.equal((await client.readSymbols([findSymbol(result.symbols, 'Speed')!]))[0], 1000);
+
+    // Access rights and errors
+    assert.equal(await s7.write(AREA.M, 0, 12, Buffer.from([0, 1])), 0x03, 'read-only variable');
+    assert.equal(await s7.write(AREA.I, 0, 0, Buffer.from([1])), 0x03, 'inputs cannot be written');
+    assert.equal((await s7.read(AREA.DB, 9, 0, 2)).code, 0x0a, 'unknown DB');
+    assert.equal((await s7.read(AREA.DB, 3, 8, 4)).code, 0x05, 'beyond the end of the DB');
+  } finally {
+    s7.close();
+    client.close();
+    cpu.kill();
+  }
+});

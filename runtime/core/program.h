@@ -18,7 +18,14 @@ struct Program {
     uint32_t dataSize = 0;
     uint16_t iSize = 0, qSize = 0, mSize = 0;
     uint16_t stackCells = 0, callDepth = 0, cycleMs = 10;
-    Blob code, consts, init, funcs, lines, ioconf;
+    Blob code, consts, init, funcs, lines, ioconf, syms, dbs;
+    // Communication services (SERVICES section)
+    struct Services {
+        bool opcua = false, opcuaWrite = true, opcuaAnonymous = true;
+        uint16_t opcuaPort = 4840;
+        bool s7 = false, s7Write = true;
+        uint16_t s7Port = 102;
+    } services;
     uint16_t funcCount = 0;
     uint16_t startup = 0xFFFF, main = 0xFFFF;
 
@@ -45,6 +52,13 @@ struct IoModuleInfo {
     // GPIO
     uint8_t pin = 0, bit = 0, flags = 0;
     uint16_t byte = 0;
+    // IO-Link master (Modbus TCP): host/port/unit/pollMs above
+    uint8_t inFunction = 3, portCount = 0;
+    struct IoLinkPort {
+        uint8_t port = 0;
+        uint16_t inRegister = 0, inByte = 0, outRegister = 0, outByte = 0;
+        uint8_t inLength = 0, outLength = 0;
+    } ports[16];
 };
 
 class IoModuleReader {

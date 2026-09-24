@@ -13,7 +13,9 @@ add_library(vplc_core STATIC
   core/program.cpp
   core/vm.cpp
   core/protocol.cpp
-  core/cpu.cpp)
+  core/cpu.cpp
+  core/hmi.cpp
+  core/s7.cpp)
 target_include_directories(vplc_core PUBLIC core)
 target_compile_options(vplc_core PRIVATE -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
 

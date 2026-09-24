@@ -7,7 +7,7 @@ import {
   ELEMENTARY, T, fromVmName, isBool, isElementary, isFloat, isInt, isNumeric, isString, libraryBlock, sameType,
   typeName, unifyNumeric, vmTypeOf, type DataType, type Elementary,
 } from './types.ts';
-import { buildImage, type FunctionEntry, type IoModuleConfig, type LineEntry } from './image.ts';
+import { buildImage, HMI_STRING, HMI_TIME, type DbEntry, type FunctionEntry, type HmiSymbol, type IoModuleConfig, type LineEntry, type ServicesConfig } from './image.ts';
 import type { SymbolNode } from './symbols.ts';
 
 export const COMPILER_VERSION = '0.1.0';
@@ -30,6 +30,16 @@ export interface CompileOptions {
   /** Names of the cyclic and startup OBs (default: "Main"/OB1 and "Startup"/OB100). */
   mainOb?: string;
   startupOb?: string;
+  /**
+   * Variables exposed to HMIs (OPC UA, S7): paths ("Motor_DB.Speed", case-insensitive, without
+   * array indices) that are hidden, or visible but read-only. Everything else is readable and
+   * writable (inputs %I are always read-only).
+   */
+  hmi?: { hidden?: string[]; readOnly?: string[] };
+  /** Data block numbers (name -> number) for absolute addressing (DB1.DBW2). */
+  dbNumbers?: Record<string, number>;
+  /** OPC UA / S7 servers of the CPU. */
+  services?: ServicesConfig;
 }
 
 export interface CompileResult {
@@ -39,6 +49,10 @@ export interface CompileResult {
   /** CRC-32 of the image, as reported by the device. */
   programId?: string;
   symbols: SymbolNode[];
+  /** Variables exposed to HMIs (flattened) */
+  hmiSymbols?: HmiSymbol[];
+  /** Data blocks with their number and location */
+  dbs?: DbEntry[];
   /** function index -> block name / file, for mapping runtime faults to sources */
   functions: Array<{ name: string; kind: string; file?: string }>;
   stats: { code: number; data: number; constants: number; inputs: number; outputs: number; memory: number };
@@ -1947,10 +1961,12 @@ class Compiler {
     const initBytes = this.init.bytes.subarray(0, this.init.used);
     const hardware = this.options.hardware ?? [];
     for (const m of hardware) {
-      for (const [area, byte, count, bits] of ioUsage(m)) {
-        if (count > 0) this.imageSize[area] = Math.max(this.imageSize[area], byte + (bits ? Math.ceil(count / 8) : count * 2));
+      for (const [area, byte, count, unit] of ioUsage(m)) {
+        if (count > 0) this.imageSize[area] = Math.max(this.imageSize[area], byte + (unit === 'bits' ? Math.ceil(count / 8) : unit === 'words' ? count * 2 : count));
       }
     }
+    const hmiSymbols = this.hmiSymbols();
+    const dbs = this.dbTable();
     const image = buildImage({
       name: this.options.name ?? 'program',
       compilerVersion: COMPILER_VERSION,
@@ -1968,6 +1984,9 @@ class Compiler {
       main: main?.index ?? 0xffff,
       lines: this.lines,
       hardware,
+      symbols: hmiSymbols,
+      dbs,
+      services: this.options.services,
     });
     const crc = new DataView(image.buffer, image.byteOffset + image.length - 4, 4).getUint32(0, true);
     return {
@@ -1975,7 +1994,47 @@ class Compiler {
       ok: true,
       image,
       programId: crc.toString(16).padStart(8, '0'),
+      hmiSymbols,
+      dbs,
     };
+  }
+
+  /** Flattens the symbol tree into the variables visible to HMIs. */
+  private hmiSymbols(): HmiSymbol[] {
+    const norm = (p: string) => p.replace(/"/g, '').replace(/\[[^\]]*\]/g, '').toLowerCase();
+    const hidden = new Set((this.options.hmi?.hidden ?? []).map(norm));
+    const readOnly = new Set((this.options.hmi?.readOnly ?? []).map(norm));
+    const out: HmiSymbol[] = [];
+    const walk = (n: SymbolNode, path: string[], key: string, ro: boolean) => {
+      if (hidden.has(key)) return;
+      const locked = ro || readOnly.has(key) || n.area === 'I';
+      if (n.children) {
+        for (const c of n.children) {
+          const isIndex = c.name.startsWith('[');
+          const p = isIndex ? [...path.slice(0, -1), `${path[path.length - 1]}${c.name}`] : [...path, c.name];
+          walk(c, p, isIndex ? key : `${key}.${c.name.toLowerCase()}`, locked);
+        }
+        return;
+      }
+      const type = n.kind === 'string' ? HMI_STRING : n.kind === 'time' ? HMI_TIME : n.vmType;
+      if (type === undefined || out.length >= 65535) return;
+      out.push({ path, area: n.area, offset: n.offset, bit: n.bit, type, size: n.size, writable: !locked });
+    };
+    for (const s of this.symbols) walk(s, [s.name], s.name.toLowerCase(), false);
+    return out;
+  }
+
+  /** Numbered data blocks and their location in the data memory. */
+  private dbTable(): DbEntry[] {
+    const numbers = new Map(Object.entries(this.options.dbNumbers ?? {}).map(([k, v]) => [k.toUpperCase(), v]));
+    const out: DbEntry[] = [];
+    for (const db of this.dataBlocks.values()) {
+      const n = numbers.get(db.name.toUpperCase());
+      const sym = this.globals.get(db.name.toUpperCase());
+      if (n === undefined || sym?.k !== 'var') continue;
+      out.push({ number: n, name: db.name, offset: sym.offset, size: this.sizeOf(sym.type) });
+    }
+    return out.sort((a, b) => a.number - b.number);
   }
 
   private result(): CompileResult {
@@ -2142,22 +2201,24 @@ function exprName(e: Expr): string {
 }
 
 /** [area, start byte, count, isBits] ranges of the process image used by a module. */
-function ioUsage(m: IoModuleConfig): Array<['I' | 'Q', number, number, boolean]> {
+function ioUsage(m: IoModuleConfig): Array<['I' | 'Q', number, number, 'bits' | 'words' | 'bytes']> {
   switch (m.kind) {
     case 'modbus-tcp':
       return [
-        ['I', m.di?.byte ?? 0, m.di?.count ?? 0, true],
-        ['Q', m.coils?.byte ?? 0, m.coils?.count ?? 0, true],
-        ['I', m.ir?.byte ?? 0, m.ir?.count ?? 0, false],
-        ['Q', m.hr?.byte ?? 0, m.hr?.count ?? 0, false],
+        ['I', m.di?.byte ?? 0, m.di?.count ?? 0, 'bits'],
+        ['Q', m.coils?.byte ?? 0, m.coils?.count ?? 0, 'bits'],
+        ['I', m.ir?.byte ?? 0, m.ir?.count ?? 0, 'words'],
+        ['Q', m.hr?.byte ?? 0, m.hr?.count ?? 0, 'words'],
       ];
     case 'gpio-di':
-      return [['I', m.byte, m.bit + 1, true]];
+      return [['I', m.byte, m.bit + 1, 'bits']];
     case 'gpio-do':
-      return [['Q', m.byte, m.bit + 1, true]];
+      return [['Q', m.byte, m.bit + 1, 'bits']];
     case 'gpio-ai':
-      return [['I', m.byte, 1, false]];
+      return [['I', m.byte, 1, 'words']];
     case 'gpio-ao':
-      return [['Q', m.byte, 1, false]];
+      return [['Q', m.byte, 1, 'words']];
+    case 'iolink-master':
+      return m.ports.flatMap((p): Array<['I' | 'Q', number, number, 'bytes']> => [['I', p.inByte, p.inLength, 'bytes'], ['Q', p.outByte, p.outLength, 'bytes']]);
   }
 }
