@@ -1,0 +1,35 @@
+# systemd unit for the VirtualPLC CPU (Linux / Raspberry Pi).
+# Install:
+#   sudo cmake --install runtime/build            # installs /usr/local/bin/vplc-cpu
+#   sudo useradd --system --groups gpio virtualplc
+#   sudo install -d -o virtualplc /var/lib/virtualplc
+#   sudo cp deploy/vplc-cpu.service /etc/systemd/system/ && sudo systemctl enable --now vplc-cpu
+[Unit]
+Description=VirtualPLC CPU
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=virtualplc
+Group=virtualplc
+SupplementaryGroups=gpio
+ExecStart=/usr/local/bin/vplc-cpu --data /var/lib/virtualplc --name %H
+# Protect the device with a password (file readable by the service only):
+# ExecStart=/usr/local/bin/vplc-cpu --data /var/lib/virtualplc --password-file /etc/virtualplc/password
+Restart=always
+RestartSec=1
+KillSignal=SIGTERM
+TimeoutStopSec=5
+# Real-time friendly scheduling for a steadier scan cycle
+Nice=-10
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/virtualplc
+DeviceAllow=/dev/gpiochip0 rw
+
+[Install]
+WantedBy=multi-user.target

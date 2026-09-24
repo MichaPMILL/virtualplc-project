@@ -31,9 +31,10 @@ The maximum payload is 4096 bytes (1024 on small targets, see `INFO`).
 | `DOWNLOAD_END`   | –                                                  | – or error text (image checked, stored, loaded)   |
 | `READ`           | n × (u8 area, u32 offset, u16 length)              | the requested bytes, concatenated                 |
 | `WRITE`          | n × (u8 area, u32 offset, u8 bit, u16 length, bytes) — bit = 0xFF for a byte write | –         |
-| `FORCE`          | n × (u8 area I/Q, u32 byte, u8 bit, u8 value)      | –                                                 |
+| `FORCE`          | n × (u8 area I/Q, u32 byte, u8 bit, u8 value) — value 2 removes the force | –                          |
 | `UNFORCE_ALL`    | –                                                  | –                                                 |
 | `LOGS`           | u32 first sequence number wanted                   | JSON array of `{seq, t, msg}`                     |
+| `UPLOAD`         | u32 offset                                         | u32 total size, then image bytes from offset      |
 
 Areas are `D`, `I`, `Q`, `M` (see `areas`). When the device is protected by a
 password, every command except `INFO` and `AUTH` answers `UNAUTHORIZED` until a
@@ -47,3 +48,22 @@ successful `AUTH` on the connection.
 ```
 
 In `FAULT`, `fault` is `{"code":"DIV_ZERO","function":3,"line":27,"pc":1432}`.
+
+## Behaviour
+
+- `DOWNLOAD_BEGIN` stops the CPU. The new image is checked (CRC, structure,
+  memory needs) before being stored; if it is rejected the previous program is
+  reloaded. After a successful download the CPU is in `STOP`: send `START`.
+- In `STOP` and `FAULT` all outputs are switched off.
+- At power-on a CPU with a stored program starts it automatically.
+
+## Modbus TCP server (Linux CPU)
+
+For HMIs/SCADA, the Linux CPU also serves Modbus TCP (default port 5020):
+
+| Modbus table             | PLC memory                       |
+|--------------------------|----------------------------------|
+| Coils (0x)               | `%M` bits (coil n = `%Mn/8.n%8`) |
+| Discrete inputs (1x)     | `%I` bits                        |
+| Input registers (3x)     | `%IW` (register n = `%IW(2n)`)   |
+| Holding registers (4x)   | `%MW` (register n = `%MW(2n)`)   |

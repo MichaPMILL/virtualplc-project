@@ -299,6 +299,82 @@ namespace lib_ctud {
     constexpr uint32_t LASTD = 11;
 }
 
+// Size in bytes of the operands of an opcode (-1 = unknown opcode).
+inline int operandBytes(uint8_t op) {
+    switch (op) {
+        case 0: return 0;
+        case 1: return 4;
+        case 2: return 8;
+        case 3: return 8;
+        case 4: return 5;
+        case 5: return 0;
+        case 6: return 0;
+        case 7: return 0;
+        case 16: return 6;
+        case 17: return 6;
+        case 18: return 6;
+        case 19: return 6;
+        case 20: return 1;
+        case 21: return 1;
+        case 22: return 12;
+        case 23: return 4;
+        case 24: return 4;
+        case 32: return 0;
+        case 33: return 0;
+        case 34: return 0;
+        case 35: return 0;
+        case 36: return 0;
+        case 37: return 0;
+        case 38: return 0;
+        case 39: return 0;
+        case 40: return 0;
+        case 41: return 0;
+        case 42: return 0;
+        case 43: return 0;
+        case 44: return 0;
+        case 45: return 0;
+        case 46: return 1;
+        case 47: return 0;
+        case 48: return 0;
+        case 49: return 0;
+        case 50: return 0;
+        case 51: return 0;
+        case 52: return 0;
+        case 53: return 0;
+        case 54: return 0;
+        case 55: return 1;
+        case 56: return 0;
+        case 57: return 0;
+        case 58: return 0;
+        case 59: return 0;
+        case 64: return 0;
+        case 65: return 0;
+        case 66: return 0;
+        case 67: return 0;
+        case 68: return 0;
+        case 69: return 0;
+        case 70: return 0;
+        case 71: return 0;
+        case 72: return 0;
+        case 73: return 0;
+        case 74: return 0;
+        case 75: return 0;
+        case 76: return 0;
+        case 80: return 4;
+        case 81: return 4;
+        case 82: return 4;
+        case 83: return 2;
+        case 84: return 2;
+        case 85: return 0;
+        case 86: return 1;
+        case 87: return 2;
+        case 88: return 2;
+        case 89: return 1;
+        case 90: return 0;
+        default: return -1;
+    }
+}
+
 inline const char* trapName(uint8_t code) {
     switch (code) {
         case 0: return "NONE";

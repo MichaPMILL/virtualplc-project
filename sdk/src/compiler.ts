@@ -25,6 +25,8 @@ export interface CompileOptions {
   hardware?: IoModuleConfig[];
   /** Build time stored in the image (Unix seconds); defaults to now. */
   buildTime?: number;
+  /** Cycle time of the main OB in milliseconds (CPU property); default 10. */
+  cycleMs?: number;
 }
 
 export interface CompileResult {
@@ -386,6 +388,12 @@ class Compiler {
 
     // Initial data image (start values)
     this.init = new MemoryImage(this.dataTop);
+    // FC parameters are not reset by the VM: their STRING headers are set once, here.
+    for (const f of this.functions.values()) {
+      for (const sym of f.locals.values()) {
+        if (sym.k === 'var' && sym.area === 'D' && sym.offset < f.zeroOffset) this.initValue(sym.offset, sym.type);
+      }
+    }
     for (const v of this.program.vars) {
       const sym = this.globals.get(v.name.toUpperCase());
       if (sym?.k !== 'var') continue;
@@ -1840,6 +1848,7 @@ class Compiler {
       imageSizes: this.imageSize,
       stackCells: 256,
       callDepth: 32,
+      cycleMs: Math.max(1, Math.min(60000, Math.round(this.options.cycleMs ?? 10))),
       code: this.code.toBytes(),
       consts: this.consts.toBytes(),
       init: initBytes,

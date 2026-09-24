@@ -71,6 +71,8 @@ const h = [
   cEnum('LibBlock', Object.fromEntries(Object.entries(isa.libraryBlocks).map(([k, v]) => [k, v.code])), 'LIB_'),
   libs,
   '',
+  `// Size in bytes of the operands of an opcode (-1 = unknown opcode).\ninline int operandBytes(uint8_t op) {\n    switch (op) {\n${Object.values(isa.opcodes).map((o) => `        case ${o.code}: return ${o.operands.map((x) => ({ u8: 1, u16: 2, u32: 4, i32: 4, i64: 8, f64: 8 })[x.split(':')[0]]).reduce((a, b) => a + b, 0)};`).join('\n')}\n        default: return -1;\n    }\n}`,
+  '',
   `inline const char* trapName(uint8_t code) {\n    switch (code) {\n${Object.entries(isa.trapCodes).map(([k, v]) => `        case ${v}: return "${k}";`).join('\n')}\n        default: return "UNKNOWN";\n    }\n}`,
   '',
   '}  // namespace vplc',

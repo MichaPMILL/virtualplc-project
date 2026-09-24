@@ -77,7 +77,7 @@ u32 crc32         CRC-32 (IEEE) of every preceding byte
 | Section   | Payload                                                                                   |
 |-----------|-------------------------------------------------------------------------------------------|
 | `META`    | u8+bytes program name, u8+bytes compiler version, u32 build time (Unix seconds)           |
-| `LIMITS`  | u32 data size, u16 %I size, u16 %Q size, u16 %M size, u16 stack cells, u16 call depth      |
+| `LIMITS`  | u32 data size, u16 %I size, u16 %Q size, u16 %M size, u16 stack cells, u16 call depth, u16 cycle time (ms) |
 | `CODE`    | instructions                                                                              |
 | `CONST`   | constant pool (area `C`)                                                                  |
 | `INIT`    | initial content of `D` (start values); the rest of `D` is zero                            |

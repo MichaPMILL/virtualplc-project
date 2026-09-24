@@ -36,6 +36,7 @@ export interface ImageInput {
   imageSizes: { I: number; Q: number; M: number };
   stackCells: number;
   callDepth: number;
+  cycleMs: number;
   code: Uint8Array;
   consts: Uint8Array;
   init: Uint8Array;
@@ -56,7 +57,7 @@ export function buildImage(p: ImageInput): Uint8Array {
   };
 
   section(Section.META, (w) => w.str8(p.name).str8(p.compilerVersion).u32(p.buildTime));
-  section(Section.LIMITS, (w) => w.u32(p.dataSize).u16(p.imageSizes.I).u16(p.imageSizes.Q).u16(p.imageSizes.M).u16(p.stackCells).u16(p.callDepth));
+  section(Section.LIMITS, (w) => w.u32(p.dataSize).u16(p.imageSizes.I).u16(p.imageSizes.Q).u16(p.imageSizes.M).u16(p.stackCells).u16(p.callDepth).u16(p.cycleMs));
   section(Section.CODE, (w) => w.bytes(p.code));
   section(Section.CONST, (w) => w.bytes(p.consts));
   section(Section.INIT, (w) => w.bytes(p.init));

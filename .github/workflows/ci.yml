@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: PHP ${{ matrix.php }}
+  php:
+    name: PHP ${{ matrix.php }} (reference interpreter, web IDE)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -18,24 +18,36 @@ jobs:
         php: ['8.1', '8.2', '8.3', '8.4']
     steps:
       - uses: actions/checkout@v4
-
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
           extensions: ctype, json, pcntl
           coverage: none
+      - run: composer validate --strict --no-check-lock
+      - run: composer update --no-interaction --no-progress --prefer-dist
+      - run: find src public tests bin -type f \( -name '*.php' -o -name virtualplc \) -print0 | xargs -0 -n1 php -l > /dev/null
+      - run: vendor/bin/phpunit
+      - run: bin/virtualplc check examples/project.scl && bin/virtualplc check examples/scl/motor.scl
 
-      - name: Validate composer.json
-        run: composer validate --strict --no-check-lock
-
-      - name: Install dependencies
-        run: composer update --no-interaction --no-progress --prefer-dist
-
-      - name: Lint
-        run: find src public tests bin -type f \( -name '*.php' -o -name virtualplc \) -print0 | xargs -0 -n1 php -l > /dev/null
-
-      - name: Tests
-        run: vendor/bin/phpunit
-
-      - name: Check example program
-        run: bin/virtualplc check examples/project.scl && bin/virtualplc compile examples/project.json > /dev/null
+  runtime-and-sdk:
+    name: C++ CPU runtime + TypeScript SDK (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generated ISA files are up to date
+        run: node tools/gen-isa.mjs --check
+      - name: Build runtime
+        run: cmake -S runtime -B runtime/build -DCMAKE_BUILD_TYPE=Release && cmake --build runtime/build -j
+      - name: SDK
+        working-directory: sdk
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm test
