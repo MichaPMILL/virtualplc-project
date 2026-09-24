@@ -17,7 +17,8 @@ const KEYWORDS = new Set([
   'FUNCTION', 'END_FUNCTION', 'FUNCTION_BLOCK', 'END_FUNCTION_BLOCK', 'ORGANIZATION_BLOCK', 'END_ORGANIZATION_BLOCK',
   'DATA_BLOCK', 'END_DATA_BLOCK', 'ARRAY', 'AT',
 ]);
-const TYPES = new Set(['BOOL', 'BYTE', 'WORD', 'DWORD', 'SINT', 'INT', 'DINT', 'USINT', 'UINT', 'UDINT', 'LINT', 'REAL', 'LREAL', 'TIME', 'STRING', 'VOID']);
+const TYPES = new Set(['BOOL', 'BYTE', 'WORD', 'DWORD', 'LWORD', 'SINT', 'INT', 'DINT', 'LINT', 'USINT', 'UINT', 'UDINT', 'ULINT', 'REAL', 'LREAL',
+  'TIME', 'LTIME', 'DATE', 'TOD', 'TIME_OF_DAY', 'LTOD', 'LTIME_OF_DAY', 'DT', 'DATE_AND_TIME', 'LDT', 'DTL', 'CHAR', 'WCHAR', 'STRING', 'WSTRING', 'VOID']);
 
 interface SclState { comment: 0 | 1 | 2 }
 
@@ -53,7 +54,8 @@ const scl = StreamLanguage.define<SclState>({
     if (stream.match(/^"[^"\n]*"?/)) return 'variableName.special';
     if (stream.match(/^#[A-Za-z_]\w*/)) return 'variableName.local';
     if (stream.match(/^%[IQM][XBWD]?\d+(\.\d)?/i)) return 'atom';
-    if (stream.match(/^(T|TIME)#[-\w.]+/i)) return 'number';
+    if (stream.match(/^(T|TIME|LT|LTIME|D|DATE|TOD|TIME_OF_DAY|LTOD|LTIME_OF_DAY|DT|DATE_AND_TIME|LDT|DTL)#[-\w.:]+/i)) return 'number';
+    if (stream.match(/^(W?CHAR|W?STRING)#/i)) return 'number';
     if (stream.match(/^\d+#[0-9A-Fa-f_]+/) || stream.match(/^\d[\d_]*(\.\d+)?([eE][-+]?\d+)?/)) return 'number';
     if (stream.match(/^[A-Za-z_]\w*/)) {
       const w = stream.current().toUpperCase();

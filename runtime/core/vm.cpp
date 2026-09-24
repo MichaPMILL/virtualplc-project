@@ -15,7 +15,7 @@ namespace {
 constexpr uint8_t T_BOOL = uint8_t(VmType::T_BOOL), T_U8 = uint8_t(VmType::T_U8), T_I8 = uint8_t(VmType::T_I8),
                   T_U16 = uint8_t(VmType::T_U16), T_I16 = uint8_t(VmType::T_I16), T_U32 = uint8_t(VmType::T_U32),
                   T_I32 = uint8_t(VmType::T_I32), T_I64 = uint8_t(VmType::T_I64), T_F32 = uint8_t(VmType::T_F32),
-                  T_F64 = uint8_t(VmType::T_F64), T_PTR = uint8_t(VmType::T_PTR);
+                  T_F64 = uint8_t(VmType::T_F64), T_PTR = uint8_t(VmType::T_PTR), T_U64 = uint8_t(VmType::T_U64);
 
 inline int64_t wrapTo(uint8_t type, int64_t v) {
     switch (type) {
@@ -36,6 +36,47 @@ inline double roundEven(double x) {
     if (r - x == 0.5 && fmod(r, 2.0) != 0.0) r -= 1.0;
     return r;
 }
+
+// ---- calendar (proleptic Gregorian, days since 1970-01-01)
+inline int64_t daysFromCivil(int64_t y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = unsigned(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + int64_t(doe) - 719468;
+}
+inline void civilFromDays(int64_t z, int64_t& y, unsigned& m, unsigned& d) {
+    z += 719468;
+    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const unsigned doe = unsigned(z - era * 146097);
+    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    y = int64_t(yoe) + era * 400;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    m = mp < 10 ? mp + 3 : mp - 9;
+    y += m <= 2;
+}
+constexpr int64_t NS_PER_DAY = 86400000000000LL;
+struct Civil { int64_t year; unsigned month, day, weekday, hour, minute, second; uint32_t ns; };
+inline Civil splitLdt(int64_t ns) {
+    int64_t days = ns >= 0 ? ns / NS_PER_DAY : -((-ns + NS_PER_DAY - 1) / NS_PER_DAY);
+    int64_t rest = ns - days * NS_PER_DAY;
+    Civil c;
+    civilFromDays(days, c.year, c.month, c.day);
+    c.weekday = unsigned(((days % 7) + 7 + 4) % 7) + 1;  // 1970-01-01 was a Thursday; 1 = Sunday
+    c.hour = unsigned(rest / 3600000000000LL);
+    c.minute = unsigned(rest / 60000000000LL % 60);
+    c.second = unsigned(rest / 1000000000LL % 60);
+    c.ns = uint32_t(rest % 1000000000LL);
+    return c;
+}
+inline int64_t joinLdt(int64_t y, unsigned mo, unsigned d, unsigned h, unsigned mi, unsigned s, uint32_t ns) {
+    return daysFromCivil(y, mo, d) * NS_PER_DAY + int64_t(h) * 3600000000000LL + int64_t(mi) * 60000000000LL + int64_t(s) * 1000000000LL + ns;
+}
+inline uint8_t bcd(unsigned v) { return uint8_t((v / 10 % 10) << 4 | v % 10); }
+inline unsigned unbcd(uint8_t b) { return (b >> 4) * 10u + (b & 15u); }
 
 inline int64_t toInt(double x) {
     if (x != x) return 0;
@@ -183,7 +224,8 @@ bool Vm::loadValue(uint8_t type, const uint8_t* p, Cell& out) {
         case T_U32: out.i = uint32_t(rdbe(p, 4)); return true;
         case T_I32: out.i = int32_t(uint32_t(rdbe(p, 4))); return true;
         case T_I64:
-        case T_PTR: out.i = int64_t(rdbe(p, 8)); return true;
+        case T_PTR:
+        case T_U64: out.i = int64_t(rdbe(p, 8)); return true;
         case T_F32: {
             uint32_t bits = uint32_t(rdbe(p, 4));
             float f;
@@ -212,7 +254,8 @@ void Vm::storeValue(uint8_t type, uint8_t* p, const Cell& v) {
         case T_U32:
         case T_I32: wrbe(p, 4, uint64_t(v.i)); break;
         case T_I64:
-        case T_PTR: wrbe(p, 8, uint64_t(v.i)); break;
+        case T_PTR:
+        case T_U64: wrbe(p, 8, uint64_t(v.i)); break;
         case T_F32: {
             float f = float(v.f);
             uint32_t bits;
@@ -304,7 +347,7 @@ Vm::Result Vm::exec() {
                 uint8_t type = FETCH8();
                 uint8_t a = FETCH8();
                 uint32_t off = FETCH32();
-                if (type > T_PTR) TRAP(TRAP_BAD_PROGRAM);
+                if (type > T_U64) TRAP(TRAP_BAD_PROGRAM);
                 uint8_t* p = resolve(a, off, VM_TYPE_SIZE[type]);
                 if (!p) TRAP(TRAP_BAD_ADDRESS);
                 if (Op(op) == Op::OP_LOAD) {
@@ -336,7 +379,7 @@ Vm::Result Vm::exec() {
             case Op::OP_LOAD_IND: {
                 uint8_t type = FETCH8();
                 NEED(1);
-                if (type > T_PTR) TRAP(TRAP_BAD_PROGRAM);
+                if (type > T_U64) TRAP(TRAP_BAD_PROGRAM);
                 uint8_t* p = resolvePtr(stack_[sp_ - 1].i, VM_TYPE_SIZE[type]);
                 if (!p) TRAP(TRAP_BAD_ADDRESS);
                 loadValue(type, p, stack_[sp_ - 1]);
@@ -345,7 +388,7 @@ Vm::Result Vm::exec() {
             case Op::OP_STORE_IND: {
                 uint8_t type = FETCH8();
                 NEED(2);
-                if (type > T_PTR) TRAP(TRAP_BAD_PROGRAM);
+                if (type > T_U64) TRAP(TRAP_BAD_PROGRAM);
                 Cell v = POP();
                 uint8_t* p = resolvePtr(POP().i, VM_TYPE_SIZE[type]);
                 if (!p) TRAP(TRAP_BAD_ADDRESS);
@@ -705,6 +748,66 @@ bool Vm::std(uint8_t fn, uint8_t argc) {
             result = a[0];
             break;
         }
+        case StdFn::S_C2S: {  // (dest string, character code)
+            if (argc != 2) return false;
+            uint8_t* d = str(a[0].i);
+            if (!d || areaOf(a[0].i) == Area::C) return false;
+            d[1] = d[0] ? 1 : 0;
+            if (d[0]) d[2] = uint8_t(a[1].i);
+            result = a[0];
+            break;
+        }
+        case StdFn::S_S2C: {  // first character of a string (0 if empty)
+            uint8_t* s = str(a[0].i);
+            if (!s) return false;
+            result.i = s[1] ? s[2] : 0;
+            break;
+        }
+        case StdFn::S_DT2LDT: {  // DATE_AND_TIME (BCD) -> LDT (ns since 1970)
+            uint8_t b[8];
+            wrbe(b, 8, uint64_t(a[0].i));
+            unsigned yy = unbcd(b[0]);
+            unsigned ms = unbcd(b[6]) * 10 + (b[7] >> 4);
+            result.i = joinLdt(yy >= 90 ? 1900 + yy : 2000 + yy, unbcd(b[1]), unbcd(b[2]), unbcd(b[3]), unbcd(b[4]), unbcd(b[5]), ms * 1000000u);
+            break;
+        }
+        case StdFn::S_LDT2DT: {  // LDT -> DATE_AND_TIME (BCD, 1990..2089)
+            Civil c = splitLdt(a[0].i);
+            uint8_t b[8];
+            unsigned ms = c.ns / 1000000u;
+            b[0] = bcd(unsigned(c.year % 100));
+            b[1] = bcd(c.month);
+            b[2] = bcd(c.day);
+            b[3] = bcd(c.hour);
+            b[4] = bcd(c.minute);
+            b[5] = bcd(c.second);
+            b[6] = bcd(ms / 10);
+            b[7] = uint8_t((ms % 10) << 4 | c.weekday);
+            result.i = int64_t(rdbe(b, 8));
+            break;
+        }
+        case StdFn::S_DTL2LDT: {  // DTL (12 bytes) -> LDT
+            uint8_t* p = resolvePtr(a[0].i, 12);
+            if (!p) return false;
+            result.i = joinLdt(int64_t(rdbe(p, 2)), p[2], p[3], p[5], p[6], p[7], uint32_t(rdbe(p + 8, 4)));
+            break;
+        }
+        case StdFn::S_LDT2DTL: {  // (DTL destination, LDT)
+            if (argc != 2) return false;
+            uint8_t* p = resolvePtr(a[0].i, 12);
+            if (!p || areaOf(a[0].i) == Area::C) return false;
+            Civil c = splitLdt(a[1].i);
+            wrbe(p, 2, uint64_t(c.year));
+            p[2] = uint8_t(c.month);
+            p[3] = uint8_t(c.day);
+            p[4] = uint8_t(c.weekday);
+            p[5] = uint8_t(c.hour);
+            p[6] = uint8_t(c.minute);
+            p[7] = uint8_t(c.second);
+            wrbe(p + 8, 4, c.ns);
+            hasResult = false;
+            break;
+        }
         case StdFn::S_S2I:
         case StdFn::S_S2F: {
             uint8_t* s = str(a[0].i);
@@ -759,6 +862,13 @@ bool Vm::sys(uint8_t fn, uint8_t argc, bool& suspend) {
             Cell c;
             c.i = now_;
             return push(c);
+        }
+        case SysFn::SYS_CLOCK: {  // (local) -> LDT: ns since 1970, UTC or local time
+            if (argc != 1) return false;
+            int64_t ns = 0;
+            if (!host_ || !host_->clock(a[0].i != 0, ns)) ns = 0;
+            a[0].i = ns;
+            return true;
         }
         case SysFn::SYS_DEVICE_OK: {
             if (argc != 1) return false;

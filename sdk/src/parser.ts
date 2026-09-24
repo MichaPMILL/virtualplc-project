@@ -252,16 +252,25 @@ class Parser {
     }
     const id = this.expectIdent();
     const upper = id.text.toUpperCase();
-    const aliases: Record<string, string> = { IEC_TIMER: 'TON', TON_TIME: 'TON', TOF_TIME: 'TOF', TP_TIME: 'TP', IEC_COUNTER: 'CTUD' };
+    const aliases: Record<string, string> = {
+      IEC_TIMER: 'TON', TON_TIME: 'TON', TOF_TIME: 'TOF', TP_TIME: 'TP', IEC_COUNTER: 'CTUD',
+      IEC_LTIMER: 'TON', TON_LTIME: 'TON', TOF_LTIME: 'TOF', TP_LTIME: 'TP',
+      TIME_OF_DAY: 'TOD', LTIME_OF_DAY: 'LTOD', DATE_AND_TIME: 'DT', DATE_AND_LTIME: 'LDT',
+      // hardware / system identifiers are numbers
+      S5TIME: 'WORD', HW_ANY: 'WORD', HW_IO: 'WORD', HW_DEVICE: 'WORD', HW_SUBMODULE: 'WORD', HW_INTERFACE: 'WORD',
+      DB_ANY: 'UINT', DB_WWW: 'UINT', DB_DYN: 'UINT', OB_ANY: 'INT', OB_CYCLIC: 'INT', OB_ATT: 'INT', OB_PCYCLE: 'INT',
+      EVENT_ANY: 'DWORD', EVENT_ATT: 'DWORD', EVENT_HWINT: 'DWORD', CONN_ANY: 'WORD', CONN_OUC: 'WORD', PORT: 'UINT', RTM: 'UINT', PIP: 'UINT',
+    };
     const name = aliases[upper] ?? upper;
-    if (name === 'STRING') {
-      let length = 32;
+    if (name === 'STRING' || name === 'WSTRING') {
+      // WString is stored like String (UTF-8, at most 254 bytes)
+      let length = name === 'WSTRING' ? 254 : 32;
       if (this.accept('[')) {
         length = Number(this.expect('int').value);
         this.expectOp(']');
         if (length < 1 || length > 254) throw this.error('STRING length must be between 1 and 254', id);
       }
-      return { name, length, line: id.line };
+      return { name: 'STRING', length, line: id.line };
     }
     // Elementary types are normalised to upper case; FB type names keep their spelling.
     return { name: ELEMENTARY_NAMES.has(name) || name === 'VOID' ? name : (aliases[upper] ?? id.text), line: id.line };
@@ -506,6 +515,9 @@ class Parser {
       case 'time':
         this.next();
         return { kind: 'time', value: t.value as number, line: t.line };
+      case 'typed':
+        this.next();
+        return { kind: 'typed', type: t.text, value: t.value as bigint, line: t.line };
       case 'ident':
       case 'address':
         return this.atom();
@@ -627,5 +639,6 @@ class Parser {
 }
 
 export const ELEMENTARY_NAMES = new Set([
-  'BOOL', 'BYTE', 'WORD', 'DWORD', 'SINT', 'USINT', 'INT', 'UINT', 'DINT', 'UDINT', 'LINT', 'REAL', 'LREAL', 'TIME', 'STRING',
+  'BOOL', 'BYTE', 'WORD', 'DWORD', 'LWORD', 'SINT', 'USINT', 'INT', 'UINT', 'DINT', 'UDINT', 'LINT', 'ULINT', 'REAL', 'LREAL',
+  'TIME', 'LTIME', 'DATE', 'TOD', 'LTOD', 'DT', 'LDT', 'CHAR', 'WCHAR', 'STRING',
 ]);

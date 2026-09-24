@@ -20,6 +20,7 @@ public:
     uint32_t micros() override;
     void log(const char* message) override;
     bool moduleOk(uint16_t index) override;
+    bool clock(bool local, int64_t& ns) override;
     bool storeProgram(const uint8_t* image, size_t length) override;
     size_t loadProgram(uint8_t* buf, size_t capacity) override;
     uint16_t configureIo(const Program& program) override;

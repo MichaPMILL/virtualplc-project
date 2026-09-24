@@ -282,7 +282,8 @@ export class Grid<T> {
 }
 
 export const DATA_TYPES = [
-  'Bool', 'Byte', 'Word', 'DWord', 'SInt', 'Int', 'DInt', 'USInt', 'UInt', 'UDInt', 'LInt', 'Real', 'LReal', 'Time', 'String',
+  'Bool', 'Byte', 'Word', 'DWord', 'LWord', 'SInt', 'Int', 'DInt', 'LInt', 'USInt', 'UInt', 'UDInt', 'ULInt', 'Real', 'LReal',
+  'Time', 'LTime', 'Date', 'Time_Of_Day', 'LTime_Of_Day', 'Date_And_Time', 'LDT', 'DTL', 'Char', 'WChar', 'String', 'WString',
   'Array[0..9] of Int', 'Array[0..9] of Bool', 'Array[0..9] of Real',
 ];
 export const FB_TYPES = ['TON', 'TOF', 'TP', 'CTU', 'CTD', 'CTUD', 'R_TRIG', 'F_TRIG'];

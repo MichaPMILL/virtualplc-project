@@ -4,11 +4,12 @@ import { CompileError, toDiagnostic, type Diagnostic } from './diagnostics.ts';
 import { Area, LIBRARY_BLOCKS, MathFn, Op, OPERANDS, StdFn, SysFn, Trap, VmType } from './isa.ts';
 import { formatAddress, parse } from './parser.ts';
 import {
-  ELEMENTARY, T, fromVmName, isBool, isElementary, isFloat, isInt, isNumeric, isString, libraryBlock, sameType,
+  ELEMENTARY, T, fromVmName, isBool, isChar, isElementary, isFloat, isInt, isNumeric, isSpecialInt, isString, libraryBlock, sameType,
   typeName, unifyNumeric, vmTypeOf, type DataType, type Elementary,
 } from './types.ts';
 import { buildImage, HMI_STRING, HMI_TIME, type DbEntry, type FunctionEntry, type HmiSymbol, type IoModuleConfig, type LineEntry, type ServicesConfig } from './image.ts';
 import type { SymbolNode } from './symbols.ts';
+import { civilFromDays } from './literals.ts';
 
 export const COMPILER_VERSION = '0.1.0';
 
@@ -80,13 +81,13 @@ interface Layout {
 type Sym =
   | { k: 'var'; name: string; type: DataType; area: AreaName; offset: number; bit?: number; readonly?: 'input' | 'constant'; section?: string }
   | { k: 'ref'; name: string; type: DataType; area: AreaName; offset: number; section: string }
-  | { k: 'const'; name: string; type: DataType; value: number | boolean | string };
+  | { k: 'const'; name: string; type: DataType; value: number | boolean | string | bigint };
 
 /** Location of a value being read or written. */
 type Place =
   | { k: 'static'; type: DataType; area: AreaName; offset: number; bit?: number; readonly?: string; name?: string }
   | { k: 'dynamic'; type: DataType; readonly?: string; name?: string }
-  | { k: 'const'; type: DataType; value: number | boolean | string };
+  | { k: 'const'; type: DataType; value: number | boolean | string | bigint };
 
 interface FunctionInfo {
   pou: Pou;
@@ -111,7 +112,12 @@ const STD_PARAMS: Record<string, string[] | null> = {
   EXPT: ['IN1', 'IN2'], MIN: null, MAX: null, LIMIT: ['MN', 'IN', 'MX'], SEL: ['G', 'IN0', 'IN1'], MUX: null,
   NORM_X: ['MIN', 'VALUE', 'MAX'], SCALE_X: ['MIN', 'VALUE', 'MAX'], SHL: ['IN', 'N'], SHR: ['IN', 'N'],
   CONCAT: null, LEN: ['IN'], LOG: null, WAIT: ['MS'], MILLIS: [], DEVICE_OK: ['MODULE'],
+  RD_SYS_T: null, RD_LOC_T: null,
 };
+const NS_PER_DAY = 86_400_000_000_000n;
+/** Built-in DTL structure (date and time, 12 bytes) */
+const DTL_KEY = '#DTL';
+const DTL: DataType = { k: 'struct', name: 'DTL', key: DTL_KEY };
 const MATH: Record<string, number> = {
   SQRT: MathFn.SQRT, EXP: MathFn.EXP, LN: MathFn.LN, SIN: MathFn.SIN, COS: MathFn.COS, TAN: MathFn.TAN,
   ASIN: MathFn.ASIN, ACOS: MathFn.ACOS, ATAN: MathFn.ATAN, FRAC: MathFn.FRAC, ROUND: MathFn.ROUND,
@@ -166,6 +172,13 @@ class Compiler {
 
   constructor(options: CompileOptions) {
     this.options = options;
+    const f = (name: string, type: string, initial?: number): VarDecl => ({
+      name, type: { name: type, line: 0 }, initial: initial === undefined ? null : { kind: 'int', value: initial, line: 0 }, address: null, section: 'static', line: 0,
+    });
+    this.structFields.set(DTL_KEY, {
+      fields: [f('YEAR', 'UINT', 1970), f('MONTH', 'USINT', 1), f('DAY', 'USINT', 1), f('WEEKDAY', 'USINT', 5),
+        f('HOUR', 'USINT'), f('MINUTE', 'USINT'), f('SECOND', 'USINT'), f('NANOSECOND', 'UDINT')],
+    });
   }
 
   run(): CompileResult {
@@ -292,6 +305,7 @@ class Compiler {
     }
     const ut = this.userTypes.get(t.name.toUpperCase());
     if (ut) return { k: 'struct', name: ut.name, key: ut.name.toUpperCase() };
+    if (t.name.toUpperCase() === 'DTL') return DTL;
     const lib = libraryBlock(t.name);
     if (lib) return { k: 'fb', name: lib.key, library: true };
     const pou = this.pous.get(t.name.toUpperCase());
@@ -648,10 +662,15 @@ class Compiler {
   }
 
   private initConst(offset: number, t: DataType, e: Expr): void {
+    if (t.k === 'struct' && t.key === DTL_KEY && e.kind === 'typed' && e.type === 'DTL') {
+      this.dtlInit(offset, e.value);
+      return;
+    }
     const value = this.constValue(e, t);
     if (t.k === 'elem') {
       const info = ELEMENTARY[t.name];
-      this.init.write(offset, info.size, info.cls === 'float' ? 'float' : 'int', typeof value === 'boolean' ? Number(value) : Number(value));
+      if (typeof value === 'bigint') this.init.write(offset, info.size, 'int', value);
+      else this.init.write(offset, info.size, info.cls === 'float' ? 'float' : 'int', typeof value === 'boolean' ? Number(value) : Number(value));
     } else if (t.k === 'string') {
       const bytes = new TextEncoder().encode(String(value)).subarray(0, t.length);
       this.init.write(offset, 1, 'int', t.length);
@@ -663,9 +682,19 @@ class Compiler {
   }
 
   /** Evaluates a constant expression and checks it against the target type. */
-  private constValue(e: Expr, t: DataType): number | boolean | string {
-    const v = this.fold(e);
+  private constValue(e: Expr, t: DataType): number | boolean | string | bigint {
+    let v = this.fold(e);
     if (v === null) throw this.err('Start value must be a constant', e.line);
+    if (isChar(t) && typeof v === 'string' && [...v].length === 1) v = v.codePointAt(0)!;
+    if (e.kind === 'time' && t.k === 'elem' && t.name === 'LTIME') v = BigInt(e.value) * 1_000_000n;
+    if (typeof v === 'bigint') {
+      const nt = this.typeOf(e);
+      if (!sameType(nt, t) && !(isChar(nt) && isInt(t))) throw this.err(`Cannot use a ${typeName(nt)} value as ${typeName(t)}`, e.line);
+      return v;
+    }
+    if (isSpecialInt(t) && typeof v === 'number' && !(t.k === 'elem' && t.name === 'TIME') && e.kind !== 'int' && !(isChar(t) && e.kind === 'string')) {
+      throw this.err(`Cannot use ${e.kind === 'time' ? 'a Time' : 'this'} value as ${typeName(t)}`, e.line);
+    }
     if (t.k === 'string') {
       if (typeof v !== 'string') throw this.err(`Cannot use ${typeof v === 'boolean' ? 'a BOOL' : 'a number'} as ${typeName(t)}`, e.line);
       return v;
@@ -682,8 +711,10 @@ class Compiler {
   }
 
   /** Constant folding for start values and CASE labels. */
-  private fold(e: Expr): number | boolean | string | null {
+  private fold(e: Expr): number | boolean | string | bigint | null {
     switch (e.kind) {
+      case 'typed':
+        return e.value;
       case 'int':
       case 'real':
       case 'time':
@@ -735,6 +766,10 @@ class Compiler {
       node.vmType = ELEMENTARY[t.name].vm;
       node.kind = ELEMENTARY[t.name].cls;
       if (t.name === 'TIME') node.kind = 'time';
+      const special: Partial<Record<Elementary, SymbolNode['kind']>> = {
+        LTIME: 'ltime', DATE: 'date', TOD: 'tod', LTOD: 'ltod', DT: 'dt', LDT: 'ldt', CHAR: 'char', WCHAR: 'char',
+      };
+      if (special[t.name]) node.kind = special[t.name];
     } else if (t.k === 'string') {
       node.kind = 'string';
     } else if (t.k === 'array') {
@@ -1023,11 +1058,18 @@ class Compiler {
       this.emit(Op.CALL_STD, StdFn.SASSIGN, 2);
       return;
     }
+    if (t.k === 'struct' && t.key === DTL_KEY && value.kind === 'typed' && value.type === 'DTL') {
+      this.pushAddress(place);
+      this.pushBig(value.value);
+      this.emit(Op.CALL_STD, StdFn.LDT2DTL, 2);
+      return;
+    }
     if (t.k === 'array' || t.k === 'struct') {
       const vt = this.typeOf(value);
       if (!sameType(vt, t)) throw this.err(`Cannot assign ${typeName(vt)} to ${typeName(t)}`, line);
       this.pushAddress(place);
-      this.pushAddress(this.place(value));
+      if (value.kind === 'call') this.expr(value, vt);
+      else this.pushAddress(this.place(value));
       this.emit(Op.COPY, this.sizeOf(t));
       return;
     }
@@ -1189,6 +1231,8 @@ class Compiler {
         return { k: 'string', length: Math.max(1, e.value.length) };
       case 'time':
         return T.TIME;
+      case 'typed':
+        return e.type === 'DTL' ? DTL : T.elem(e.type as Elementary);
       case 'var': {
         const s = this.lookup(e.name, e.scope);
         if (!s) throw this.undeclared(e);
@@ -1240,6 +1284,7 @@ class Compiler {
           if (e.op !== '=' && e.op !== '<>') throw this.err(`Cannot compare Bool values with ${e.op}`, e.line);
           return T.BOOL;
         }
+        if (this.charCompare(e)) return T.BOOL;
         if (!unifyNumeric(a, b)) throw this.err(`Cannot compare ${typeName(a)} with ${typeName(b)}`, e.line);
         return T.BOOL;
       case 'MOD':
@@ -1249,11 +1294,29 @@ class Compiler {
         if (!isNumeric(a) || !isNumeric(b)) throw this.err(`** needs numeric operands`, e.line);
         return isFloat(a) && a.k === 'elem' && a.name === 'REAL' ? T.REAL : T.LREAL;
       default: {
+        const temporal = temporalArithmetic(e.op, a, b);
+        if (temporal) return temporal.result;
+        if ((isSpecialInt(a) || isSpecialInt(b)) && !['+', '-', '*', '/'].includes(e.op)) {
+          throw this.err(`Operator ${e.op} cannot be applied to ${typeName(a)} and ${typeName(b)}`, e.line);
+        }
         const t = unifyNumeric(a, b);
         if (!t) throw this.err(`Operator ${e.op} cannot be applied to ${typeName(a)} and ${typeName(b)}`, e.line);
+        if (isSpecialInt(t) && !(t.k === 'elem' && (t.name === 'TIME' || t.name === 'LTIME'))) {
+          throw this.err(`Operator ${e.op} cannot be applied to ${typeName(a)} and ${typeName(b)}`, e.line);
+        }
         return t;
       }
     }
+  }
+
+  /** CHAR / WCHAR compared with a one-character string literal: the type of the character operand. */
+  private charCompare(e: Extract<Expr, { kind: 'binary' }>): DataType | null {
+    const lit = (x: Expr) => x.kind === 'string' && [...x.value].length === 1;
+    const a = this.typeOf(e.left);
+    const b = this.typeOf(e.right);
+    if (isChar(a) && lit(e.right)) return a;
+    if (isChar(b) && lit(e.left)) return b;
+    return null;
   }
 
   // -------------------------------------------------------------------------
@@ -1266,6 +1329,26 @@ class Compiler {
     const target = want ?? (natural.k === 'anyint' ? T.DINT : natural.k === 'anyreal' ? T.LREAL : natural);
 
     // Literals are emitted directly in the target representation.
+    if (e.kind === 'time' && target.k === 'elem' && target.name === 'LTIME') {
+      this.pushBig(BigInt(e.value) * 1_000_000n);
+      return target;
+    }
+    if (e.kind === 'time' && isSpecialInt(target) && !(target.k === 'elem' && target.name === 'TIME')) {
+      throw this.err(`Cannot use a Time value as ${typeName(target)}`, e.line);
+    }
+    if (e.kind === 'typed' && e.type !== 'DTL') {
+      if (!sameType(natural, target) && !(isInt(target) && !isSpecialInt(target) && (e.type === 'CHAR' || e.type === 'WCHAR'))) {
+        throw this.err(`Cannot use a ${typeName(natural)} value as ${typeName(target)}`, e.line);
+      }
+      this.pushBig(e.value);
+      return target;
+    }
+    if (e.kind === 'string' && isChar(target)) {
+      const cp = [...e.value];
+      if (cp.length !== 1) throw this.err(`'${e.value}' is not a single character`, e.line);
+      this.pushInt(cp[0].codePointAt(0)!);
+      return target;
+    }
     if (e.kind === 'int' || e.kind === 'real' || e.kind === 'time') {
       if (isFloat(target)) {
         this.emit(Op.PUSH_F64, e.value);
@@ -1319,6 +1402,15 @@ class Compiler {
       if (isString(to) && isString(from)) return to;
       throw this.err(`Cannot convert ${typeName(from)} to ${typeName(to)}${isString(to) ? ` (use ${from.k === 'elem' ? from.name : 'INT'}_TO_STRING())` : ''}`, line);
     }
+    if ((isSpecialInt(from) || isSpecialInt(to)) && from.k !== 'anyint') {
+      // integers <-> TIME keep their historical implicit conversion
+      const time = (t: DataType) => t.k === 'elem' && t.name === 'TIME';
+      const plainInt = (t: DataType) => isInt(t) && !isSpecialInt(t);
+      if (!((time(from) && plainInt(to)) || (time(to) && plainInt(from)))) {
+        const n = (t: DataType) => (t.k === 'elem' ? t.name : typeName(t).toUpperCase());
+        throw this.err(`Cannot convert ${typeName(from)} to ${typeName(to)} (use ${n(from)}_TO_${n(to)}())`, line);
+      }
+    }
     if (isNumeric(from) && isNumeric(to)) {
       if (isFloat(from) && isInt(to)) {
         throw this.err(`Implicit conversion from ${typeName(from)} to ${typeName(to)} is not allowed, use REAL_TO_${to.k === 'elem' ? to.name : 'DINT'}() or TRUNC()`, line);
@@ -1342,7 +1434,7 @@ class Compiler {
         this.emit(compareOp(e.op, false));
         return;
       }
-      const operand = isBool(a) ? T.BOOL : unifyNumeric(a, b)!;
+      const operand = isBool(a) ? T.BOOL : this.charCompare(e) ?? unifyNumeric(a, b)!;
       this.expr(e.left, operand);
       this.expr(e.right, operand);
       this.emit(compareOp(e.op, isFloat(operand)));
@@ -1360,6 +1452,26 @@ class Compiler {
       return;
     }
 
+    const temporal = temporalArithmetic(e.op, a, b);
+    if (temporal) {
+      this.expr(e.left, temporal.left);
+      this.expr(e.right, temporal.right);
+      if (temporal.scale) {
+        this.pushBig(temporal.scale);
+        this.emit(Op.MUL);
+      }
+      this.emit(e.op === '+' ? Op.ADD : Op.SUB);
+      if (temporal.modulo) {
+        // wrap around midnight
+        this.pushBig(temporal.modulo);
+        this.emit(Op.MOD);
+        this.pushBig(temporal.modulo);
+        this.emit(Op.ADD);
+        this.pushBig(temporal.modulo);
+        this.emit(Op.MOD);
+      }
+      return;
+    }
     const operand = e.op === '**' ? result : result;
     this.expr(e.left, operand);
     this.expr(e.right, operand);
@@ -1396,6 +1508,7 @@ class Compiler {
       if (c.scope === null && !this.lookup(c.name, null)) {
         const conv = conversion(key);
         if (conv) return conv[1];
+        if (key === 'RD_SYS_T' || key === 'RD_LOC_T') return T.INT;
         if (key in STD_PARAMS) return this.stdType(key, e);
       }
       const pou = this.pous.get(key);
@@ -1528,6 +1641,7 @@ class Compiler {
       if (c.scope === null && !this.lookup(c.name, null)) {
         const conv = conversion(key);
         if (conv) return this.conversionCall(conv, e);
+        if (key === 'RD_SYS_T' || key === 'RD_LOC_T') return this.readClock(key, e);
         if (key in STD_PARAMS) return this.stdCall(key, e);
       }
       const pou = this.pous.get(key);
@@ -1542,6 +1656,7 @@ class Compiler {
     }
     const arg = e.args[0].value;
     const at = this.typeOf(arg);
+    if (this.temporalConversion(from, to, arg, at, e)) return;
     // The argument must be compatible with the source type of the conversion.
     const compatible = isString(from) ? isString(at)
       : isBool(from) ? isBool(at)
@@ -1584,6 +1699,99 @@ class Compiler {
       if (isFloat(from)) this.emit(Op.F2I_ROUND);
       if (to.k === 'elem') this.emit(Op.WRAP, ELEMENTARY[to.name].vm);
     }
+  }
+
+  /**
+   * Conversions between dates, times, durations and characters (LDT_TO_DTL, DT_TO_DATE, TIME_TO_LTIME,
+   * CHAR_TO_STRING...). Returns false when the pair is not one of them (generic numeric conversion).
+   */
+  private temporalConversion(from: DataType, to: DataType, arg: Expr, at: DataType, e: Extract<Expr, { kind: 'call' }>): boolean {
+    const name = (t: DataType) => (t.k === 'elem' ? t.name : t.k === 'struct' && t.key === DTL_KEY ? 'DTL' : t.k === 'string' ? 'STRING' : '');
+    const [f, t] = [name(from), name(to)];
+    const DATETIME = ['DT', 'LDT', 'DTL'];
+    const chars = ['CHAR', 'WCHAR'];
+    if (!(DATETIME.includes(f) || DATETIME.includes(t) || (chars.includes(f) && t === 'STRING') || (f === 'STRING' && chars.includes(t))
+      || ['TIME_LTIME', 'LTIME_TIME', 'TOD_LTOD', 'LTOD_TOD', 'DATE_LDT'].includes(`${f}_${t}`))) return false;
+    if (!sameType(at, from) && !(from.k === 'string' && isString(at)) && !(at.k === 'anyint' && from.k === 'elem')) {
+      throw this.err(`${exprName(e.callee)} expects ${typeName(from)}, got ${typeName(at)}`, e.line);
+    }
+    // 1. the argument as an LDT (ns since 1970) when it is a date and time
+    const toLdt = () => {
+      if (f === 'LDT') this.expr(arg, from);
+      else if (f === 'DT') {
+        this.expr(arg, from);
+        this.emit(Op.CALL_STD, StdFn.DT2LDT, 1);
+      } else {
+        this.pushAddress(this.place(arg));
+        this.emit(Op.CALL_STD, StdFn.DTL2LDT, 1);
+      }
+    };
+    const scale = (factor: bigint, divide: boolean) => {
+      this.pushBig(factor);
+      this.emit(divide ? Op.DIV : Op.MUL);
+    };
+    switch (`${f}_${t}`) {
+      case 'TIME_LTIME': this.expr(arg, from); scale(1_000_000n, false); return true;
+      case 'LTIME_TIME': this.expr(arg, from); scale(1_000_000n, true); this.emit(Op.WRAP, VmType.I32); return true;
+      case 'TOD_LTOD': this.expr(arg, from); scale(1_000_000n, false); return true;
+      case 'LTOD_TOD': this.expr(arg, from); scale(1_000_000n, true); return true;
+      case 'DATE_LDT': this.expr(arg, from); this.pushInt(7305); this.emit(Op.ADD); scale(NS_PER_DAY, false); return true;
+      case 'CHAR_STRING':
+      case 'WCHAR_STRING': {
+        const slot = this.scratch(STRING_SCRATCH + 2, true);
+        this.emit(Op.PUSH_ADDR, Area.D, slot);
+        this.expr(arg, from);
+        this.emit(Op.CALL_STD, StdFn.C2S, 2);
+        return true;
+      }
+      case 'STRING_CHAR':
+      case 'STRING_WCHAR':
+        this.stringValue(arg);
+        this.emit(Op.CALL_STD, StdFn.S2C, 1);
+        return true;
+    }
+    if (!DATETIME.includes(f)) throw this.err(`${exprName(e.callee)} is not supported`, e.line);
+    toLdt();
+    switch (t) {
+      case 'LDT': return true;
+      case 'DT': this.emit(Op.CALL_STD, StdFn.LDT2DT, 1); return true;
+      case 'DTL': {
+        // result in a scratch DTL: its address is the value
+        const slot = this.scratch(12);
+        this.emit(Op.PUSH_ADDR, Area.D, slot);
+        this.emit(Op.SWAP);
+        this.emit(Op.CALL_STD, StdFn.LDT2DTL, 2);
+        this.emit(Op.PUSH_ADDR, Area.D, slot);
+        return true;
+      }
+      case 'DATE': scale(NS_PER_DAY, true); this.pushInt(7305); this.emit(Op.SUB); return true;
+      case 'TOD': this.pushBig(NS_PER_DAY); this.emit(Op.MOD); scale(1_000_000n, true); return true;
+      case 'LTOD': this.pushBig(NS_PER_DAY); this.emit(Op.MOD); return true;
+      default: throw this.err(`${exprName(e.callee)} is not supported`, e.line);
+    }
+  }
+
+  /** RD_SYS_T / RD_LOC_T (OUT => DTL, LDT or DT): date and time of the CPU (UTC / local). Returns 0. */
+  private readClock(key: string, e: Extract<Expr, { kind: 'call' }>): void {
+    const out = e.args.find((a) => a.output && a.name?.toUpperCase() === 'OUT');
+    if (!out || e.args.length !== 1) throw this.err(`${key} expects one output parameter: ${key}(OUT => ...)`, e.line);
+    const dest = this.place(out.value);
+    this.checkWritable(dest, e.line);
+    const t = dest.type;
+    const isDtl = t.k === 'struct' && t.key === DTL_KEY;
+    if (!isDtl && !(t.k === 'elem' && (t.name === 'LDT' || t.name === 'DT'))) {
+      throw this.err(`${key}: OUT must be a DTL, LDT or DATE_AND_TIME, not ${typeName(t)}`, e.line);
+    }
+    if (isDtl) this.pushAddress(dest);
+    this.pushInt(key === 'RD_LOC_T' ? 1 : 0);
+    this.emit(Op.SYS, SysFn.CLOCK, 1);
+    if (isDtl) {
+      this.emit(Op.CALL_STD, StdFn.LDT2DTL, 2);
+    } else {
+      if (t.k === 'elem' && t.name === 'DT') this.emit(Op.CALL_STD, StdFn.LDT2DT, 1);
+      this.storePlace(dest, t, e.line);
+    }
+    this.pushInt(0);
   }
 
   private stdCall(key: string, e: Extract<Expr, { kind: 'call' }>): void {
@@ -2078,8 +2286,30 @@ class Compiler {
     else this.emit(Op.PUSH_I64, BigInt(Math.trunc(v)));
   }
 
-  private pushConst(value: number | boolean | string, t: DataType): void {
-    if (typeof value === 'boolean') this.pushInt(value ? 1 : 0);
+  private pushBig(v: bigint): void {
+    if (v >= -0x80000000n && v <= 0x7fffffffn) this.emit(Op.PUSH_I32, Number(v));
+    else this.emit(Op.PUSH_I64, BigInt.asIntN(64, v));
+  }
+
+  /** Start value of a DTL from DTL#... (ns since 1970) */
+  private dtlInit(offset: number, ns: bigint): void {
+    const days = Number(ns / NS_PER_DAY);
+    const rest = ns - BigInt(days) * NS_PER_DAY;
+    const c = civilFromDays(days);
+    const put = (at: number, size: number, v: number) => this.init.write(offset + at, size, 'int', v);
+    put(0, 2, c.year);
+    put(2, 1, c.month);
+    put(3, 1, c.day);
+    put(4, 1, c.weekday);
+    put(5, 1, Number(rest / 3_600_000_000_000n));
+    put(6, 1, Number((rest / 60_000_000_000n) % 60n));
+    put(7, 1, Number((rest / 1_000_000_000n) % 60n));
+    put(8, 4, Number(rest % 1_000_000_000n));
+  }
+
+  private pushConst(value: number | boolean | string | bigint, t: DataType): void {
+    if (typeof value === 'bigint') this.pushBig(value);
+    else if (typeof value === 'boolean') this.pushInt(value ? 1 : 0);
     else if (typeof value === 'string') this.emit(Op.PUSH_ADDR, Area.C, this.constString(value));
     else if (isFloat(t)) this.emit(Op.PUSH_F64, value);
     else this.pushInt(value);
@@ -2160,10 +2390,29 @@ function defaultAddressType(a: Address): Elementary {
 function addressAccepts(a: Address, t: Elementary): boolean {
   switch (a.size) {
     case 'X': return t === 'BOOL';
-    case 'B': return ['BYTE', 'SINT', 'USINT'].includes(t);
-    case 'W': return ['WORD', 'INT', 'UINT'].includes(t);
-    default: return ['DWORD', 'DINT', 'UDINT', 'REAL', 'TIME'].includes(t);
+    case 'B': return ['BYTE', 'SINT', 'USINT', 'CHAR'].includes(t);
+    case 'W': return ['WORD', 'INT', 'UINT', 'DATE', 'WCHAR'].includes(t);
+    default: return ['DWORD', 'DINT', 'UDINT', 'REAL', 'TIME', 'TOD'].includes(t);
   }
+}
+
+/**
+ * Arithmetic on dates and times: TOD ± TIME, LTOD ± LTIME, LDT ± LTIME (and the difference
+ * of two values of the same kind). Null when the operands are not such a combination.
+ */
+function temporalArithmetic(op: string, a: DataType, b: DataType): { result: DataType; left: DataType; right: DataType; modulo?: bigint; scale?: bigint } | null {
+  if (op !== '+' && op !== '-') return null;
+  const n = (t: DataType) => (t.k === 'elem' ? t.name : '');
+  const [x, y] = [n(a), n(b)];
+  const lit = (t: DataType) => t.k === 'anyint';
+  if (x === 'TOD' && (y === 'TIME' || lit(b))) return { result: T.elem('TOD'), left: T.elem('TOD'), right: T.TIME, modulo: 86_400_000n };
+  if (x === 'LTOD' && (y === 'LTIME' || lit(b))) return { result: T.elem('LTOD'), left: T.elem('LTOD'), right: T.elem('LTIME'), modulo: NS_PER_DAY };
+  if (x === 'LDT' && (y === 'LTIME' || lit(b))) return { result: T.elem('LDT'), left: T.elem('LDT'), right: T.elem('LTIME') };
+  if (op === '+' && y === 'TOD' && x === 'TIME') return { result: T.elem('TOD'), left: T.TIME, right: T.elem('TOD'), modulo: 86_400_000n };
+  if (op === '-' && x === y && x === 'TOD') return { result: T.TIME, left: a, right: b };
+  if (op === '-' && x === y && x === 'LTOD') return { result: T.elem('LTIME'), left: a, right: b };
+  if (op === '-' && x === y && x === 'LDT') return { result: T.elem('LTIME'), left: a, right: b };
+  return null;
 }
 
 function compareOp(op: string, float: boolean): number {
@@ -2177,7 +2426,8 @@ function compareOp(op: string, float: boolean): number {
 function conversion(name: string): [DataType, DataType] | null {
   const m = /^([A-Z]+)_TO_([A-Z]+)$/.exec(name.toUpperCase());
   if (!m) return null;
-  const type = (n: string): DataType | null => (n === 'STRING' ? { k: 'string', length: STRING_SCRATCH } : isElementary(n) ? T.elem(n) : null);
+  const type = (n: string): DataType | null => (n === 'STRING' || n === 'WSTRING' ? { k: 'string', length: STRING_SCRATCH }
+    : n === 'DTL' ? DTL : isElementary(n) ? T.elem(n) : null);
   const from = type(m[1]);
   const to = type(m[2]);
   return from && to ? [from, to] : null;

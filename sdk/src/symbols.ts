@@ -3,7 +3,7 @@ export interface SymbolNode {
   name: string;
   /** Display type, e.g. "Int", "Array[1..5] of Real", "TON", "\"Motor\"" */
   type: string;
-  kind?: 'bool' | 'int' | 'float' | 'time' | 'string' | 'array' | 'struct';
+  kind?: 'bool' | 'int' | 'float' | 'time' | 'string' | 'array' | 'struct' | 'ltime' | 'date' | 'tod' | 'ltod' | 'dt' | 'ldt' | 'char';
   area: 'D' | 'I' | 'Q' | 'M';
   offset: number;
   bit?: number;

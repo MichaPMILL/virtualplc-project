@@ -53,6 +53,10 @@
     "PTR": {
       "code": 10,
       "size": 8
+    },
+    "U64": {
+      "code": 11,
+      "size": 8
     }
   },
   "opcodes": {
@@ -497,13 +501,20 @@
     "S2F": 14,
     "SASSIGN": 15,
     "NORM_X": 16,
-    "SCALE_X": 17
+    "SCALE_X": 17,
+    "C2S": 18,
+    "S2C": 19,
+    "DT2LDT": 20,
+    "LDT2DT": 21,
+    "DTL2LDT": 22,
+    "LDT2DTL": 23
   },
   "sysFunctions": {
     "LOG": 0,
     "WAIT": 1,
     "MILLIS": 2,
-    "DEVICE_OK": 3
+    "DEVICE_OK": 3,
+    "CLOCK": 4
   },
   "libraryBlocks": {
     "TON": {

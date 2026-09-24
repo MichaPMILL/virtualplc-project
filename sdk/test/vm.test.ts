@@ -426,3 +426,87 @@ vmTest('PLC data types (UDT) and anonymous structs', async () => {
     assert.equal(await sim.get('"Machine".Cell.Count'), 2);
   });
 });
+
+vmTest('date, time and character types (Date, TOD, LTime, LTOD, DT, LDT, DTL, Char, LWord, ULInt)', async () => {
+  // 2024-02-29 13:45:30.250 UTC
+  // (the simulator advances its clock by one cycle, 10 ms, before the first scan)
+  process.env.VPLC_SIM_CLOCK_NS = String((Date.UTC(2024, 1, 29, 13, 45, 30, 250) - 10) * 1_000_000);
+  try {
+    await withSim(`
+      VAR_GLOBAL
+        Day : Date := D#2024-02-29;
+        Start : Time_Of_Day := TOD#23:30:00;
+        Later : TOD;
+        Span : Time;
+        Long : LTime := LT#1d2h3m4s5ms6us7ns;
+        LongFromTime : LTime;
+        Clock : LTOD := LTOD#12:00:00.000000001;
+        Stamp : LDT := LDT#2024-01-15-08:00:00.5;
+        Old : Date_And_Time := DT#2024-01-15-08:00:00.500;
+        Now : DTL;
+        NowLdt : LDT;
+        NowDt : DT;
+        NowDate : Date;
+        NowTod : TOD;
+        Elapsed : LTime;
+        Fixed : DTL := DTL#2000-12-31-23:59:59.0;
+        Letter : Char := 'A';
+        Next : Char;
+        Wide : WChar := WCHAR#'é';
+        Text : String;
+        FirstChar : Char;
+        Mask : LWord := LWORD#16#FFFF_0000_FFFF_0000;
+        Big : ULInt := 12345678901234;
+        Msg : WString := WSTRING#'Hello';
+        IsLetter : Bool;
+        Status : Int;
+      END_VAR
+      ORGANIZATION_BLOCK "Main" BEGIN
+        Later := Start + T#1H;                 // wraps around midnight
+        Span := Later - TOD#00:00:00;
+        LongFromTime := TIME_TO_LTIME(T#2S);
+        Status := RD_SYS_T(OUT => Now);
+        Status := RD_SYS_T(OUT => NowLdt);
+        Status := RD_SYS_T(OUT => NowDt);
+        NowDate := LDT_TO_DATE(NowLdt);
+        NowTod := DTL_TO_TOD(Now);
+        Elapsed := NowLdt - Stamp;
+        Next := INT_TO_CHAR(CHAR_TO_INT(Letter) + 1);
+        Text := CONCAT(IN1 := CHAR_TO_STRING(Letter), IN2 := CHAR_TO_STRING(Next));
+        FirstChar := STRING_TO_CHAR('xyz');
+        IsLetter := Letter >= 'A' AND Letter <= 'Z';
+      END_ORGANIZATION_BLOCK`, async (sim) => {
+      await sim.scan();
+      const days = (y: number, m: number, d: number) => (Date.UTC(y, m - 1, d) - Date.UTC(1990, 0, 1)) / 86_400_000;
+      assert.equal(await sim.get('Day'), days(2024, 2, 29));
+      assert.equal(await sim.get('Later'), 30 * 60_000, 'TOD + TIME wraps at midnight');
+      assert.equal(await sim.get('Span'), 30 * 60_000);
+      assert.equal(await sim.get('Long'), ((((1 * 24 + 2) * 60 + 3) * 60 + 4) * 1000 + 5) * 1e6 + 6007);
+      assert.equal(await sim.get('LongFromTime'), 2e9);
+      assert.equal(await sim.get('Now.YEAR'), 2024);
+      assert.equal(await sim.get('Now.MONTH'), 2);
+      assert.equal(await sim.get('Now.DAY'), 29);
+      assert.equal(await sim.get('Now.WEEKDAY'), 5, 'Thursday (1 = Sunday)');
+      assert.equal(await sim.get('Now.HOUR'), 13);
+      assert.equal(await sim.get('Now.SECOND'), 30);
+      assert.equal(await sim.get('Now.NANOSECOND'), 250_000_000);
+      assert.equal(await sim.get('NowDate'), days(2024, 2, 29));
+      assert.equal(await sim.get('NowTod'), ((13 * 60 + 45) * 60 + 30) * 1000 + 250);
+      assert.equal(await sim.get('Elapsed'), Number(BigInt(Date.UTC(2024, 1, 29, 13, 45, 30, 250)) * 1_000_000n - (BigInt(Date.UTC(2024, 0, 15, 8)) * 1_000_000n + 500_000_000n)));
+      assert.equal(await sim.get('Fixed.YEAR'), 2000);
+      assert.equal(await sim.get('Fixed.MINUTE'), 59);
+      assert.equal(await sim.get('Letter'), 65);
+      assert.equal(await sim.get('Next'), 66);
+      assert.equal(await sim.get('Wide'), 0xe9);
+      assert.equal(await sim.get('Text'), 'AB');
+      assert.equal(await sim.get('FirstChar'), 'x'.charCodeAt(0));
+      assert.equal(await sim.get('IsLetter'), true);
+      assert.equal(await sim.get('Big'), 12345678901234);
+      assert.equal(await sim.get('Mask'), 0xffff0000ffff0000n);
+      assert.equal(await sim.get('Msg'), 'Hello');
+      assert.equal(await sim.get('Status'), 0);
+    });
+  } finally {
+    delete process.env.VPLC_SIM_CLOCK_NS;
+  }
+});

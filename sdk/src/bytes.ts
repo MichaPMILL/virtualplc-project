@@ -88,8 +88,13 @@ export class MemoryImage {
     this.view = new DataView(this.bytes.buffer);
   }
 
-  write(offset: number, vmSize: number, kind: 'int' | 'float', value: number): void {
+  write(offset: number, vmSize: number, kind: 'int' | 'float', value: number | bigint): void {
     this.used = Math.max(this.used, offset + vmSize);
+    if (typeof value === 'bigint') {
+      if (vmSize === 8) this.view.setBigInt64(offset, BigInt.asIntN(64, value));
+      else this.write(offset, vmSize, kind, Number(BigInt.asIntN(vmSize * 8, value)));
+      return;
+    }
     if (kind === 'float') {
       if (vmSize === 4) this.view.setFloat32(offset, value);
       else this.view.setFloat64(offset, value);

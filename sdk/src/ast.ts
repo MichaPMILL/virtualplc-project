@@ -28,6 +28,8 @@ export type Expr =
   | { kind: 'bool'; value: boolean; line: number }
   | { kind: 'string'; value: string; line: number }
   | { kind: 'time'; value: number; line: number }
+  /** Date / time-of-day / LTIME / character literal (value in the representation of the type) */
+  | { kind: 'typed'; type: string; value: bigint; line: number }
   | { kind: 'var'; name: string; scope: Scope; line: number }
   | { kind: 'addr'; address: Address; line: number }
   | { kind: 'member'; base: Expr; member: string; line: number }

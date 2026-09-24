@@ -78,6 +78,18 @@ workstation (menu *Projet*, toolbar, task card *Versions*):
 
 Authentication uses the workstation's Git credentials (Git Credential Manager, SSH keys).
 
+### Data types
+
+Elementary types of the usual engineering tools: `Bool`, `Byte`, `Word`, `DWord`, `LWord`,
+`SInt`, `Int`, `DInt`, `LInt`, `USInt`, `UInt`, `UDInt`, `ULInt`, `Real`, `LReal`, `Time`,
+`LTime`, `Date`, `Time_Of_Day`, `LTime_Of_Day`, `Date_And_Time`, `LDT`, `DTL`, `Char`,
+`WChar`, `String`, `WString`; arrays, structures and PLC data types (UDT). Typed literals
+(`D#2024-01-15`, `TOD#12:30:00`, `LT#1D_2H`, `DT#…`, `LDT#…`, `DTL#…`, `CHAR#'A'`,
+`LWORD#16#…`), explicit conversions (`DINT_TO_DATE`, `LDT_TO_DTL`, `DT_TO_TOD`,
+`TIME_TO_LTIME`, `CHAR_TO_STRING`…), time arithmetic (`TOD + TIME`, `LDT - LDT`…) and the
+CPU clock (`RD_SYS_T`, `RD_LOC_T` into a `DTL`, `LDT` or `DT`). `WString` is stored as UTF-8
+(254 bytes max); `ULInt` / `LWord` arithmetic above 2^63 behaves as signed.
+
 ### HMI / SCADA access
 
 | Protocol | Configured in | Access |

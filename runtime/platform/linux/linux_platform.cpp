@@ -53,6 +53,18 @@ void LinuxPlatform::log(const char* message) {
     fflush(stdout);
 }
 
+bool LinuxPlatform::clock(bool local, int64_t& ns) {
+    timespec ts{};
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return false;
+    ns = int64_t(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+    if (local) {
+        tm lt{};
+        time_t t = ts.tv_sec;
+        if (localtime_r(&t, &lt)) ns += int64_t(lt.tm_gmtoff) * 1000000000LL;
+    }
+    return true;
+}
+
 bool LinuxPlatform::moduleOk(uint16_t index) { return index < modules_.size() && modules_[index].ok; }
 
 bool LinuxPlatform::storeProgram(const uint8_t* image, size_t length) {

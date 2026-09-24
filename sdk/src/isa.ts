@@ -24,6 +24,7 @@ export const VmType = {
   F32: 8,
   F64: 9,
   PTR: 10,
+  U64: 11,
 } as const;
 
 export const VM_TYPE_SIZE: Record<number, number> = {
@@ -38,6 +39,7 @@ export const VM_TYPE_SIZE: Record<number, number> = {
   8: 4,
   9: 8,
   10: 8,
+  11: 8,
 };
 
 export const Op = {
@@ -292,6 +294,12 @@ export const StdFn = {
   SASSIGN: 15,
   NORM_X: 16,
   SCALE_X: 17,
+  C2S: 18,
+  S2C: 19,
+  DT2LDT: 20,
+  LDT2DT: 21,
+  DTL2LDT: 22,
+  LDT2DTL: 23,
 } as const;
 
 export const SysFn = {
@@ -299,6 +307,7 @@ export const SysFn = {
   WAIT: 1,
   MILLIS: 2,
   DEVICE_OK: 3,
+  CLOCK: 4,
 } as const;
 
 export const Trap = {

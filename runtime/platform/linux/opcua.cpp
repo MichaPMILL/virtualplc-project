@@ -25,6 +25,7 @@ const UA_DataType* uaType(const SymbolInfo& s) {
         case uint8_t(VmType::T_U32): return &UA_TYPES[UA_TYPES_UINT32];
         case uint8_t(VmType::T_I32): return &UA_TYPES[UA_TYPES_INT32];
         case uint8_t(VmType::T_I64): return &UA_TYPES[UA_TYPES_INT64];
+        case uint8_t(VmType::T_U64): return &UA_TYPES[UA_TYPES_UINT64];
         case uint8_t(VmType::T_F32): return &UA_TYPES[UA_TYPES_FLOAT];
         case uint8_t(VmType::T_F64): return &UA_TYPES[UA_TYPES_DOUBLE];
         case HMI_TIME: return &UA_TYPES[UA_TYPES_INT32];  // milliseconds
@@ -50,6 +51,7 @@ UA_StatusCode readVariable(UA_Server*, const UA_NodeId*, void*, const UA_NodeId*
         case UA_DATATYPEKIND_UINT32: { UA_UInt32 x = UA_UInt32(v.u); rc = UA_Variant_setScalarCopy(&value->value, &x, t); break; }
         case UA_DATATYPEKIND_INT32: { UA_Int32 x = UA_Int32(v.i); rc = UA_Variant_setScalarCopy(&value->value, &x, t); break; }
         case UA_DATATYPEKIND_INT64: { UA_Int64 x = v.i; rc = UA_Variant_setScalarCopy(&value->value, &x, t); break; }
+        case UA_DATATYPEKIND_UINT64: { UA_UInt64 x = v.u; rc = UA_Variant_setScalarCopy(&value->value, &x, t); break; }
         case UA_DATATYPEKIND_FLOAT: { UA_Float x = UA_Float(v.f); rc = UA_Variant_setScalarCopy(&value->value, &x, t); break; }
         case UA_DATATYPEKIND_DOUBLE: { UA_Double x = v.f; rc = UA_Variant_setScalarCopy(&value->value, &x, t); break; }
         case UA_DATATYPEKIND_STRING: {

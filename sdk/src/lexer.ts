@@ -1,14 +1,17 @@
 import type { Scope } from './ast.ts';
 import { CompileError } from './diagnostics.ts';
+import { parseTemporal, TEMPORAL_PREFIXES } from './literals.ts';
 
 export type TokenType =
-  | 'ident' | 'keyword' | 'int' | 'real' | 'time' | 'bool' | 'string' | 'address' | 'op' | 'eof';
+  | 'ident' | 'keyword' | 'int' | 'real' | 'time' | 'bool' | 'string' | 'address' | 'op' | 'eof'
+  /** typed literal of a date, time, 64-bit duration or character: text = type (DATE, TOD, LTOD, DT, LDT, DTL, LTIME, CHAR, WCHAR) */
+  | 'typed';
 
 export interface Token {
   type: TokenType;
   /** Keyword / operator text (upper-case for keywords), identifier name, or literal text. */
   text: string;
-  value?: number | boolean | string;
+  value?: number | boolean | string | bigint;
   scope?: Scope;
   line: number;
   column: number;
@@ -26,7 +29,7 @@ export const KEYWORDS = new Set([
 
 const TWO_CHAR = new Set([':=', '=>', '+=', '-=', '*=', '/=', '**', '<>', '<=', '>=', '..']);
 const ONE_CHAR = new Set([';', ':', '.', '<', '>', ',', '(', ')', '[', ']', '+', '-', '*', '/', '=', '&']);
-const TYPED_PREFIXES = new Set(['BOOL', 'BYTE', 'WORD', 'DWORD', 'SINT', 'INT', 'DINT', 'LINT', 'USINT', 'UINT', 'UDINT', 'ULINT', 'REAL', 'LREAL']);
+const TYPED_PREFIXES = new Set(['BOOL', 'BYTE', 'WORD', 'DWORD', 'LWORD', 'SINT', 'INT', 'DINT', 'LINT', 'USINT', 'UINT', 'UDINT', 'ULINT', 'REAL', 'LREAL']);
 const isDigit = (c: string | undefined) => c !== undefined && c >= '0' && c <= '9';
 const isAlpha = (c: string | undefined) => c !== undefined && /[A-Za-z_]/.test(c);
 const isAlnum = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_]/.test(c);
@@ -200,6 +203,26 @@ export function tokenize(source: string): Token[] {
           const value = readDuration(l, c);
           return { type: 'time', text: String(value), value, line: l, column: c };
         }
+        const temporal = TEMPORAL_PREFIXES[upper];
+        if (temporal) {
+          advance();
+          const raw = consumeWhile((x) => isAlnum(x) || x === '-' || x === ':' || x === '.');
+          const value = parseTemporal(temporal, raw);
+          if (value === null) throw new CompileError(`Invalid ${upper}# literal '${raw}'`, l, c);
+          return { type: 'typed', text: temporal, value, line: l, column: c };
+        }
+        if (upper === 'CHAR' || upper === 'WCHAR' || upper === 'STRING' || upper === 'WSTRING') {
+          advance();
+          const tok = next();
+          if (upper.endsWith('STRING')) {
+            if (tok.type !== 'string') throw new CompileError(`Invalid ${upper}# literal`, l, c);
+            return { ...tok, line: l, column: c };
+          }
+          const code = tok.type === 'string' && typeof tok.value === 'string' && [...tok.value].length === 1 ? tok.value.codePointAt(0)!
+            : tok.type === 'int' && typeof tok.value === 'number' ? tok.value : -1;
+          if (code < 0 || code > (upper === 'CHAR' ? 255 : 65535)) throw new CompileError(`Invalid ${upper}# literal`, l, c);
+          return { type: 'typed', text: upper, value: BigInt(code), line: l, column: c };
+        }
         if (TYPED_PREFIXES.has(upper)) {
           advance();
           const negative = peek() === '-';
@@ -247,6 +270,8 @@ export function describeToken(t: Token): string {
       return `number ${t.text}`;
     case 'time':
       return 'time literal';
+    case 'typed':
+      return `${t.text} literal`;
     case 'bool':
       return t.text;
     case 'string':

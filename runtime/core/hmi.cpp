@@ -11,7 +11,7 @@ namespace {
 constexpr uint8_t T_BOOL = uint8_t(VmType::T_BOOL), T_U8 = uint8_t(VmType::T_U8), T_I8 = uint8_t(VmType::T_I8),
                   T_U16 = uint8_t(VmType::T_U16), T_I16 = uint8_t(VmType::T_I16), T_U32 = uint8_t(VmType::T_U32),
                   T_I32 = uint8_t(VmType::T_I32), T_I64 = uint8_t(VmType::T_I64), T_F32 = uint8_t(VmType::T_F32),
-                  T_F64 = uint8_t(VmType::T_F64);
+                  T_F64 = uint8_t(VmType::T_F64), T_U64 = uint8_t(VmType::T_U64);
 }  // namespace
 
 bool SymbolInfo::segment(uint8_t i, const char*& text, uint8_t& length) const {
@@ -110,6 +110,7 @@ bool hmiRead(Vm& vm, const SymbolInfo& sym, HmiValue& out) {
         case T_I32:
         case HMI_TIME: out.kind = HmiValue::INT; out.i = int32_t(uint32_t(rdbe(p, 4))); return true;
         case T_I64: out.kind = HmiValue::INT; out.i = int64_t(rdbe(p, 8)); return true;
+        case T_U64: out.kind = HmiValue::UINT; out.u = rdbe(p, 8); return true;
         case T_F32: {
             uint32_t bits = uint32_t(rdbe(p, 4));
             float f;
@@ -184,6 +185,11 @@ const char* hmiWrite(Vm& vm, const SymbolInfo& sym, const HmiValue& v) {
             wrbe(p, 4, uint32_t(int32_t(isInt ? i : int64_t(f))));
             return nullptr;
         case T_I64: wrbe(p, 8, uint64_t(isInt ? i : int64_t(f))); return nullptr;
+        case T_U64:
+            if (v.kind == HmiValue::UINT) wrbe(p, 8, v.u);
+            else if (!range(0, 1.8446744073709552e19)) return "out of range";
+            else wrbe(p, 8, uint64_t(isInt ? i : int64_t(f)));
+            return nullptr;
         case T_F32: {
             float x = float(f);
             uint32_t bits;

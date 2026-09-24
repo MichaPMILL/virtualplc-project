@@ -32,9 +32,16 @@ Numeric identifiers (opcodes, types, areas, library blocks, …) are defined in
 | BYTE, USINT / SINT          | 1    | unsigned / two's complement                     |
 | WORD, UINT / INT            | 2    |                                                 |
 | DWORD, UDINT / DINT, TIME   | 4    | TIME = signed milliseconds                      |
-| LINT                        | 8    |                                                 |
+| LINT / ULINT, LWORD         | 8    | (VM types `I64` / `U64`)                        |
+| CHAR / WCHAR                | 1 / 2| character code                                  |
+| DATE                        | 2    | days since 1990-01-01                           |
+| TIME_OF_DAY (TOD)           | 4    | milliseconds since midnight                     |
+| LTIME / LTIME_OF_DAY        | 8    | nanoseconds (duration / since midnight)         |
+| LDT                         | 8    | nanoseconds since 1970-01-01                    |
+| DATE_AND_TIME (DT)          | 8    | BCD: yy mm dd hh mi ss, ms (3 digits), weekday  |
+| DTL                         | 12   | YEAR (UInt), MONTH, DAY, WEEKDAY, HOUR, MINUTE, SECOND (USInt), NANOSECOND (UDInt) |
 | REAL / LREAL                | 4 / 8| IEEE-754                                        |
-| STRING[n] (default n = 32)  | n+2  | max length, current length, characters             |
+| STRING[n] (default n = 32)  | n+2  | max length, current length, characters (WSTRING: same layout, UTF-8, default 254) |
 | ARRAY[a..b] OF T            | (b-a+1) × size(T), contiguous                     |
 | Pointer (IN_OUT parameter)  | 8    | `area << 32 \| offset`                          |
 | Library FB (TON, CTU, …)    | see `libraryBlocks` in `isa.json`                 |

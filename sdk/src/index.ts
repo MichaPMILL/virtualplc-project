@@ -13,6 +13,7 @@ export { disassemble } from './disasm.ts';
 export { crc32 } from './crc32.ts';
 export * from './isa.ts';
 export { decodeValue, encodeValue, formatValue, formatTime } from './values.ts';
+export { formatTemporal, parseTemporal, parseDurationNs, TEMPORAL_PREFIXES, type TemporalType } from './literals.ts';
 export type { PlcValue } from './values.ts';
 export { DeviceClient, DeviceError } from './device.ts';
 export type { DeviceInfo, DeviceState, LogEntry } from './device.ts';

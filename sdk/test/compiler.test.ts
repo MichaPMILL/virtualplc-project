@@ -106,3 +106,32 @@ test('warns when there is no Main OB', () => {
   assert.equal(r.ok, true);
   assert.match(r.diagnostics[0].message, /No cyclic organization block/);
 });
+
+test('date and time types are type-safe (explicit conversions)', async () => {
+  const { compileSource } = await import('../src/index.ts');
+  const err = (body: string, decl = '') => {
+    const r = compileSource(`VAR_GLOBAL d : Date; t : TOD; n : DInt; l : LDT; c : Char; stamp : DT; ${decl} END_VAR ORGANIZATION_BLOCK "Main" BEGIN ${body} END_ORGANIZATION_BLOCK`);
+    return r.ok ? '' : r.diagnostics.map((x) => x.message).join('; ');
+  };
+  assert.match(err('d := n;'), /Cannot convert DInt to Date \(use DINT_TO_DATE\(\)\)/);
+  assert.match(err('n := d;'), /Cannot convert Date to DInt/);
+  assert.match(err('n := d + 1;'), /Operator \+ cannot be applied to Date/);
+  assert.match(err('t := t * 2;'), /Operator \* cannot be applied/);
+  assert.match(err('stamp := stamp + T#1S;'), /Operator \+ cannot be applied/);
+  assert.match(err("c := 'ab';"), /not a single character/);
+  assert.match(err('l := T#1S;'), /Cannot use a Time value as LDT|Cannot convert/);
+  assert.equal(err('d := DINT_TO_DATE(n); n := DATE_TO_DINT(d); t := t + T#1H; l := l + LT#1S; c := \'x\';'), '');
+  assert.match(compileSource('VAR_GLOBAL d : Date := D#2023-02-30; END_VAR').diagnostics[0]?.message ?? '', /Invalid D# literal/);
+});
+
+test('monitoring formats dates, times and characters like the PLC literals', async () => {
+  const { formatValue, parseTemporal } = await import('../src/index.ts');
+  const f = (kind: string, v: number | bigint, size = 8) => formatValue({ name: 'x', type: '', kind: kind as never, area: 'M', offset: 0, size }, v);
+  assert.equal(f('date', Number(parseTemporal('DATE', '2024-02-29'))), 'D#2024-02-29');
+  assert.equal(f('tod', Number(parseTemporal('TOD', '23:59:59.5'))), 'TOD#23:59:59.500');
+  assert.equal(f('ltime', parseTemporal('LTIME', '1d2h3m4s5ms6us7ns')!), 'LT#1D_2H_3M_4S_5MS_6US_7NS');
+  assert.equal(f('ldt', parseTemporal('LDT', '2024-01-15-08:00:00.5')!), 'LDT#2024-01-15-08:00:00.500000000');
+  assert.equal(f('dt', parseTemporal('DT', '2024-01-15-08:00:00.5')!), 'DT#2024-01-15-08:00:00.500');
+  assert.equal(f('char', 65, 1), "'A'");
+  assert.equal(f('char', 10, 1), 'CHAR#10');
+});

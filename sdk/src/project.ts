@@ -3,6 +3,8 @@ import type { Diagnostic } from './diagnostics.ts';
 import { compile, type CompileResult } from './compiler.ts';
 import type { IoModuleConfig, ServicesConfig } from './image.ts';
 import { parse, parseAddress } from './parser.ts';
+import { TYPE_DISPLAY, type Elementary } from './types.ts';
+import { formatTemporal, type TemporalType } from './literals.ts';
 import type { TypeRef, Expr } from './ast.ts';
 
 export const PROJECT_FORMAT = 'virtualplc-project';
@@ -431,9 +433,8 @@ function typeText(t: TypeRef): string {
   if (t.name === 'STRUCT') return 'Struct';
   if (t.name === 'ARRAY') return `Array[${t.low}..${t.high}] of ${typeText(t.element!)}`;
   if (t.name === 'STRING') return t.length && t.length !== 32 ? `String[${t.length}]` : 'String';
-  return /^[A-Z_]+$/.test(t.name) && ['BOOL', 'BYTE', 'WORD', 'DWORD', 'SINT', 'USINT', 'INT', 'UINT', 'DINT', 'UDINT', 'LINT', 'REAL', 'LREAL', 'TIME'].includes(t.name)
-    ? t.name[0] + t.name.slice(1).toLowerCase()
-    : /^[A-Za-z_]\w*$/.test(t.name) && ['TON', 'TOF', 'TP', 'CTU', 'CTD', 'CTUD', 'R_TRIG', 'F_TRIG'].includes(t.name.toUpperCase()) ? t.name.toUpperCase() : `"${t.name}"`;
+  if (t.name in TYPE_DISPLAY) return TYPE_DISPLAY[t.name as Elementary];
+  return /^[A-Za-z_]\w*$/.test(t.name) && ['TON', 'TOF', 'TP', 'CTU', 'CTD', 'CTUD', 'R_TRIG', 'F_TRIG'].includes(t.name.toUpperCase()) ? t.name.toUpperCase() : t.name.toUpperCase() === 'DTL' ? 'DTL' : `"${t.name}"`;
 }
 
 function exprText(e: Expr | null): string | undefined {
@@ -444,6 +445,9 @@ function exprText(e: Expr | null): string | undefined {
     case 'bool': return e.value ? 'TRUE' : 'FALSE';
     case 'string': return `'${e.value.replace(/\$/g, '$$').replace(/'/g, "$'")}'`;
     case 'time': return `T#${e.value}MS`;
+    case 'typed':
+      if (e.type === 'CHAR' || e.type === 'WCHAR') return `${e.type}#${e.value}`;
+      return formatTemporal(e.type as TemporalType, e.value);
     case 'var': return e.scope === 'global' ? `"${e.name}"` : e.name;
     case 'unary': return `${e.op === 'NOT' ? 'NOT ' : '-'}${exprText(e.operand)}`;
     default: return undefined;

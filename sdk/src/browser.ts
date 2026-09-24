@@ -11,6 +11,7 @@ export { parse, parseAddress, formatAddress } from './parser.ts';
 export { findSymbol } from './symbols.ts';
 export type { SymbolNode } from './symbols.ts';
 export { decodeValue, encodeValue, formatValue, formatTime } from './values.ts';
+export { formatTemporal, parseTemporal, parseDurationNs, TEMPORAL_PREFIXES, type TemporalType } from './literals.ts';
 export type { PlcValue } from './values.ts';
 export type { Diagnostic } from './diagnostics.ts';
 export type { DbEntry, HmiSymbol, IoLinkPort, IoModuleConfig, ServicesConfig } from './image.ts';

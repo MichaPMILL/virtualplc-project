@@ -1,8 +1,8 @@
 import { LIBRARY_BLOCKS, VmType } from './isa.ts';
 
 export type Elementary =
-  | 'BOOL' | 'BYTE' | 'WORD' | 'DWORD' | 'SINT' | 'USINT' | 'INT' | 'UINT' | 'DINT' | 'UDINT' | 'LINT'
-  | 'REAL' | 'LREAL' | 'TIME';
+  | 'BOOL' | 'BYTE' | 'WORD' | 'DWORD' | 'LWORD' | 'SINT' | 'USINT' | 'INT' | 'UINT' | 'DINT' | 'UDINT' | 'LINT' | 'ULINT'
+  | 'REAL' | 'LREAL' | 'TIME' | 'LTIME' | 'DATE' | 'TOD' | 'LTOD' | 'DT' | 'LDT' | 'CHAR' | 'WCHAR';
 
 export type DataType =
   | { k: 'elem'; name: Elementary }
@@ -50,6 +50,17 @@ export const ELEMENTARY: Record<Elementary, ElementaryInfo> = {
   DINT: { size: 4, vm: VmType.I32, cls: 'int', signed: true },
   TIME: { size: 4, vm: VmType.I32, cls: 'int', signed: true },
   LINT: { size: 8, vm: VmType.I64, cls: 'int', signed: true },
+  ULINT: { size: 8, vm: VmType.U64, cls: 'int', signed: false },
+  LWORD: { size: 8, vm: VmType.U64, cls: 'int', signed: false },
+  // Durations and dates (integers with their own typing rules)
+  LTIME: { size: 8, vm: VmType.I64, cls: 'int', signed: true },       // ns
+  DATE: { size: 2, vm: VmType.U16, cls: 'int', signed: false },       // days since 1990-01-01
+  TOD: { size: 4, vm: VmType.U32, cls: 'int', signed: false },        // ms since midnight
+  LTOD: { size: 8, vm: VmType.U64, cls: 'int', signed: false },       // ns since midnight
+  DT: { size: 8, vm: VmType.U64, cls: 'int', signed: false },         // BCD year..ms, weekday
+  LDT: { size: 8, vm: VmType.I64, cls: 'int', signed: true },         // ns since 1970-01-01
+  CHAR: { size: 1, vm: VmType.U8, cls: 'int', signed: false },
+  WCHAR: { size: 2, vm: VmType.U16, cls: 'int', signed: false },
   REAL: { size: 4, vm: VmType.F32, cls: 'float', signed: true },
   LREAL: { size: 8, vm: VmType.F64, cls: 'float', signed: true },
 };
@@ -64,6 +75,10 @@ export const isFloat = (t: DataType) => t.k === 'anyreal' || (t.k === 'elem' && 
 export const isNumeric = (t: DataType) => isInt(t) || isFloat(t);
 export const isString = (t: DataType) => t.k === 'string';
 export const isTime = (t: DataType) => t.k === 'elem' && t.name === 'TIME';
+/** Date, time-of-day, duration and character types: integers that do not mix with plain numbers. */
+export const SPECIAL_INTS = new Set<Elementary>(['TIME', 'LTIME', 'DATE', 'TOD', 'LTOD', 'DT', 'LDT', 'CHAR', 'WCHAR']);
+export const isSpecialInt = (t: DataType) => t.k === 'elem' && SPECIAL_INTS.has(t.name);
+export const isChar = (t: DataType) => t.k === 'elem' && (t.name === 'CHAR' || t.name === 'WCHAR');
 
 export function vmTypeOf(t: DataType): number {
   if (t.k === 'elem') return ELEMENTARY[t.name].vm;
@@ -72,10 +87,17 @@ export function vmTypeOf(t: DataType): number {
   return VmType.PTR;
 }
 
+/** Names as engineers read them (TIA casing). */
+export const TYPE_DISPLAY: Record<Elementary, string> = {
+  BOOL: 'Bool', BYTE: 'Byte', WORD: 'Word', DWORD: 'DWord', LWORD: 'LWord', SINT: 'SInt', USINT: 'USInt', INT: 'Int', UINT: 'UInt',
+  DINT: 'DInt', UDINT: 'UDInt', LINT: 'LInt', ULINT: 'ULInt', REAL: 'Real', LREAL: 'LReal', TIME: 'Time', LTIME: 'LTime', DATE: 'Date',
+  TOD: 'Time_Of_Day', LTOD: 'LTime_Of_Day', DT: 'Date_And_Time', LDT: 'LDT', CHAR: 'Char', WCHAR: 'WChar',
+};
+
 export function typeName(t: DataType): string {
   switch (t.k) {
     case 'elem':
-      return t.name[0] + t.name.slice(1).toLowerCase();
+      return TYPE_DISPLAY[t.name];
     case 'string':
       return `String[${t.length}]`;
     case 'array':
@@ -119,6 +141,17 @@ export function sameType(a: DataType, b: DataType): boolean {
 /** Common type of two numeric operands (implicit widening). */
 export function unifyNumeric(a: DataType, b: DataType): DataType | null {
   if (!isNumeric(a) || !isNumeric(b)) return null;
+  // Durations, dates and characters: only with the same type (or an integer constant)
+  if (isSpecialInt(a) || isSpecialInt(b)) {
+    if (a.k === 'anyint') return b;
+    if (b.k === 'anyint') return a;
+    if (sameType(a, b)) return a;
+    // a duration with a plain integer (e.g. T#1s * 2)
+    const duration = (t: DataType) => t.k === 'elem' && (t.name === 'TIME' || t.name === 'LTIME');
+    if (duration(a) && isInt(b) && !isSpecialInt(b)) return a;
+    if (duration(b) && isInt(a) && !isSpecialInt(a)) return b;
+    return null;
+  }
   if (isFloat(a) || isFloat(b)) {
     const is = (t: DataType, n: string) => t.k === 'elem' && t.name === n;
     if (is(a, 'LREAL') || is(b, 'LREAL')) return T.LREAL;
@@ -128,7 +161,6 @@ export function unifyNumeric(a: DataType, b: DataType): DataType | null {
   if (a.k === 'anyint' && b.k === 'anyint') return T.DINT;
   if (a.k === 'anyint') return b;
   if (b.k === 'anyint') return a;
-  if (isTime(a) || isTime(b)) return T.TIME;
   const sa = ELEMENTARY[(a as { name: Elementary }).name].size;
   const sb = ELEMENTARY[(b as { name: Elementary }).name].size;
   if (sa !== sb) return sa > sb ? a : b;

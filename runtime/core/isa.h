@@ -28,9 +28,10 @@ enum class VmType : uint8_t {
     T_F32 = 8,
     T_F64 = 9,
     T_PTR = 10,
+    T_U64 = 11,
 };
 
-constexpr uint8_t VM_TYPE_SIZE[] = {1, 1, 1, 2, 2, 4, 4, 8, 4, 8, 8};
+constexpr uint8_t VM_TYPE_SIZE[] = {1, 1, 1, 2, 2, 4, 4, 8, 4, 8, 8, 8};
 
 enum class Op : uint8_t {
     OP_NOP = 0,
@@ -140,6 +141,12 @@ enum class StdFn : uint8_t {
     S_SASSIGN = 15,
     S_NORM_X = 16,
     S_SCALE_X = 17,
+    S_C2S = 18,
+    S_S2C = 19,
+    S_DT2LDT = 20,
+    S_LDT2DT = 21,
+    S_DTL2LDT = 22,
+    S_LDT2DTL = 23,
 };
 
 enum class SysFn : uint8_t {
@@ -147,6 +154,7 @@ enum class SysFn : uint8_t {
     SYS_WAIT = 1,
     SYS_MILLIS = 2,
     SYS_DEVICE_OK = 3,
+    SYS_CLOCK = 4,
 };
 
 enum class Trap : uint8_t {

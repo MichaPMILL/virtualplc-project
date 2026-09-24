@@ -29,18 +29,24 @@ namespace {
 
 class SimPlatform : public Platform {
 public:
-    uint32_t clock = 0;
+    uint32_t clockMs = 0;
+    // Date and time (ns since 1970): VPLC_SIM_CLOCK_NS, else the real clock, advanced with the virtual time
+    int64_t dateBase = 0;
     std::vector<uint8_t> stored;
     std::vector<uint8_t> outputs;
 
     const char* deviceType() override { return "simulator"; }
-    uint32_t millis() override { return clock; }
+    uint32_t millis() override { return clockMs; }
+    bool clock(bool, int64_t& ns) override {
+        ns = dateBase + int64_t(clockMs) * 1000000LL;
+        return true;
+    }
     uint32_t watchdogMillis() override {
         timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
         return uint32_t(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
     }
-    uint32_t micros() override { return clock * 1000; }
+    uint32_t micros() override { return clockMs * 1000; }
     void log(const char* message) override { fprintf(stderr, "[plc] %s\n", message); }
     bool moduleOk(uint16_t) override { return true; }
     bool storeProgram(const uint8_t* image, size_t length) override {
@@ -97,6 +103,13 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);
     Cpu cpu(platform, programBuffer, sizeof programBuffer, arena, sizeof arena);
     cpu.setWatchdog(argc > 1 ? uint32_t(atoi(argv[1])) : 0);  // virtual clock: no watchdog by default
+    if (const char* base = getenv("VPLC_SIM_CLOCK_NS")) {
+        platform.dateBase = strtoll(base, nullptr, 10);
+    } else {
+        timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        platform.dateBase = int64_t(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+    }
 
     char line[1 << 16];
     while (fgets(line, sizeof line, stdin)) {
@@ -138,7 +151,7 @@ int main(int argc, char** argv) {
             int count = n > 1 ? atoi(argv2[1]) : 1;
             uint32_t dt = n > 2 ? uint32_t(atoi(argv2[2])) : cpu.program().cycleMs;
             for (int k = 0; k < count; k++) {
-                platform.clock += dt;
+                platform.clockMs += dt;
                 cpu.loop();
             }
             printf("OK\n");

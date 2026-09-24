@@ -1,7 +1,7 @@
 // Studio backend: compilation, device sessions. Runs in the Electron main process
 // (or in the development web server). The renderer talks to it through `StudioApi`.
 import {
-  compileDevice, DeviceClient, findSymbol, formatValue, loadProject, parseAddress,
+  compileDevice, DeviceClient, findSymbol, formatTemporal, formatValue, loadProject, parseAddress, parseTemporal, TEMPORAL_PREFIXES,
   type DeviceInfo, type DeviceState, type LogEntry, type Project, type ProjectDiagnostic, type SymbolNode, type PlcValue,
 } from '../../../sdk/src/index.ts';
 
@@ -173,6 +173,24 @@ export function parseValue(symbol: SymbolNode, text: string): PlcValue {
     throw new Error(`'${text}' is not a Bool value (TRUE / FALSE)`);
   }
   if (symbol.kind === 'string') return t.replace(/^'(.*)'$/, '$1');
+  // dates, times of day, LTIME: typed literal (D#2024-01-15, TOD#12:00:00, LT#5S...) or raw number
+  const temporal = { ltime: 'LTIME', date: 'DATE', tod: 'TOD', ltod: 'LTOD', dt: 'DT', ldt: 'LDT' } as const;
+  const tt = symbol.kind ? temporal[symbol.kind as keyof typeof temporal] : undefined;
+  if (tt) {
+    if (/^-?\d+$/.test(t)) return BigInt(t);
+    const m = /^([A-Za-z_]+)#(.+)$/.exec(t);
+    const type = m ? TEMPORAL_PREFIXES[m[1].toUpperCase()] : undefined;
+    const v = type === tt ? parseTemporal(tt, m![2]) : null;
+    if (v === null) throw new Error(`'${text}' is not a valid value (e.g. ${formatTemporal(tt, 0n)})`);
+    return v;
+  }
+  if (symbol.kind === 'char') {
+    const m = /^(?:W?CHAR#)?'(.)'$/iu.exec(t);
+    if (m) return m[1].codePointAt(0)!;
+    const n = /^(?:W?CHAR#)?(\d+)$/i.exec(t);
+    if (n) return Number(n[1]);
+    throw new Error(`'${text}' is not a character (e.g. 'A')`);
+  }
   if (symbol.kind === 'time') {
     const m = /^(?:t|time)#(-)?(.+)$/i.exec(t);
     if (!m) {

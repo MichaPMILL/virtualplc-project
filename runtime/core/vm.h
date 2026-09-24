@@ -23,6 +23,8 @@ public:
     virtual uint32_t watchdogMillis() { return millis(); }
     virtual void log(const char* message) = 0;
     virtual bool moduleOk(uint16_t index) = 0;
+    // Date and time in ns since 1970-01-01 (UTC, or local time); false if the device has no clock.
+    virtual bool clock(bool local, int64_t& ns) { (void)local; ns = 0; return false; }
 };
 
 struct Fault {
