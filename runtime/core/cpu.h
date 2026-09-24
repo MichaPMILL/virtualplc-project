@@ -11,9 +11,19 @@
 
 namespace vplc {
 
+// Roles of the users of the CPU, as the protection levels of the usual engineering tools:
+// VIEWER = read access (state, values, logs), OPERATOR = HMI access (+ modify values,
+// RUN / STOP), ENGINEER = full access (+ download, force, credentials), ADMIN = + users.
+enum class Role : uint8_t { NONE = 0, VIEWER = 1, OPERATOR = 2, ENGINEER = 3, ADMIN = 4 };
+const char* roleName(uint8_t role);
+
 // Per-connection protocol state.
 struct Session {
     bool authenticated = false;
+    uint8_t role = 0;
+    char user[33] = {0};
+    // Remote address (set by the platform: "192.168.0.20", "serial"...), for the audit trail
+    char peer[48] = {0};
 };
 
 class Cpu {
@@ -91,6 +101,13 @@ private:
     uint8_t state_;
     char name_[32] = "PLC_1";
     char password_[33] = {0};
+    // Authentication: required role of a command, lockout after repeated failures
+    bool authRequired();
+    static uint8_t requiredRole(uint8_t command);
+    void auditEvent(const Session& s, const char* action, const char* detail);
+    uint8_t authFailures_ = 0;
+    uint32_t authBlockedUntil_ = 0;
+    bool authBlocked_ = false;
     uint32_t watchdogMs_ = 1000;
     uint16_t modules_ = 0;
 

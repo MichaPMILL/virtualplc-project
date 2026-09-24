@@ -372,6 +372,8 @@ export const Command = {
   DATALOG_READ: 15,
   SET_SECRET: 16,
   DATALOG_TEST: 17,
+  AUDIT_READ: 18,
+  USERS: 19,
 } as const;
 
 export const Status = {

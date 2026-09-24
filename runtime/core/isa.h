@@ -219,6 +219,8 @@ enum class Command : uint8_t {
     CMD_DATALOG_READ = 15,
     CMD_SET_SECRET = 16,
     CMD_DATALOG_TEST = 17,
+    CMD_AUDIT_READ = 18,
+    CMD_USERS = 19,
 };
 
 enum class Status : uint8_t {

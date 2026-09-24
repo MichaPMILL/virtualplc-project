@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -48,6 +49,25 @@ volatile sig_atomic_t stopRequested = 0;
 
 void onSignal(int) { stopRequested = 1; }
 
+// "address:port" of a client, for the audit trail
+void peerName(const sockaddr_storage& a, char* out, size_t cap) {
+    char ip[INET6_ADDRSTRLEN] = "?";
+    int port = 0;
+    if (a.ss_family == AF_INET) {
+        auto* v4 = reinterpret_cast<const sockaddr_in*>(&a);
+        inet_ntop(AF_INET, &v4->sin_addr, ip, sizeof ip);
+        port = ntohs(v4->sin_port);
+        snprintf(out, cap, "%s:%d", ip, port);
+    } else if (a.ss_family == AF_INET6) {
+        auto* v6 = reinterpret_cast<const sockaddr_in6*>(&a);
+        inet_ntop(AF_INET6, &v6->sin6_addr, ip, sizeof ip);
+        port = ntohs(v6->sin6_port);
+        snprintf(out, cap, "[%s]:%d", ip, port);
+    } else {
+        snprintf(out, cap, "?");
+    }
+}
+
 struct Options {
     std::string dataDir = "/var/lib/virtualplc";
     std::string listen = "0.0.0.0";
@@ -65,6 +85,8 @@ struct Options {
     std::string hmiUser, hmiPassword;
     std::string serial;  // serial device for the device protocol (e.g. /dev/ttyGS0), with speed
     int serialBaud = 115200;
+    std::string addUser;  // --add-user NAME: create or replace a user (password on stdin), then exit
+    int addRole = 4;
 };
 
 void usage() {
@@ -85,7 +107,9 @@ void usage() {
         "  --opcua-port N        OPC UA server port, 0 = disabled (default: project, 4840)\n"
         "  --hmi-user NAME       OPC UA user name (with --hmi-password-file)\n"
         "  --hmi-password-file F OPC UA password (first line of F)\n"
-        "  --serial DEV[:BAUD]   also serve the Studio on a serial link (e.g. /dev/ttyGS0:115200)\n",
+        "  --serial DEV[:BAUD]   also serve the Studio on a serial link (e.g. /dev/ttyGS0:115200)\n"
+        "  --add-user NAME       create or replace a user (password read on stdin) and exit\n"
+        "  --role ROLE           role of --add-user: viewer, operator, engineer, admin (default)\n",
         VPLC_FIRMWARE_VERSION, unsigned(PROTOCOL_PORT));
 }
 
@@ -109,6 +133,12 @@ bool parse(int argc, char** argv, Options& o) {
         else if (a == "--s7-port") o.s7Port = atoi(v);
         else if (a == "--opcua-port") o.opcuaPort = atoi(v);
         else if (a == "--hmi-user") o.hmiUser = v;
+        else if (a == "--add-user") o.addUser = v;
+        else if (a == "--role") {
+            std::string r = v;
+            o.addRole = r == "viewer" ? 1 : r == "operator" ? 2 : r == "engineer" ? 3 : r == "admin" ? 4 : 0;
+            if (!o.addRole) { fprintf(stderr, "Unknown role %s\n", v); return false; }
+        }
         else if (a == "--serial") {
             std::string d = v;
             size_t colon = d.rfind(':');
@@ -244,6 +274,36 @@ int main(int argc, char** argv) {
     Options opt;
     if (!parse(argc, argv, opt)) return 2;
 
+    if (!opt.addUser.empty()) {
+        // Password from stdin (no echo on a terminal): never on the command line
+        bool tty = isatty(0);
+        termios saved{};
+        if (tty) {
+            fprintf(stderr, "Password of %s: ", opt.addUser.c_str());
+            tcgetattr(0, &saved);
+            termios quiet = saved;
+            quiet.c_lflag &= ~tcflag_t(ECHO);
+            tcsetattr(0, TCSANOW, &quiet);
+        }
+        char line[160] = {0};
+        bool got = fgets(line, sizeof line, stdin) != nullptr;
+        if (tty) {
+            tcsetattr(0, TCSANOW, &saved);
+            fprintf(stderr, "\n");
+        }
+        line[strcspn(line, "\r\n")] = 0;
+        if (!got || !line[0]) { fprintf(stderr, "No password given\n"); return 2; }
+        mkdir(opt.dataDir.c_str(), 0755);
+        sec::Security security(opt.dataDir);
+        security.setPlcName(opt.name);
+        const char* err = security.setUser(opt.addUser, line, uint8_t(opt.addRole));
+        memset(line, 0, sizeof line);
+        if (err) { fprintf(stderr, "%s\n", err); return 1; }
+        security.audit("root", "console", "user set", opt.addUser);
+        fprintf(stderr, "User %s saved in %s/users\n", opt.addUser.c_str(), opt.dataDir.c_str());
+        return 0;
+    }
+
     signal(SIGTERM, onSignal);
     signal(SIGINT, onSignal);
     signal(SIGPIPE, SIG_IGN);
@@ -276,7 +336,8 @@ int main(int argc, char** argv) {
              opt.listen.c_str(), opt.port, opt.modbusPort > 0 ? ", Modbus HMI server on port " : "",
              opt.modbusPort > 0 ? std::to_string(opt.modbusPort).c_str() : "");
     platform.log(msg);
-    if (opt.password.empty()) platform.log("Warning: no password set (use --password-file on untrusted networks)");
+    if (platform.hasUsers()) platform.log("User accounts enabled (role-based access control, audit trail)");
+    else if (opt.password.empty()) platform.log("Warning: no user and no password: anyone on the network can program this CPU (use --add-user)");
 
     cpu.begin(!opt.stopped);
 
@@ -335,6 +396,7 @@ int main(int argc, char** argv) {
     int serialFd = -1;
     FrameParser serialParser;
     Session serialSession;
+    snprintf(serialSession.peer, sizeof serialSession.peer, "serial");
     if (!opt.serial.empty()) {
         serialFd = openSerial(opt.serial, opt.serialBaud);
         char msg[160];
@@ -385,13 +447,16 @@ int main(int argc, char** argv) {
         std::vector<Client> accepted;
         for (size_t k = 0; k < base; k++) {
             if (!(fds[k].revents & POLLIN)) continue;
-            int fd = accept(fds[k].fd, nullptr, nullptr);
+            sockaddr_storage addr{};
+            socklen_t alen = sizeof addr;
+            int fd = accept(fds[k].fd, reinterpret_cast<sockaddr*>(&addr), &alen);
             if (fd < 0) continue;
             if (clients.size() + accepted.size() >= MAX_CLIENTS) { close(fd); continue; }
             int one = 1;
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
             fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
             Client c{fd, active[k].kind, Session(), nullptr, {}, nullptr};
+            peerName(addr, c.session.peer, sizeof c.session.peer);
             if (c.kind == Kind::DEVICE) c.parser = std::make_unique<FrameParser>();
             if (c.kind == Kind::S7) c.s7 = std::make_unique<S7Session>();
             accepted.push_back(std::move(c));

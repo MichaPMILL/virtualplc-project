@@ -13,6 +13,7 @@
 #include "profinet/pn_device.h"
 #include "profinet/pn_lldp.h"
 #include "profinet/pn_stack.h"
+#include "security/security.h"
 
 namespace vplc {
 
@@ -41,8 +42,17 @@ public:
     size_t dataLogRead(uint16_t log, uint16_t count, uint64_t before, bool full, char* out, size_t cap) override;
     size_t dataLogTest(uint16_t log, char* out, size_t cap) override;
     const char* setSecret(const char* key, const char* value) override;
+    bool hasUsers() override;
+    uint8_t authenticate(const char* user, const char* password) override;
+    const char* users(const uint8_t* request, uint32_t length, const char* user, uint8_t role, char* out, size_t cap, size_t& written) override;
+    void audit(const char* user, const char* peer, const char* action, const char* detail) override;
+    size_t auditRead(uint32_t from, uint16_t count, char* out, size_t cap) override;
+    sec::Security& security() { return security_; }
     /** Name of the CPU (recorded with the traceability records) */
-    void setPlcName(const std::string& name) { plcName_ = name; }
+    void setPlcName(const std::string& name) {
+        plcName_ = name;
+        security_.setPlcName(name);
+    }
 
 private:
     struct Module {
@@ -72,6 +82,8 @@ private:
     std::string dataDir_;
     std::string gpioChip_;
     std::string plcName_ = "PLC_1";
+    sec::Security security_{dataDir_};
+    std::string usersError_;
     std::unique_ptr<DataLogger> dataLogger_;
     std::vector<Module> modules_;
     // PROFINET: this CPU as IO-Device, and / or IO-Controller of remote devices

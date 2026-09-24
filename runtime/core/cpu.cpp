@@ -36,6 +36,39 @@ void Cpu::setName(const char* name) {
     snprintf(name_, sizeof name_, "%s", name ? name : "PLC_1");
 }
 
+const char* roleName(uint8_t role) {
+    switch (Role(role)) {
+        case Role::VIEWER: return "viewer";
+        case Role::OPERATOR: return "operator";
+        case Role::ENGINEER: return "engineer";
+        case Role::ADMIN: return "admin";
+        default: return "none";
+    }
+}
+
+bool Cpu::authRequired() { return password_[0] != 0 || platform_.hasUsers(); }
+
+uint8_t Cpu::requiredRole(uint8_t command) {
+    switch (Command(command)) {
+        case Command::CMD_INFO:
+        case Command::CMD_AUTH: return uint8_t(Role::NONE);
+        case Command::CMD_STATE:
+        case Command::CMD_READ:
+        case Command::CMD_LOGS:
+        case Command::CMD_DATALOG_READ:
+        case Command::CMD_AUDIT_READ:
+        case Command::CMD_USERS: return uint8_t(Role::VIEWER);  // (changes of other users: ADMIN, checked by the platform)
+        case Command::CMD_WRITE:
+        case Command::CMD_START:
+        case Command::CMD_STOP: return uint8_t(Role::OPERATOR);
+        default: return uint8_t(Role::ENGINEER);  // download, upload, force, credentials...
+    }
+}
+
+void Cpu::auditEvent(const Session& s, const char* action, const char* detail) {
+    platform_.audit(s.user[0] ? s.user : (authRequired() ? "-" : "anonymous"), s.peer[0] ? s.peer : "-", action, detail ? detail : "");
+}
+
 void Cpu::setPassword(const char* password) {
     snprintf(password_, sizeof password_, "%s", password ? password : "");
 }
@@ -103,6 +136,7 @@ const char* Cpu::start(bool cold) {
         state_ = FAULT;
         safeOutputs();
         log("FAULT in startup OB");
+        platform_.audit("cpu", "-", "fault", "startup OB");
         return "fault in startup OB";
     }
     lastScan_ = platform_.millis() - program_.cycleMs;
@@ -160,6 +194,7 @@ uint32_t Cpu::loop() {
         snprintf(msg, sizeof msg, "FAULT %s in function %u line %u (pc %lu)", trapName(f.code), unsigned(f.function),
                  unsigned(f.line), static_cast<unsigned long>(f.pc));
         log(msg);
+        platform_.audit("cpu", "-", "fault", msg + 6);
         return 20;
     }
     applyForces(uint8_t(Area::Q), q, qsize);
@@ -277,7 +312,8 @@ size_t Cpu::info(char* out, size_t cap) {
     j.key("maxPayload").num(VPLC_MAX_PAYLOAD);
     j.key("maxProgram").num(int64_t(imageCapacity_));
     j.key("maxData").num(int64_t(arenaCapacity_));
-    j.key("auth").raw(password_[0] ? "true" : "false");
+    j.key("auth").raw(authRequired() ? "true" : "false");
+    j.key("users").raw(platform_.hasUsers() ? "true" : "false");
     j.close('}');
     return j.length();
 }
@@ -361,8 +397,17 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
     };
 
     Command cmd = Command(command);
-    if (password_[0] && !session.authenticated && cmd != Command::CMD_INFO && cmd != Command::CMD_AUTH) {
+    if (!authRequired()) {
+        session.role = uint8_t(Role::ADMIN);  // open CPU (commissioning): everything is allowed
+    } else if (!session.authenticated && cmd != Command::CMD_INFO && cmd != Command::CMD_AUTH) {
         fail(Status::ST_UNAUTHORIZED, "authentication required");
+        return encodeResponse(out, command, seq, status, payload, n);
+    }
+    if (session.role < requiredRole(command)) {
+        char msg[160];
+        snprintf(msg, sizeof msg, "access denied: the role '%s' of '%s' does not allow this operation", roleName(session.role), session.user);
+        fail(Status::ST_UNAUTHORIZED, msg);
+        auditEvent(session, "denied", msg + 15);
         return encodeResponse(out, command, seq, status, payload, n);
     }
 
@@ -371,24 +416,84 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
             n = uint32_t(info(reinterpret_cast<char*>(payload), cap));
             break;
         case Command::CMD_AUTH: {
-            char given[33] = {0};
-            memcpy(given, p, len < 32 ? len : 32);
-            // Constant-time comparison
-            uint8_t diff = uint8_t(strlen(given) != strlen(password_));
-            for (size_t k = 0; k < sizeof password_; k++) diff |= uint8_t(given[k] ^ password_[k]);
-            if (password_[0] && diff) fail(Status::ST_UNAUTHORIZED, "wrong password");
-            else session.authenticated = true;
+            // "user\0password", or "password" alone (user admin)
+            char user[33] = {0};
+            char given[129] = {0};
+            const uint8_t* zero = static_cast<const uint8_t*>(memchr(p, 0, len));
+            if (zero) {
+                size_t un = size_t(zero - p);
+                memcpy(user, p, un < 32 ? un : 32);
+                size_t pn = len - un - 1;
+                memcpy(given, zero + 1, pn < 128 ? pn : 128);
+            } else {
+                snprintf(user, sizeof user, "admin");
+                memcpy(given, p, len < 128 ? len : 128);
+            }
+            uint32_t now = platform_.millis();
+            if (authBlocked_ && int32_t(now - authBlockedUntil_) < 0) {
+                memset(given, 0, sizeof given);
+                char msg[80];
+                snprintf(msg, sizeof msg, "too many failed attempts: retry in %lu s", static_cast<unsigned long>((authBlockedUntil_ - now) / 1000 + 1));
+                fail(Status::ST_UNAUTHORIZED, msg);
+                break;
+            }
+            authBlocked_ = false;
+            uint8_t role = 0;
+            if (platform_.hasUsers()) {
+                role = platform_.authenticate(user, given);
+            } else if (password_[0]) {
+                // Constant-time comparison
+                uint8_t diff = uint8_t(strlen(given) != strlen(password_));
+                for (size_t k = 0; k < sizeof password_; k++) diff |= uint8_t(given[k] ^ password_[k]);
+                role = diff ? 0 : uint8_t(Role::ADMIN);
+            } else {
+                role = uint8_t(Role::ADMIN);
+            }
+            memset(given, 0, sizeof given);
+            snprintf(session.user, sizeof session.user, "%s", user);
+            if (!role) {
+                session.authenticated = false;
+                session.role = 0;
+                fail(Status::ST_UNAUTHORIZED, "wrong user name or password");
+                auditEvent(session, "login failed", "");
+                if (++authFailures_ >= 5) {
+                    // lockout: 30 s after 5 failures in a row, then 30 s after each new failure
+                    authBlocked_ = true;
+                    authBlockedUntil_ = now + 30000;
+                    authFailures_ = 4;
+                    log("Authentication locked for 30 s after repeated failures");
+                    auditEvent(session, "lockout", "30 s");
+                }
+                break;
+            }
+            authFailures_ = 0;
+            session.authenticated = true;
+            session.role = role;
+            auditEvent(session, "login", roleName(role));
+            n = uint32_t(snprintf(reinterpret_cast<char*>(payload), cap, "{\"user\":\"%s\",\"role\":\"%s\"}", session.user, roleName(role)));
             break;
         }
+        case Command::CMD_USERS: {
+            size_t written = 0;
+            const char* err = platform_.users(p, len, session.user, session.role, reinterpret_cast<char*>(payload), cap, written);
+            if (err) fail(Status::ST_ERROR, err);
+            else n = uint32_t(written);
+            break;
+        }
+        case Command::CMD_AUDIT_READ:
+            n = uint32_t(platform_.auditRead(len >= 4 ? rd32le(p) : 0, len >= 6 ? rd16le(p + 4) : 50, reinterpret_cast<char*>(payload), cap));
+            break;
         case Command::CMD_STATE:
             n = uint32_t(stateJson(reinterpret_cast<char*>(payload), cap));
             break;
         case Command::CMD_STOP:
             stop();
+            auditEvent(session, "stop", "");
             break;
         case Command::CMD_START: {
             const char* err = start(len > 0 && p[0] == 1);
             if (err) fail(state_ == NO_PROGRAM ? Status::ST_BAD_STATE : Status::ST_ERROR, err);
+            auditEvent(session, len > 0 && p[0] == 1 ? "start (cold)" : "start", err);
             break;
         }
         case Command::CMD_DOWNLOAD_BEGIN: {
@@ -428,11 +533,15 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
                 char msg[96];
                 snprintf(msg, sizeof msg, "Download rejected: %s", err);
                 log(msg);
+                auditEvent(session, "download rejected", err);
                 // Restore the previous program
                 size_t old = platform_.loadProgram(image_, imageCapacity_);
                 if (old) loadImage(old);
             } else {
                 log("Program downloaded");
+                char detail[80];
+                snprintf(detail, sizeof detail, "%s (%08lx)", program_.name, static_cast<unsigned long>(program_.id));
+                auditEvent(session, "download", detail);
             }
             break;
         }
@@ -467,6 +576,9 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
                 if (bit == 0xFF) memcpy(area + offset, p + k, count);
                 else if (count >= 1 && p[k]) area[offset] |= uint8_t(1u << (bit & 7));
                 else area[offset] &= uint8_t(~(1u << (bit & 7)));
+                char detail[48];
+                snprintf(detail, sizeof detail, "area %u offset %lu%s%u", p[k - 8], static_cast<unsigned long>(offset), bit == 0xFF ? " bytes " : " bit ", bit == 0xFF ? count : bit);
+                auditEvent(session, "write", detail);
                 k += count;
             }
             break;
@@ -494,10 +606,16 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
                 }
                 forces_[found] = Force{area, uint16_t(byte), bit, uint8_t(value ? 1 : 0)};
             }
+            if (status == uint8_t(Status::ST_OK)) {
+                char detail[32];
+                snprintf(detail, sizeof detail, "%u force(s) active", forceCount_);
+                auditEvent(session, "force", detail);
+            }
             break;
         }
         case Command::CMD_UNFORCE_ALL:
             forceCount_ = 0;
+            auditEvent(session, "unforce all", "");
             break;
         case Command::CMD_DATALOG_READ: {
             // u16 log, u16 count, u64 before (optional), u8 flags (bit 0: full rows)
@@ -510,6 +628,7 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
         case Command::CMD_DATALOG_TEST:
             if (len < 2) { fail(Status::ST_BAD_REQUEST, "log expected"); break; }
             n = uint32_t(platform_.dataLogTest(rd16le(p), reinterpret_cast<char*>(payload), cap));
+            auditEvent(session, "datalog test", "");
             break;
         case Command::CMD_SET_SECRET: {
             // u8+key, u16+value (the value is never logged nor returned)
@@ -529,6 +648,7 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
                 snprintf(msg, sizeof msg, "Credentials of %s changed", key);
                 log(msg);
             }
+            auditEvent(session, "set secret", key);
             break;
         }
         case Command::CMD_LOGS:
@@ -547,6 +667,7 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
                 total = pos + 4;
             }
             if (offset > total) { fail(Status::ST_BAD_REQUEST, "offset out of range"); break; }
+            if (offset == 0) auditEvent(session, "upload", program_.name);
             uint32_t chunk = uint32_t(total - offset) < cap - 4 ? uint32_t(total - offset) : cap - 4;
             wr32le(payload, uint32_t(total));
             memcpy(payload + 4, image_ + offset, chunk);

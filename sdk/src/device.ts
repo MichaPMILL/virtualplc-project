@@ -21,6 +21,45 @@ export interface DeviceInfo {
   maxProgram: number;
   maxData: number;
   auth: boolean;
+  /** The CPU has user accounts (user name + password, roles) */
+  users?: boolean;
+  /** After connect(): logged-in user and role */
+  user?: string;
+  role?: Role;
+}
+
+/** Roles of the CPU users (least privilege, IEC 62443 SR 2.1) */
+export type Role = 'viewer' | 'operator' | 'engineer' | 'admin';
+export const ROLES: Role[] = ['viewer', 'operator', 'engineer', 'admin'];
+
+export interface UserAccount {
+  name: string;
+  role: Role;
+  /** Last password change (unix time, seconds) */
+  changed: number;
+}
+
+/** One record of the audit trail of the CPU (hash-chained, Ed25519-signed) */
+export interface AuditRecord {
+  seq: number;
+  /** Unix time in ms */
+  ts: number;
+  time: string;
+  user: string;
+  peer: string;
+  action: string;
+  detail: string;
+  chain: string;
+  sig: string;
+}
+
+export interface AuditLog {
+  plc?: string;
+  /** Ed25519 public key of the CPU (hex) */
+  key?: string;
+  first?: number;
+  last?: number;
+  records: AuditRecord[];
 }
 
 export interface DeviceState {
@@ -112,7 +151,11 @@ export class DeviceClient {
     this.port = port;
   }
 
-  async connect(password?: string): Promise<DeviceInfo> {
+  /**
+   * Opens the connection. CPUs with user accounts need `user` and `password`; CPUs with
+   * a single password accept the password alone (user "admin").
+   */
+  async connect(password?: string, user?: string): Promise<DeviceInfo> {
     let info: DeviceInfo;
     if (isSerialPort(this.host)) {
       info = await this.connectSerial();
@@ -126,8 +169,20 @@ export class DeviceClient {
     }
     this.maxPayload = Math.max(64, info.maxPayload);
     if (info.auth) {
-      if (!password) throw new DeviceError('The device requires a password', Status.UNAUTHORIZED);
-      await this.request(Command.AUTH, Buffer.from(password, 'utf8'));
+      if (!password) {
+        throw new DeviceError(info.users ? 'The device requires a user name and a password' : 'The device requires a password', Status.UNAUTHORIZED);
+      }
+      const payload = user
+        ? Buffer.concat([Buffer.from(user, 'utf8'), Buffer.from([0]), Buffer.from(password, 'utf8')])
+        : Buffer.from(password, 'utf8');
+      const r = (await this.request(Command.AUTH, payload)).toString('utf8');
+      try {
+        const who = JSON.parse(r) as { user?: string; role?: Role };
+        if (who.user) info.user = who.user;
+        if (who.role) info.role = who.role;
+      } catch {
+        // older CPUs answer nothing
+      }
     }
     return info;
   }
@@ -277,6 +332,65 @@ export class DeviceClient {
     const p = Buffer.alloc(2);
     p.writeUInt16LE(log, 0);
     return JSON.parse((await this.request(Command.DATALOG_TEST, p)).toString('utf8'));
+  }
+
+  private async usersRequest(op: number, ...fields: string[]): Promise<Record<string, unknown>> {
+    const parts: Buffer[] = [Buffer.from([op])];
+    fields.forEach((f, k) => {
+      if (k) parts.push(Buffer.from([0]));
+      parts.push(Buffer.from(f, 'utf8'));
+    });
+    const r = (await this.request(Command.USERS, Buffer.concat(parts))).toString('utf8');
+    return r ? JSON.parse(r) : {};
+  }
+
+  /** User accounts of the CPU (an administrator sees all, the others see themselves). */
+  async users(): Promise<{ users: UserAccount[]; self: string }> {
+    const r = await this.usersRequest(0);
+    return { users: (r.users as UserAccount[]) ?? [], self: String(r.self ?? '') };
+  }
+
+  /** Creates or replaces a user (administrator). */
+  async setUser(name: string, password: string, role: Role): Promise<void> {
+    await this.usersRequest(1, name, password, String(ROLES.indexOf(role) + 1));
+  }
+
+  /** Deletes a user (administrator; the last administrator cannot be deleted). */
+  async deleteUser(name: string): Promise<void> {
+    await this.usersRequest(2, name);
+  }
+
+  /** Sets a new password for a user (administrator). */
+  async resetPassword(name: string, password: string): Promise<void> {
+    await this.usersRequest(3, name, password);
+  }
+
+  /** Changes the password of the logged-in user. */
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    await this.usersRequest(4, oldPassword, newPassword);
+  }
+
+  /** Audit trail: the last `count` records, or the records from sequence number `from`. */
+  async auditRead(count = 50, from = 0): Promise<AuditLog> {
+    const p = Buffer.alloc(6);
+    p.writeUInt32LE(from, 0);
+    p.writeUInt16LE(count, 4);
+    const r = JSON.parse((await this.request(Command.AUDIT_READ, p)).toString('utf8')) as AuditLog;
+    r.records ??= [];
+    return r;
+  }
+
+  /** Whole audit trail kept by the CPU from sequence number `from` (several requests). */
+  async auditReadAll(from = 1, max = 100000): Promise<AuditLog> {
+    const all: AuditLog = { records: [] };
+    for (let next = from; all.records.length < max;) {
+      const page = await this.auditRead(500, next);
+      Object.assign(all, { plc: page.plc, key: page.key, first: page.first, last: page.last });
+      if (!page.records.length) break;
+      all.records.push(...page.records);
+      next = page.records[page.records.length - 1].seq + 1;
+    }
+    return all;
   }
 
   /** Stores credentials on the CPU (database password): they never leave the CPU again. */

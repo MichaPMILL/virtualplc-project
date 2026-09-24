@@ -17,7 +17,10 @@ export { formatTemporal, parseTemporal, parseDurationNs, TEMPORAL_PREFIXES, type
 export type { PlcValue } from './values.ts';
 export { DeviceClient, DeviceError, isSerialPort, isSimulatorHost } from './device.ts';
 export { setSimulatorWasm, SimulatedCpu, simulator } from './simulator.ts';
-export type { DataLogStatus, DeviceInfo, DeviceState, LogEntry } from './device.ts';
+export type { AuditLog, AuditRecord, DataLogStatus, DeviceInfo, DeviceState, LogEntry, Role, UserAccount } from './device.ts';
+export { ROLES } from './device.ts';
+export { auditCanonical, auditGenesis, verifyAudit } from './security.ts';
+export type { AuditVerification } from './security.ts';
 export * from './project.ts';
 export * from './projectFiles.ts';
 export { ioLinkTags, parseIodd, parseXml } from './iodd.ts';

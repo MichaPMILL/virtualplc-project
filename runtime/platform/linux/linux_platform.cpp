@@ -65,6 +65,31 @@ const char* LinuxPlatform::setSecret(const char* key, const char* value) {
     return dataLogger_->setSecret(key, value);
 }
 
+// ---------------------------------------------------------------------------
+// Users and audit trail (security/)
+// ---------------------------------------------------------------------------
+
+bool LinuxPlatform::hasUsers() { return security_.hasUsers(); }
+
+uint8_t LinuxPlatform::authenticate(const char* user, const char* password) { return security_.authenticate(user, password); }
+
+const char* LinuxPlatform::users(const uint8_t* request, uint32_t length, const char* user, uint8_t role, char* out, size_t cap, size_t& written) {
+    std::string json;
+    const char* err = security_.users(request, length, user, role, json);
+    written = 0;
+    if (err) return err;
+    if (json.size() >= cap) return "response too large";
+    memcpy(out, json.data(), json.size());
+    written = json.size();
+    return nullptr;
+}
+
+void LinuxPlatform::audit(const char* user, const char* peer, const char* action, const char* detail) {
+    security_.audit(user, peer, action, detail);
+}
+
+size_t LinuxPlatform::auditRead(uint32_t from, uint16_t count, char* out, size_t cap) { return security_.auditRead(from, count, out, cap); }
+
 const char* LinuxPlatform::deviceType() {
 #if defined(__aarch64__) || defined(__arm__)
     return "linux-arm";

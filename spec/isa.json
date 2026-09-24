@@ -829,7 +829,9 @@
       "AUTH": 14,
       "DATALOG_READ": 15,
       "SET_SECRET": 16,
-      "DATALOG_TEST": 17
+      "DATALOG_TEST": 17,
+      "AUDIT_READ": 18,
+      "USERS": 19
     },
     "status": {
       "OK": 0,

@@ -34,6 +34,23 @@ public:
     // Diagnostic text of a module for the Studio (active diagnoses, one per line); 0 = none
     virtual size_t moduleDiagnostics(uint16_t index, char* out, size_t cap) { (void)index; (void)out; (void)cap; return 0; }
 
+    // --- Users and audit trail. Without users, the CPU password (if any) gives the ADMIN role.
+    virtual bool hasUsers() { return false; }
+    // Role of the user (0 = refused). Must be fast (called by the CPU thread).
+    virtual uint8_t authenticate(const char* user, const char* password) { (void)user; (void)password; return 0; }
+    // USERS command: request in, JSON out; session user and role for the permissions. nullptr on success, else an error
+    virtual const char* users(const uint8_t* request, uint32_t length, const char* user, uint8_t role, char* out, size_t cap, size_t& written) {
+        (void)request; (void)length; (void)user; (void)role; (void)out; (void)cap;
+        written = 0;
+        return "user management is not supported by this CPU";
+    }
+    // Audit trail: who did what (append only)
+    virtual void audit(const char* user, const char* peer, const char* action, const char* detail) { (void)user; (void)peer; (void)action; (void)detail; }
+    virtual size_t auditRead(uint32_t from, uint16_t count, char* out, size_t cap) {
+        (void)from; (void)count;
+        return cap > 2 ? size_t(snprintf(out, cap, "[]")) : 0;
+    }
+
     // --- Traceability (data logs). Platforms without storage keep the defaults.
     // Data logs of a newly loaded program (DATALOGS section): false = not supported (reported)
     virtual bool configureDataLogs(const Program& program) { (void)program; return false; }
