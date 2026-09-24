@@ -41,17 +41,18 @@ final class ParserTest extends TestCase
 
         self::assertCount(1, $program->hardware ?? []);
         self::assertCount(3, $program->vars);
-        self::assertSame('INT', $program->vars[1]->type);
+        self::assertSame('INT', $program->vars[1]->type->name);
         self::assertNotNull($program->vars[1]->initial);
         self::assertEquals(new IoBinding('Io', IoBinding::OUTPUT, 3), $program->vars[2]->binding);
-        self::assertArrayHasKey('LOGIC', $program->blocks);
-        self::assertCount(1, $program->fc ?? []);
+        self::assertArrayHasKey('LOGIC', $program->pous);
+        self::assertArrayHasKey('MAIN', $program->pous);
+        self::assertCount(1, $program->mainOb()->body ?? []);
     }
 
     public function testOperatorPrecedence(): void
     {
         $program = Parser::parseSource('FC x := a OR b AND c = 1 + 2 * 3; END_FC');
-        $assign = ($program->fc ?? [])[0];
+        $assign = ($program->mainOb()?->body ?? [])[0];
         self::assertInstanceOf(AssignStmt::class, $assign);
 
         $or = $assign->value;
@@ -73,7 +74,7 @@ final class ParserTest extends TestCase
     public function testElseIfOnOneLineIsAnElsifAlias(): void
     {
         $program = Parser::parseSource("FC\nIF a THEN x := 1;\nELSE IF b THEN x := 2;\nELSIF c THEN x := 3;\nELSE x := 4;\nEND_IF;\nEND_FC");
-        $if = ($program->fc ?? [])[0];
+        $if = ($program->mainOb()?->body ?? [])[0];
         self::assertInstanceOf(IfStmt::class, $if);
         self::assertCount(3, $if->branches);
         self::assertNotNull($if->else);
@@ -82,7 +83,7 @@ final class ParserTest extends TestCase
     public function testIfOnTheLineAfterElseIsNested(): void
     {
         $program = Parser::parseSource("FC\nIF a THEN x := 1;\nELSE\n  IF b THEN x := 2; END_IF;\nEND_IF;\nEND_FC");
-        $if = ($program->fc ?? [])[0];
+        $if = ($program->mainOb()?->body ?? [])[0];
         self::assertInstanceOf(IfStmt::class, $if);
         self::assertCount(1, $if->branches);
         self::assertInstanceOf(IfStmt::class, ($if->else ?? [])[0]);
@@ -91,7 +92,7 @@ final class ParserTest extends TestCase
     public function testCaseStatement(): void
     {
         $program = Parser::parseSource("FC\nCASE n OF\n 1, 2: x := 1;\n 3..5: x := 2; y := 3;\n -1: x := 0;\nELSE x := 9;\nEND_CASE;\nEND_FC");
-        $case = ($program->fc ?? [])[0];
+        $case = ($program->mainOb()?->body ?? [])[0];
         self::assertInstanceOf(CaseStmt::class, $case);
         self::assertCount(3, $case->branches);
         self::assertSame([[1, 1], [2, 2]], $case->branches[0]->ranges);
@@ -104,7 +105,7 @@ final class ParserTest extends TestCase
     public function testSemicolonAfterEndKeywordsIsOptional(): void
     {
         $program = Parser::parseSource('FC WHILE a DO x := 1; END_WHILE FOR i := 1 TO 3 BY 1 DO x := i; END_FOR REPEAT x := 1; UNTIL a END_REPEAT END_FC');
-        self::assertCount(3, $program->fc ?? []);
+        self::assertCount(3, $program->mainOb()?->body ?? []);
     }
 
     #[DataProvider('syntaxErrors')]
@@ -129,6 +130,6 @@ final class ParserTest extends TestCase
         yield 'duplicate block' => ['BLOCK a END_BLOCK BLOCK A END_BLOCK', "Duplicate block 'A'"];
         yield 'duplicate section' => ['FC END_FC FC END_FC', 'Duplicate FC section'];
         yield 'bare identifier' => ['FC foo; END_FC', "Expected ':=' or '('"];
-        yield 'top-level garbage' => ['x := 1;', 'Expected a section'];
+        yield 'top-level garbage' => ['x := 1;', 'Expected a block'];
     }
 }

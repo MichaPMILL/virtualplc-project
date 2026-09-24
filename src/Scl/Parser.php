@@ -4,23 +4,31 @@ declare(strict_types=1);
 
 namespace VirtualPLC\Scl;
 
+use VirtualPLC\Scl\Ast\Address;
+use VirtualPLC\Scl\Ast\AddressRef;
 use VirtualPLC\Scl\Ast\AssignStmt;
 use VirtualPLC\Scl\Ast\BinaryOp;
-use VirtualPLC\Scl\Ast\BlockDecl;
+use VirtualPLC\Scl\Ast\CallArg;
 use VirtualPLC\Scl\Ast\CallExpr;
 use VirtualPLC\Scl\Ast\CallStmt;
 use VirtualPLC\Scl\Ast\CaseBranch;
 use VirtualPLC\Scl\Ast\CaseStmt;
+use VirtualPLC\Scl\Ast\ContinueStmt;
+use VirtualPLC\Scl\Ast\DataBlockDecl;
 use VirtualPLC\Scl\Ast\ExitStmt;
 use VirtualPLC\Scl\Ast\Expr;
 use VirtualPLC\Scl\Ast\ForStmt;
 use VirtualPLC\Scl\Ast\IfStmt;
+use VirtualPLC\Scl\Ast\IndexAccess;
 use VirtualPLC\Scl\Ast\IoBinding;
 use VirtualPLC\Scl\Ast\Literal;
+use VirtualPLC\Scl\Ast\MemberAccess;
+use VirtualPLC\Scl\Ast\Pou;
 use VirtualPLC\Scl\Ast\Program;
 use VirtualPLC\Scl\Ast\RepeatStmt;
 use VirtualPLC\Scl\Ast\ReturnStmt;
 use VirtualPLC\Scl\Ast\Stmt;
+use VirtualPLC\Scl\Ast\TypeRef;
 use VirtualPLC\Scl\Ast\UnaryOp;
 use VirtualPLC\Scl\Ast\VarDecl;
 use VirtualPLC\Scl\Ast\VariableRef;
@@ -29,11 +37,35 @@ use VirtualPLC\Scl\Ast\WhileStmt;
 /**
  * Recursive-descent parser producing a {@see Program} AST.
  *
+ * Accepts "external source" SCL (FUNCTION, FUNCTION_BLOCK,
+ * ORGANIZATION_BLOCK, DATA_BLOCK, VAR_GLOBAL) as well as the historical
+ * VirtualPLC sections (HARDWARE, VAR, DB, BLOCK, FC).
+ *
  * Operator precedence, lowest to highest:
- *   OR  <  XOR  <  AND  <  comparison (= <> < <= > >=)  <  + -  <  * / MOD  <  unary (NOT, -)
+ *   OR  <  XOR  <  AND/&  <  comparison  <  + -  <  * / MOD  <  **  <  unary (NOT, -)
  */
 final class Parser
 {
+    /** Header lines of blocks that carry no semantics here (skipped up to end of line). */
+    private const HEADER_ITEMS = ['VERSION', 'TITLE', 'AUTHOR', 'FAMILY', 'NAME', 'KNOW_HOW_PROTECT'];
+
+    private const PRECEDENCE = [
+        [TokenType::Or],
+        [TokenType::Xor],
+        [TokenType::And],
+        [TokenType::Eq, TokenType::Neq, TokenType::Lt, TokenType::Lte, TokenType::Gt, TokenType::Gte],
+        [TokenType::Plus, TokenType::Minus],
+        [TokenType::Star, TokenType::Slash, TokenType::Mod],
+        [TokenType::Power],
+    ];
+
+    private const COMPOUND_ASSIGN = [
+        'PlusAssign' => TokenType::Plus,
+        'MinusAssign' => TokenType::Minus,
+        'StarAssign' => TokenType::Star,
+        'SlashAssign' => TokenType::Slash,
+    ];
+
     /** @var list<Token> */
     private array $tokens;
     private int $index = 0;
@@ -53,15 +85,23 @@ final class Parser
         $hardware = null;
         $vars = [];
         $db = null;
-        $fc = null;
-        $blocks = [];
+        $pous = [];
+        $dataBlocks = [];
         $seen = [];
+
+        $addPou = static function (Pou $pou) use (&$pous, &$dataBlocks): void {
+            $key = strtoupper($pou->name);
+            if (isset($pous[$key]) || isset($dataBlocks[$key])) {
+                throw new SyntaxError("Duplicate block '{$pou->name}'", $pou->line);
+            }
+            $pous[$key] = $pou;
+        };
 
         while (!$this->check(TokenType::Eof)) {
             $token = $this->current();
             $section = $token->type;
 
-            if (in_array($section, [TokenType::Hardware, TokenType::Var, TokenType::Db, TokenType::Fc], true)) {
+            if (in_array($section, [TokenType::Hardware, TokenType::Db, TokenType::Fc], true)) {
                 if (isset($seen[$section->value])) {
                     throw new SyntaxError("Duplicate {$section->value} section", $token->line, $token->column);
                 }
@@ -73,32 +113,52 @@ final class Parser
                     $hardware = $this->section(TokenType::Hardware, TokenType::EndHardware);
                     break;
                 case TokenType::Var:
-                    $vars = $this->varSection();
+                case TokenType::VarGlobal:
+                    $vars = [...$vars, ...$this->varSection(VarDecl::GLOBAL, allowBindings: true)];
                     break;
                 case TokenType::Db:
                     $db = $this->section(TokenType::Db, TokenType::EndDb);
                     break;
                 case TokenType::Fc:
-                    $fc = $this->section(TokenType::Fc, TokenType::EndFc);
+                    // Historical main program -> cyclic OB "Main"
+                    $body = $this->section(TokenType::Fc, TokenType::EndFc);
+                    $addPou(new Pou(Pou::ORGANIZATION_BLOCK, 'Main', null, [], $body, $token->line));
                     break;
                 case TokenType::Block:
-                    $block = $this->blockDecl();
+                    // Historical parameterless block -> FUNCTION without interface
+                    $this->advance();
+                    $name = $this->blockName();
+                    $body = $this->statements([TokenType::EndBlock]);
+                    $this->closeWith(TokenType::EndBlock);
+                    $addPou(new Pou(Pou::FUNCTION, $name, null, [], $body, $token->line));
+                    break;
+                case TokenType::Function:
+                    $addPou($this->pou(Pou::FUNCTION, TokenType::EndFunction));
+                    break;
+                case TokenType::FunctionBlock:
+                    $addPou($this->pou(Pou::FUNCTION_BLOCK, TokenType::EndFunctionBlock));
+                    break;
+                case TokenType::OrganizationBlock:
+                    $addPou($this->pou(Pou::ORGANIZATION_BLOCK, TokenType::EndOrganizationBlock));
+                    break;
+                case TokenType::DataBlock:
+                    $block = $this->dataBlock();
                     $key = strtoupper($block->name);
-                    if (isset($blocks[$key])) {
+                    if (isset($pous[$key]) || isset($dataBlocks[$key])) {
                         throw new SyntaxError("Duplicate block '{$block->name}'", $block->line);
                     }
-                    $blocks[$key] = $block;
+                    $dataBlocks[$key] = $block;
                     break;
                 default:
-                    throw $this->unexpected('a section (HARDWARE, VAR, DB, BLOCK or FC)');
+                    throw $this->unexpected('a block (ORGANIZATION_BLOCK, FUNCTION_BLOCK, FUNCTION, DATA_BLOCK) or a section (HARDWARE, VAR, DB, BLOCK, FC)');
             }
         }
 
-        return new Program($hardware, $vars, $db, $fc, $blocks);
+        return new Program($hardware, $vars, $db, $pous, $dataBlocks);
     }
 
     // ------------------------------------------------------------------
-    // Sections
+    // Blocks and sections
     // ------------------------------------------------------------------
 
     /** @return list<Stmt> */
@@ -106,59 +166,208 @@ final class Parser
     {
         $this->expect($open);
         $body = $this->statements([$close]);
-        $this->expect($close);
-        $this->optional(TokenType::Semicolon);
+        $this->closeWith($close);
 
         return $body;
     }
 
-    private function blockDecl(): BlockDecl
+    private function blockName(): string
     {
-        $start = $this->expect(TokenType::Block);
-        $name = (string) $this->expect(TokenType::Identifier)->value;
-        $body = $this->statements([TokenType::EndBlock]);
-        $this->expect(TokenType::EndBlock);
-        $this->optional(TokenType::Semicolon);
+        return (string) $this->expect(TokenType::Identifier)->value;
+    }
 
-        return new BlockDecl($name, $body, $start->line);
+    private function pou(string $kind, TokenType $end): Pou
+    {
+        $start = $this->advance();
+        $name = $this->blockName();
+        $returnType = null;
+        if ($kind === Pou::FUNCTION && $this->optional(TokenType::Colon)) {
+            $returnType = $this->type();
+            if (strtoupper($returnType->name) === 'VOID') {
+                $returnType = null;
+            }
+        }
+
+        $this->skipHeader();
+        $vars = [];
+        while (true) {
+            $section = match ($this->current()->type) {
+                TokenType::VarInput => VarDecl::INPUT,
+                TokenType::VarOutput => VarDecl::OUTPUT,
+                TokenType::VarInOut => VarDecl::IN_OUT,
+                TokenType::VarTemp => VarDecl::TEMP,
+                TokenType::Var => VarDecl::STATIC,
+                default => null,
+            };
+            if ($section === null) {
+                break;
+            }
+            if ($section === VarDecl::STATIC && $kind !== Pou::FUNCTION_BLOCK && !$this->isConstantSection()) {
+                // In FCs and OBs, a plain VAR section holds temporary variables.
+                $section = VarDecl::TEMP;
+            }
+            $vars = [...$vars, ...$this->varSection($section)];
+        }
+        $this->optional(TokenType::Begin);
+        $body = $this->statements([$end]);
+        $this->closeWith($end);
+
+        return new Pou($kind, $name, $returnType, $vars, $body, $start->line);
+    }
+
+    private function isConstantSection(): bool
+    {
+        return $this->peek(1)->type === TokenType::Constant;
+    }
+
+    private function dataBlock(): DataBlockDecl
+    {
+        $start = $this->expect(TokenType::DataBlock);
+        $name = $this->blockName();
+        $this->skipHeader();
+
+        $instanceOf = null;
+        $fields = [];
+        if ($this->check(TokenType::Identifier)) {
+            // Instance DB:  DATA_BLOCK "Motor_DB" "Motor"
+            $instanceOf = (string) $this->advance()->value;
+        } elseif ($this->check(TokenType::Struct)) {
+            $this->advance();
+            $fields = $this->declarations(VarDecl::STATIC, [TokenType::EndStruct]);
+            $this->closeWith(TokenType::EndStruct);
+        } else {
+            while ($this->check(TokenType::Var)) {
+                $fields = [...$fields, ...$this->varSection(VarDecl::STATIC)];
+            }
+        }
+
+        $init = [];
+        if ($this->optional(TokenType::Begin)) {
+            $init = $this->statements([TokenType::EndDataBlock]);
+        }
+        $this->closeWith(TokenType::EndDataBlock);
+
+        return new DataBlockDecl($name, $instanceOf, $fields, $init, $start->line);
+    }
+
+    /** Skips block header lines (VERSION : 0.1, TITLE = ..., NON_RETAIN, ...). */
+    private function skipHeader(): void
+    {
+        while (true) {
+            $token = $this->current();
+            $isItem = $token->type === TokenType::Identifier && $token->scope === null
+                && in_array(strtoupper((string) $token->value), self::HEADER_ITEMS, true)
+                && in_array($this->peek(1)->type, [TokenType::Colon, TokenType::Eq], true);
+            if ($isItem) {
+                $this->skipLine($token->line);
+            } elseif ($token->type === TokenType::NonRetain || $token->type === TokenType::Retain) {
+                $this->advance();
+            } else {
+                return;
+            }
+        }
+    }
+
+    private function skipLine(int $line): void
+    {
+        while (!$this->check(TokenType::Eof) && $this->current()->line === $line) {
+            $this->advance();
+        }
     }
 
     /** @return list<VarDecl> */
-    private function varSection(): array
+    private function varSection(string $section, bool $allowBindings = false): array
     {
-        $this->expect(TokenType::Var);
-        $vars = [];
-
-        while (!$this->check(TokenType::EndVar)) {
-            if ($this->check(TokenType::Eof)) {
-                throw $this->unexpected("'END_VAR'");
+        $this->advance(); // VAR, VAR_GLOBAL, VAR_INPUT, ...
+        while (in_array($this->current()->type, [TokenType::Constant, TokenType::Retain, TokenType::NonRetain], true)) {
+            if ($this->advance()->type === TokenType::Constant) {
+                $section = VarDecl::CONSTANT;
             }
-            $nameToken = $this->expect(TokenType::Identifier);
-            $name = (string) $nameToken->value;
+        }
+        $vars = $this->declarations($section, [TokenType::EndVar], $allowBindings);
+        $this->closeWith(TokenType::EndVar);
+
+        return $vars;
+    }
+
+    /**
+     * @param list<TokenType> $terminators
+     * @return list<VarDecl>
+     */
+    private function declarations(string $section, array $terminators, bool $allowBindings = false): array
+    {
+        $vars = [];
+        while (!in_array($this->current()->type, $terminators, true)) {
+            if ($this->check(TokenType::Eof)) {
+                throw $this->unexpected($terminators[0]->describe());
+            }
+            $names = [$this->expect(TokenType::Identifier)];
+            while ($this->optional(TokenType::Comma)) {
+                $names[] = $this->expect(TokenType::Identifier);
+            }
+
+            $address = null;
+            if ($this->optional(TokenType::At)) {
+                $addressToken = $this->expect(TokenType::Address);
+                $address = Address::parse((string) $addressToken->value);
+                if (count($names) > 1) {
+                    throw new SyntaxError('An address can only be given to a single variable', $addressToken->line);
+                }
+            }
             $this->expect(TokenType::Colon);
 
             $binding = null;
-            if ($this->check(TokenType::TypeBool) || $this->check(TokenType::TypeInt)) {
-                $type = $this->advance()->type === TokenType::TypeInt ? VarDecl::INT : VarDecl::BOOL;
-            } elseif ($this->check(TokenType::Identifier)) {
+            if ($allowBindings && $this->check(TokenType::Identifier) && $this->peek(1)->type === TokenType::Dot) {
+                // Historical syntax: Name : Device.INPUT.3;
                 $binding = $this->ioBinding();
-                $type = VarDecl::BOOL;
+                $type = TypeRef::of('BOOL');
             } else {
-                throw $this->unexpected('a type (BOOL, INT) or an I/O binding (Device.INPUT.n)');
+                $type = $this->type();
             }
 
-            $initial = null;
-            if ($this->optional(TokenType::Assign)) {
-                $initial = $this->expression();
-            }
+            $initial = $this->optional(TokenType::Assign) ? $this->expression() : null;
             $this->expect(TokenType::Semicolon);
-            $vars[] = new VarDecl($name, $type, $binding, $initial, $nameToken->line);
+
+            foreach ($names as $nameToken) {
+                $vars[] = new VarDecl((string) $nameToken->value, $type, $binding, $initial, $nameToken->line, $section, $address);
+            }
         }
 
-        $this->expect(TokenType::EndVar);
-        $this->optional(TokenType::Semicolon);
-
         return $vars;
+    }
+
+    private function type(): TypeRef
+    {
+        if ($this->optional(TokenType::Array)) {
+            $this->expect(TokenType::LBracket);
+            $low = $this->signedInteger();
+            $this->expect(TokenType::Range);
+            $high = $this->signedInteger();
+            $this->expect(TokenType::RBracket);
+            $this->expect(TokenType::Of);
+            if ($high < $low || $high - $low >= 65536) {
+                throw new SyntaxError("Invalid array bounds [{$low}..{$high}]", $this->current()->line);
+            }
+
+            return TypeRef::array($this->type(), $low, $high);
+        }
+
+        $token = $this->expect(TokenType::Identifier);
+        $type = TypeRef::of((string) $token->value);
+        if ($type->name === 'STRING' && $this->optional(TokenType::LBracket)) {
+            $this->expect(TokenType::Integer); // String[n]: length is not enforced
+            $this->expect(TokenType::RBracket);
+        }
+
+        return $type;
+    }
+
+    private function signedInteger(): int
+    {
+        $negative = $this->optional(TokenType::Minus);
+        $value = (int) $this->expect(TokenType::Integer)->value;
+
+        return $negative ? -$value : $value;
     }
 
     private function ioBinding(): IoBinding
@@ -191,12 +400,22 @@ final class Parser
     {
         $statements = [];
         while (!in_array($this->current()->type, $terminators, true)) {
-            if ($this->check(TokenType::Eof)) {
+            $token = $this->current();
+            if ($token->type === TokenType::Eof) {
                 $expected = implode(' or ', array_map(static fn (TokenType $t) => $t->describe(), $terminators));
                 throw $this->unexpected($expected);
             }
             if ($this->optional(TokenType::Semicolon)) {
                 continue; // empty statement
+            }
+            if ($token->type === TokenType::Region) {
+                $this->skipLine($token->line); // REGION <free text>: pure structuring
+                continue;
+            }
+            if ($token->type === TokenType::EndRegion) {
+                $this->advance();
+                $this->optional(TokenType::Semicolon);
+                continue;
             }
             $statements[] = $this->statement();
         }
@@ -210,20 +429,8 @@ final class Parser
 
         switch ($token->type) {
             case TokenType::Identifier:
-                $this->advance();
-                if ($this->optional(TokenType::Assign)) {
-                    $value = $this->expression();
-                    $this->expect(TokenType::Semicolon);
-
-                    return new AssignStmt((string) $token->value, $value, $token->line);
-                }
-                if ($this->check(TokenType::LParen)) {
-                    $call = new CallExpr((string) $token->value, $this->arguments(), $token->line);
-                    $this->expect(TokenType::Semicolon);
-
-                    return new CallStmt($call);
-                }
-                throw $this->unexpected("':=' or '(' after '{$token->value}'");
+            case TokenType::Address:
+                return $this->assignmentOrCall();
 
             case TokenType::If:
                 return $this->ifStatement();
@@ -269,6 +476,12 @@ final class Parser
 
                 return new ExitStmt($token->line);
 
+            case TokenType::Continue:
+                $this->advance();
+                $this->expect(TokenType::Semicolon);
+
+                return new ContinueStmt($token->line);
+
             case TokenType::Return:
                 $this->advance();
                 $this->expect(TokenType::Semicolon);
@@ -278,6 +491,33 @@ final class Parser
             default:
                 throw $this->unexpected('a statement');
         }
+    }
+
+    private function assignmentOrCall(): Stmt
+    {
+        $token = $this->current();
+        $target = $this->postfix($this->atom());
+
+        $assignType = $this->current()->type;
+        if ($assignType === TokenType::Assign || isset(self::COMPOUND_ASSIGN[$assignType->name])) {
+            if ($target instanceof CallExpr) {
+                throw $this->unexpected("';'");
+            }
+            $this->advance();
+            $value = $this->expression();
+            $this->expect(TokenType::Semicolon);
+
+            return new AssignStmt($target, $value, $token->line, self::COMPOUND_ASSIGN[$assignType->name] ?? null);
+        }
+
+        if ($target instanceof CallExpr) {
+            $this->expect(TokenType::Semicolon);
+
+            return new CallStmt($target);
+        }
+
+        $name = $token->type === TokenType::Identifier ? " after '{$token->value}'" : '';
+        throw $this->unexpected("':=' or '('{$name}");
     }
 
     private function ifStatement(): IfStmt
@@ -331,16 +571,15 @@ final class Parser
             }
             $ranges = [];
             do {
-                $low = $this->caseLabel();
-                $high = $this->optional(TokenType::Range) ? $this->caseLabel() : $low;
+                $low = $this->signedInteger();
+                $high = $this->optional(TokenType::Range) ? $this->signedInteger() : $low;
                 if ($high < $low) {
                     throw new SyntaxError("Invalid CASE range {$low}..{$high}", $this->current()->line);
                 }
                 $ranges[] = [$low, $high];
             } while ($this->optional(TokenType::Comma));
             $this->expect(TokenType::Colon);
-            $body = $this->caseBody();
-            $branches[] = new CaseBranch($ranges, $body);
+            $branches[] = new CaseBranch($ranges, $this->caseBody());
         }
         $this->closeWith(TokenType::EndCase);
 
@@ -351,29 +590,29 @@ final class Parser
         return new CaseStmt($selector, $branches, $else, $start->line);
     }
 
-    private function caseLabel(): int
-    {
-        $negative = $this->optional(TokenType::Minus);
-        $value = (int) $this->expect(TokenType::Integer)->value;
-
-        return $negative ? -$value : $value;
-    }
-
     /** Statements of a CASE branch run until the next label, ELSE or END_CASE. @return list<Stmt> */
     private function caseBody(): array
     {
         $body = [];
-        while (!in_array($this->current()->type, [TokenType::Integer, TokenType::Minus, TokenType::Else, TokenType::EndCase], true)) {
-            if ($this->check(TokenType::Eof)) {
+        while (true) {
+            $type = $this->current()->type;
+            $isLabel = $type === TokenType::Integer
+                || ($type === TokenType::Minus && $this->peek(1)->type === TokenType::Integer);
+            if ($isLabel || $type === TokenType::Else || $type === TokenType::EndCase) {
+                return $body;
+            }
+            if ($type === TokenType::Eof) {
                 throw $this->unexpected("'END_CASE'");
             }
             if ($this->optional(TokenType::Semicolon)) {
                 continue;
             }
+            if ($type === TokenType::Region || $type === TokenType::EndRegion) {
+                array_push($body, ...$this->statements([TokenType::Integer, TokenType::Minus, TokenType::Else, TokenType::EndCase]));
+                continue;
+            }
             $body[] = $this->statement();
         }
-
-        return $body;
     }
 
     /** Consumes an END_xxx keyword and its (optional) trailing semicolon. */
@@ -383,14 +622,22 @@ final class Parser
         $this->optional(TokenType::Semicolon);
     }
 
-    /** @return list<Expr> */
+    /** @return list<CallArg> */
     private function arguments(): array
     {
         $this->expect(TokenType::LParen);
         $args = [];
         if (!$this->check(TokenType::RParen)) {
             do {
-                $args[] = $this->expression();
+                $next = $this->peek(1)->type;
+                if ($this->check(TokenType::Identifier) && ($next === TokenType::Assign || $next === TokenType::OutputAssign)) {
+                    $name = (string) $this->advance()->value;
+                    $output = $this->advance()->type === TokenType::OutputAssign;
+                    $value = $this->expression();
+                    $args[] = new CallArg($name, $value, $output);
+                } else {
+                    $args[] = new CallArg(null, $this->expression());
+                }
             } while ($this->optional(TokenType::Comma));
         }
         $this->expect(TokenType::RParen);
@@ -406,15 +653,6 @@ final class Parser
     {
         return $this->binary(0);
     }
-
-    private const PRECEDENCE = [
-        [TokenType::Or],
-        [TokenType::Xor],
-        [TokenType::And],
-        [TokenType::Eq, TokenType::Neq, TokenType::Lt, TokenType::Lte, TokenType::Gt, TokenType::Gte],
-        [TokenType::Plus, TokenType::Minus],
-        [TokenType::Star, TokenType::Slash, TokenType::Mod],
-    ];
 
     private function binary(int $level): Expr
     {
@@ -441,14 +679,15 @@ final class Parser
             if ($token->type === TokenType::Plus) {
                 return $operand;
             }
-            if ($token->type === TokenType::Minus && $operand instanceof Literal && is_int($operand->value)) {
-                return new Literal(-$operand->value, $token->line);
+            if ($token->type === TokenType::Minus && $operand instanceof Literal
+                && (is_int($operand->value) || is_float($operand->value))) {
+                return new Literal(-$operand->value, $token->line, $operand->type);
             }
 
             return new UnaryOp($token->type, $operand, $token->line);
         }
 
-        return $this->primary();
+        return $this->postfix($this->primary());
     }
 
     private function primary(): Expr
@@ -457,19 +696,21 @@ final class Parser
 
         switch ($token->type) {
             case TokenType::Integer:
+            case TokenType::Real:
             case TokenType::Boolean:
             case TokenType::String:
                 $this->advance();
 
                 return new Literal($token->value ?? 0, $token->line);
 
-            case TokenType::Identifier:
+            case TokenType::Time:
                 $this->advance();
-                if ($this->check(TokenType::LParen)) {
-                    return new CallExpr((string) $token->value, $this->arguments(), $token->line);
-                }
 
-                return new VariableRef((string) $token->value, $token->line);
+                return new Literal((int) $token->value, $token->line, 'TIME');
+
+            case TokenType::Identifier:
+            case TokenType::Address:
+                return $this->atom();
 
             case TokenType::LParen:
                 $this->advance();
@@ -480,6 +721,46 @@ final class Parser
 
             default:
                 throw $this->unexpected('an expression');
+        }
+    }
+
+    /** Identifier or direct address. */
+    private function atom(): Expr
+    {
+        $token = $this->advance();
+        if ($token->type === TokenType::Address) {
+            $address = Address::parse((string) $token->value)
+                ?? throw new SyntaxError("Invalid address %{$token->value}", $token->line, $token->column);
+
+            return new AddressRef($address, $token->line);
+        }
+        if ($token->type !== TokenType::Identifier) {
+            $this->index--;
+            throw $this->unexpected('an identifier');
+        }
+
+        return new VariableRef((string) $token->value, $token->line, $token->scope);
+    }
+
+    /** Member access, indexing and calls: a.b[3].c(x := 1) */
+    private function postfix(Expr $expr): Expr
+    {
+        while (true) {
+            $token = $this->current();
+            if ($token->type === TokenType::Dot) {
+                $this->advance();
+                $member = $this->expect(TokenType::Identifier);
+                $expr = new MemberAccess($expr, (string) $member->value, $member->line);
+            } elseif ($token->type === TokenType::LBracket) {
+                $this->advance();
+                $index = $this->expression();
+                $this->expect(TokenType::RBracket);
+                $expr = new IndexAccess($expr, $index, $token->line);
+            } elseif ($token->type === TokenType::LParen && !$expr instanceof CallExpr && !$expr instanceof AddressRef) {
+                $expr = new CallExpr($expr, $this->arguments(), $expr->line);
+            } else {
+                return $expr;
+            }
         }
     }
 

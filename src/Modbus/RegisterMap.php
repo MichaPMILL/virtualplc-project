@@ -13,9 +13,9 @@ use VirtualPLC\Scl\Ast\VarDecl;
  * Each variable gets the address equal to its position in the VAR section
  * (the "REG" number shown in the web IDE):
  *
- *   - BOOL bound to an input      -> Discrete input  (1x, read-only)
+ *   - BOOL input (%I / binding)   -> Discrete input  (1x, read-only)
  *   - other BOOL                  -> Coil            (0x, read/write)
- *   - INT                         -> Holding register (4x, read/write)
+ *   - 8/16-bit integer            -> Holding register (4x, read/write)
  *                                    and Input register (3x, read-only mirror)
  *
  * Tag names can be discovered through input registers starting at
@@ -51,13 +51,17 @@ final class RegisterMap
         $index = 0;
         foreach ($declarations as $var) {
             $names[] = $var->name;
-            if ($var->type === VarDecl::INT) {
+            $type = $var->type->name;
+            $isInput = $var->binding?->io === IoBinding::INPUT || $var->address?->area === 'I';
+            if ($type === 'BOOL') {
+                if ($isInput) {
+                    $di[$index] = $var->name;
+                } else {
+                    $coils[$index] = $var->name;
+                }
+            } elseif (in_array($type, ['INT', 'WORD', 'UINT', 'BYTE', 'SINT', 'USINT'], true)) {
                 $hr[$index] = $var->name;
                 $ir[$index] = $var->name;
-            } elseif ($var->binding?->io === IoBinding::INPUT) {
-                $di[$index] = $var->name;
-            } else {
-                $coils[$index] = $var->name;
             }
             $index++;
         }

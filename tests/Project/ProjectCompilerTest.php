@@ -34,7 +34,7 @@ final class ProjectCompilerTest extends TestCase
         $compiled = (new ProjectCompiler())->compile(json_decode($json, true));
         $program = Parser::parseSource($compiled->source);
         self::assertCount(11, $program->vars);
-        self::assertCount(5, $program->blocks);
+        self::assertCount(6, $program->pous); // 5 blocks + Main
     }
 
     public function testGeneratesTheExpectedSource(): void

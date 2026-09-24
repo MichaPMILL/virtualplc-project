@@ -6,8 +6,12 @@ namespace VirtualPLC\Scl\Ast;
 
 final class VariableRef extends Expr
 {
-    public function __construct(public readonly string $name, int $line)
-    {
+    /** @param string|null $scope "global" for "quoted" names, "local" for #names */
+    public function __construct(
+        public readonly string $name,
+        int $line,
+        public readonly ?string $scope = null,
+    ) {
         parent::__construct($line);
     }
 }

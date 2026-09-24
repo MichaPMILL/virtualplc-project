@@ -202,7 +202,7 @@ final class InterpreterTest extends TestCase
         yield 'string to bool' => ["b := 'a';", 'Cannot assign a string'];
         yield 'function failure' => ['FAIL();', 'FAIL(): boom'];
         yield 'arity' => ['x := ABS();', 'Wrong number of arguments'];
-        yield 'exit outside loop' => ['EXIT;', 'EXIT used outside of a loop'];
+        yield 'exit outside loop' => ['EXIT;', 'EXIT/CONTINUE used outside of a loop'];
         yield 'zero step' => ['FOR i := 1 TO 2 BY 0 DO x := 1; END_FOR;', 'step cannot be 0'];
     }
 
@@ -235,7 +235,7 @@ final class InterpreterTest extends TestCase
         yield 'write to input' => ["HARDWARE D := CONNECT('h', 1, 1); END_HARDWARE VAR i : D.INPUT.0; END_VAR FC i := TRUE; END_FC", 'Cannot assign to input'];
         yield 'unknown device' => ['VAR i : Nope.INPUT.0; END_VAR', "unknown device 'Nope'"];
         yield 'duplicate var' => ['VAR a : INT; A : BOOL; END_VAR', "Duplicate declaration of 'A'"];
-        yield 'block with arguments' => ['BLOCK B END_BLOCK FC B(1); END_FC', 'does not take arguments'];
-        yield 'block shadows builtin' => ['BLOCK Abs END_BLOCK', 'shadows the built-in'];
+        yield 'block with arguments' => ['BLOCK B END_BLOCK FC B(1); END_FC', "Too many arguments for 'B'"];
+        yield 'block shadows builtin' => ['BLOCK Abs END_BLOCK', 'name of a built-in instruction'];
     }
 }

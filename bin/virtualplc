@@ -61,7 +61,7 @@ try {
             }
             $program = Parser::parseSource((string) file_get_contents($file));
             (new Analyzer([...Runtime::FUNCTIONS, ...(new Interpreter())->functionNames()]))->analyze($program);
-            fwrite(STDOUT, sprintf("OK: %d variables, %d blocks\n", count($program->vars), count($program->blocks)));
+            fwrite(STDOUT, sprintf("OK: %d tags, %d blocks, %d data blocks\n", count($program->vars), count($program->pous), count($program->dataBlocks)));
             exit(0);
 
         case 'compile':

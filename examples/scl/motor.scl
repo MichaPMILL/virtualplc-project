@@ -1,0 +1,61 @@
+// Motor start/stop with start delay - SCL external source.
+// Check it with: bin/virtualplc check examples/scl/motor.scl
+
+VAR_GLOBAL
+    "Start_Button" AT %I0.0 : Bool;
+    "Stop_Button" AT %I0.1 : Bool;   // NC contact
+    "Motor_Contactor" AT %Q0.0 : Bool;
+    "Speed_Setpoint" AT %MW10 : Int := 1500;
+    "Starts" : DInt;
+END_VAR
+
+FUNCTION_BLOCK "Motor"
+VERSION : 0.1
+   VAR_INPUT
+      Start : Bool;
+      Stop : Bool;
+      StartDelay : Time := T#2S;
+   END_VAR
+   VAR_OUTPUT
+      Running : Bool;
+   END_VAR
+   VAR
+      DelayTimer : TON;
+      StartEdge : R_TRIG;
+      Requested : Bool;
+   END_VAR
+
+BEGIN
+    REGION Start / stop logic
+        #StartEdge(CLK := #Start);
+        IF #StartEdge.Q THEN
+            #Requested := TRUE;
+            "Starts" += 1;
+        END_IF;
+        IF NOT #Stop THEN
+            #Requested := FALSE;
+        END_IF;
+    END_REGION
+
+    #DelayTimer(IN := #Requested, PT := #StartDelay);
+    #Running := #DelayTimer.Q;
+END_FUNCTION_BLOCK
+
+DATA_BLOCK "Motor_DB"
+VERSION : 0.1
+NON_RETAIN
+"Motor"
+
+BEGIN
+
+END_DATA_BLOCK
+
+ORGANIZATION_BLOCK "Main"
+TITLE = "Main Program Sweep (Cycle)"
+VERSION : 0.1
+
+BEGIN
+    "Motor_DB"(Start := "Start_Button",
+               Stop := "Stop_Button",
+               Running => "Motor_Contactor");
+END_ORGANIZATION_BLOCK

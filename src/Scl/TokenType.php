@@ -18,9 +18,30 @@ enum TokenType: string
     case Block = 'BLOCK';
     case EndBlock = 'END_BLOCK';
 
-    // Types
-    case TypeInt = 'INT';
-    case TypeBool = 'BOOL';
+    // IEC program organisation units
+    case VarGlobal = 'VAR_GLOBAL';
+    case VarInput = 'VAR_INPUT';
+    case VarOutput = 'VAR_OUTPUT';
+    case VarInOut = 'VAR_IN_OUT';
+    case VarTemp = 'VAR_TEMP';
+    case Constant = 'CONSTANT';
+    case Retain = 'RETAIN';
+    case NonRetain = 'NON_RETAIN';
+    case At = 'AT';
+    case Function = 'FUNCTION';
+    case EndFunction = 'END_FUNCTION';
+    case FunctionBlock = 'FUNCTION_BLOCK';
+    case EndFunctionBlock = 'END_FUNCTION_BLOCK';
+    case OrganizationBlock = 'ORGANIZATION_BLOCK';
+    case EndOrganizationBlock = 'END_ORGANIZATION_BLOCK';
+    case DataBlock = 'DATA_BLOCK';
+    case EndDataBlock = 'END_DATA_BLOCK';
+    case Struct = 'STRUCT';
+    case EndStruct = 'END_STRUCT';
+    case Begin = 'BEGIN';
+    case Region = 'REGION';
+    case EndRegion = 'END_REGION';
+    case Array = 'ARRAY';
 
     // Control flow
     case If = 'IF';
@@ -42,6 +63,7 @@ enum TokenType: string
     case Of = 'OF';
     case EndCase = 'END_CASE';
     case Exit = 'EXIT';
+    case Continue = 'CONTINUE';
     case Return = 'RETURN';
 
     // Operators (keywords)
@@ -53,12 +75,20 @@ enum TokenType: string
 
     // Literals & identifiers
     case Integer = 'INTEGER';
+    case Real = 'REAL_LITERAL';
+    case Time = 'TIME_LITERAL';
+    case Address = 'ADDRESS';
     case Boolean = 'BOOLEAN';
     case String = 'STRING';
     case Identifier = 'IDENTIFIER';
 
     // Punctuation
     case Assign = ':=';
+    case OutputAssign = '=>';
+    case PlusAssign = '+=';
+    case MinusAssign = '-=';
+    case StarAssign = '*=';
+    case SlashAssign = '/=';
     case Colon = ':';
     case Semicolon = ';';
     case Comma = ',';
@@ -66,11 +96,14 @@ enum TokenType: string
     case Range = '..';
     case LParen = '(';
     case RParen = ')';
+    case LBracket = '[';
+    case RBracket = ']';
 
     // Arithmetic / comparison operators
     case Plus = '+';
     case Minus = '-';
     case Star = '*';
+    case Power = '**';
     case Slash = '/';
     case Eq = '=';
     case Neq = '<>';
@@ -89,7 +122,7 @@ enum TokenType: string
             $map = [];
             foreach (self::cases() as $case) {
                 if (preg_match('/^[A-Z_]+$/', $case->value) === 1
-                    && !in_array($case, [self::Integer, self::Boolean, self::String, self::Identifier, self::Eof], true)) {
+                    && !in_array($case, [self::Integer, self::Real, self::Time, self::Address, self::Boolean, self::String, self::Identifier, self::Eof], true)) {
                     $map[$case->value] = $case;
                 }
             }
@@ -102,6 +135,9 @@ enum TokenType: string
     {
         return match ($this) {
             self::Integer => 'integer literal',
+            self::Real => 'real literal',
+            self::Time => 'time literal',
+            self::Address => 'address',
             self::Boolean => 'boolean literal',
             self::String => 'string literal',
             self::Identifier => 'identifier',
