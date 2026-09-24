@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Export tool for engineering projects (.ap* / .zap*) through the vendor's public
+    Openness API. Build and run it on the engineering PC where the software is installed:
+      dotnet build -c Release -p:EngineeringVersion=17
+    OpennessDir can point to another PublicAPI folder (-p:OpennessDir=...).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>vplc-openness-export</AssemblyName>
+    <RootNamespace>VirtualPlc.OpennessExport</RootNamespace>
+    <EngineeringVersion Condition="'$(EngineeringVersion)' == ''">17</EngineeringVersion>
+    <OpennessDir Condition="'$(OpennessDir)' == ''">C:\Program Files\Siemens\Automation\Portal V$(EngineeringVersion)\PublicAPI\V$(EngineeringVersion)</OpennessDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- not copied: loaded from the installation at run time (see Program.ResolveApi) -->
+    <Reference Include="Siemens.Engineering">
+      <HintPath>$(OpennessDir)\Siemens.Engineering.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <AssemblyMetadata Include="OpennessDir" Value="$(OpennessDir)" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

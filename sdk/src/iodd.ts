@@ -1,43 +1,13 @@
 // IO-Link device descriptions (IODD, IO Device Description XML): process data layout of a
 // sensor / actuator, used to size the ports of an IO-Link master and to create PLC tags.
 import type { Tag } from './project.ts';
+import { childXml, findXml, parseXml, walkXml, type XmlNode } from './xml.ts';
 
-interface XmlNode {
-  name: string;
-  attrs: Record<string, string>;
-  children: XmlNode[];
-}
+export { parseXml };
 
-const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
-const unescape = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, e: string) =>
-  e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENTITIES[e.toLowerCase()]);
-
-/** Small XML parser (elements and attributes; text content is not needed here). */
-export function parseXml(text: string): XmlNode {
-  const root: XmlNode = { name: '#document', attrs: {}, children: [] };
-  const stack = [root];
-  const re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>|<\/([\w:.-]+)\s*>|<([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
-  for (const m of text.matchAll(re)) {
-    if (m[1]) {
-      if (stack.length > 1 && stack[stack.length - 1].name === m[1]) stack.pop();
-      continue;
-    }
-    if (!m[2]) continue;
-    const attrs: Record<string, string> = {};
-    for (const a of (m[3] ?? '').matchAll(/([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attrs[a[1]] = unescape(a[2] ?? a[3] ?? '');
-    const node: XmlNode = { name: m[2].replace(/^[\w.-]+:/, ''), attrs, children: [] };
-    stack[stack.length - 1].children.push(node);
-    if (!m[4]) stack.push(node);
-  }
-  return root;
-}
-
-function* walk(n: XmlNode): Generator<XmlNode> {
-  yield n;
-  for (const c of n.children) yield* walk(c);
-}
-const find = (n: XmlNode, name: string) => { for (const x of walk(n)) if (x.name === name) return x; return undefined; };
-const child = (n: XmlNode | undefined, name: string) => n?.children.find((c) => c.name === name);
+const walk = walkXml;
+const find = (n: XmlNode, name: string) => findXml(n, name);
+const child = childXml;
 
 export interface ProcessDataItem {
   name: string;

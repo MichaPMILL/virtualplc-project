@@ -383,6 +383,7 @@ tr.vc-current td { font-weight: 600; }
 .lad-sym.coil span { min-width: 18px; border-radius: 50%; }
 .lad-sym.closed span { background: #d4f5e2; border-color: var(--true); color: var(--true); }
 .lad-el.branchwrap { padding-top: 0; align-items: stretch; }
+.lad-el.branchwrap.stretch { flex: 0 1 auto; }
 .lad-branch { display: flex; flex-direction: column; }
 .lad-brow { position: relative; display: flex; padding: 0 12px; background: linear-gradient(var(--text), var(--text)) no-repeat 0 47px / 100% 2px; }
 .lad-brow + .lad-brow { margin-top: 2px; }

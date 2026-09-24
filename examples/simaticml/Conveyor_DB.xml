@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Document>
+  <Engineering version="V17" />
+  <SW.Blocks.InstanceDB ID="0">
+    <AttributeList>
+      <InstanceOfName>Conveyor</InstanceOfName>
+      <InstanceOfType>FB</InstanceOfType>
+      <Name>Conveyor_DB</Name>
+      <Number>3</Number>
+      <ProgrammingLanguage>DB</ProgrammingLanguage>
+    </AttributeList>
+  </SW.Blocks.InstanceDB>
+</Document>

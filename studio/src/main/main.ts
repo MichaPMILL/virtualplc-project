@@ -10,7 +10,7 @@ let dirty = false;
 
 const FILTERS = {
   project: [{ name: 'Projet VirtualPLC', extensions: ['vplcproj'] }, { name: 'Projet VirtualPLC 1.x (JSON)', extensions: ['json'] }],
-  scl: [{ name: 'Fichiers exportés (sources SCL, DB, types, tables de variables)', extensions: ['scl', 'db', 'udt', 'xlsx', 'txt'] }],
+  scl: [{ name: 'Fichiers exportés (sources SCL, DB, types, tables de variables, export XML)', extensions: ['scl', 'db', 'udt', 'xlsx', 'xml', 'txt'] }],
   zip: [{ name: 'Archive ZIP', extensions: ['zip'] }],
   iodd: [{ name: 'Description IO-Link (IODD)', extensions: ['xml'] }],
 };

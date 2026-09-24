@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Document>
+  <Engineering version="V17" />
+  <SW.Blocks.OB ID="0">
+    <AttributeList>
+      <Interface><Sections xmlns="http://www.siemens.com/automation/Openness/SW/Interface/v5">
+  <Section Name="Input">
+    <Member Name="Initial_Call" Datatype="Bool" Informative="true" />
+    <Member Name="Remanence" Datatype="Bool" Informative="true" />
+  </Section>
+  <Section Name="Temp"><Member Name="speed" Datatype="Real" /></Section>
+  <Section Name="Constant" />
+</Sections></Interface>
+      <Name>Main</Name>
+      <Number>1</Number>
+      <ProgrammingLanguage>SCL</ProgrammingLanguage>
+      <SecondaryType>ProgramCycle</SecondaryType>
+    </AttributeList>
+    <ObjectList>
+      <SW.Blocks.CompileUnit ID="3" CompositionName="CompileUnits">
+        <AttributeList>
+          <NetworkSource><StructuredText xmlns="http://www.siemens.com/automation/Openness/SW/NetworkSource/StructuredText/v3">
+  <Access Scope="GlobalVariable" UId="21"><Symbol><Component Name="Conveyor_DB" /></Symbol></Access>
+  <Token Text="(" UId="22" />
+  <Parameter Name="Start" UId="23"><Blank UId="231" /><Token Text=":=" UId="24" /><Blank UId="25" /><Access Scope="GlobalVariable" UId="26"><Symbol><Component Name="Start_Button" /></Symbol></Access></Parameter>
+  <Token Text="," UId="27" /><Blank UId="28" />
+  <Parameter Name="Stop" UId="29"><Blank UId="291" /><Token Text=":=" UId="30" /><Blank UId="31" /><Access Scope="GlobalVariable" UId="32"><Symbol><Component Name="Stop_Button" /></Symbol></Access></Parameter>
+  <Token Text=")" UId="33" /><Token Text=";" UId="34" /><NewLine UId="35" />
+  <LineComment UId="36"><Text UId="37"> vitesse en tr/min</Text></LineComment><NewLine UId="38" />
+  <Access Scope="LocalVariable" UId="39"><Symbol><Component Name="speed" /></Symbol></Access>
+  <Blank UId="40" /><Token Text=":=" UId="41" /><Blank UId="42" />
+  <Access Scope="Call" UId="43"><Instruction Name="INT_TO_REAL" UId="44"><Token Text="(" UId="45" /><Parameter Name="in" UId="46" Informal="true"><Access Scope="GlobalVariable" UId="47"><Symbol><Component Name="Conveyor_DB" /><Token Text="." UId="48" /><Component Name="Count" /></Symbol></Access></Parameter><Token Text=")" UId="49" /></Instruction></Access>
+  <Blank UId="50" /><Token Text="*" UId="51" /><Blank UId="52" />
+  <Access Scope="LiteralConstant" UId="53"><Constant><ConstantValue>2.5</ConstantValue></Constant></Access>
+  <Token Text=";" UId="54" /><NewLine UId="55" />
+  <Token Text="IF" UId="56" /><Blank UId="57" /><Access Scope="Address" UId="58"><Address Area="Memory" Type="Bool" BitOffset="81" /></Access><Blank UId="59" /><Token Text="THEN" UId="60" /><NewLine UId="61" />
+  <Blank Num="4" UId="62" /><Access Scope="GlobalVariable" UId="63"><Symbol><Component Name="Speed_Display" /></Symbol></Access><Blank UId="64" /><Token Text=":=" UId="65" /><Blank UId="66" />
+  <Access Scope="LocalVariable" UId="67"><Symbol><Component Name="speed" /></Symbol></Access><Token Text=";" UId="68" /><NewLine UId="69" />
+  <Token Text="END_IF" UId="70" /><Token Text=";" UId="71" />
+</StructuredText></NetworkSource>
+          <ProgrammingLanguage>SCL</ProgrammingLanguage>
+        </AttributeList>
+      </SW.Blocks.CompileUnit>
+    </ObjectList>
+  </SW.Blocks.OB>
+</Document>

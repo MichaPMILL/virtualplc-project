@@ -134,10 +134,14 @@ engineering tools export from their own projects:
 | `.db`                    | Data block sources (global and instance DBs)                            |
 | `.udt`                   | PLC data types (`TYPE "Name" STRUCT … END_STRUCT END_TYPE`, nested structs) |
 | `.xlsx`                  | PLC tag table exports (columns Name, Path, Data Type, Logical Address, Comment — English or French headers), one table per *Path* |
+| `.xml`                   | SimaticML exports (Openness XML): OB / FB / FC in **LAD** (become CONT blocks with their networks) or **SCL**, global and instance DBs, PLC data types, tag tables and user constants. Titles, comments, start values and HMI access flags are kept; networks that cannot be translated are reported and left empty |
 
-Proprietary binary project files and archives are deliberately **not** read: their formats are
-undocumented and reading them would require reverse engineering. Export the blocks, data
-types and tag tables as sources from the original tool, then import them.
+**Whole projects (`.ap17`, `.zap17`, … `.ap19`, `.zap19`)**: the binary project files and
+archives are deliberately **not** read — their formats are undocumented and reading them
+would require reverse engineering. [`tools/openness-export`](tools/openness-export) is a small
+command-line tool to run on the engineering PC: it opens the project (or retrieves the
+archive) through the vendor's public Openness API and exports every PLC's blocks, data types
+and tag tables as XML, ready for *Importer des fichiers* (select all the files of the folder).
 
 ## Features
 

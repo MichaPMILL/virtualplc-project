@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Document>
+  <Engineering version="V17" />
+  <SW.Types.PlcStruct ID="0">
+    <AttributeList>
+      <Interface><Sections xmlns="http://www.siemens.com/automation/Openness/SW/Interface/v5">
+  <Section Name="None">
+    <Member Name="Name" Datatype="String[20]"><StartValue>'Standard'</StartValue></Member>
+    <Member Name="Speed" Datatype="Real"><StartValue>1.5</StartValue></Member>
+    <Member Name="Limits" Datatype="Struct">
+      <Member Name="Min" Datatype="Int" />
+      <Member Name="Max" Datatype="Int"><StartValue>100</StartValue></Member>
+    </Member>
+  </Section>
+</Sections></Interface>
+      <Name>Recipe</Name>
+    </AttributeList>
+  </SW.Types.PlcStruct>
+</Document>

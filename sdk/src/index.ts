@@ -25,3 +25,5 @@ export { importTagTableXlsx, readXlsx, unzip } from './xlsx.ts';
 export type { ImportedTagTable, Sheet } from './xlsx.ts';
 export { BOXES, ladderToScl, LadderError, ladElementFor, ladElements, ladId, ladOperands } from './ladder.ts';
 export type { BoxSpec, CoilType, ContactType, LadElement, LadNetwork, LadderScl } from './ladder.ts';
+export { fixIecInstances, flgNetToLadder, importSimaticMl, isSimaticMl, SimaticMlError } from './simaticml.ts';
+export type { SimaticMlImport } from './simaticml.ts';

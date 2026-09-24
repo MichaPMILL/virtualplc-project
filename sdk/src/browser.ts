@@ -17,3 +17,5 @@ export type { Diagnostic } from './diagnostics.ts';
 export type { DbEntry, HmiSymbol, IoLinkPort, IoModuleConfig, ServicesConfig } from './image.ts';
 export { BOXES, ladderToScl, LadderError, ladElementFor, ladElements, ladId, ladOperands } from './ladder.ts';
 export type { BoxSpec, CoilType, ContactType, LadElement, LadNetwork, LadderScl } from './ladder.ts';
+export { fixIecInstances, flgNetToLadder, importSimaticMl, isSimaticMl, SimaticMlError } from './simaticml.ts';
+export type { SimaticMlImport } from './simaticml.ts';

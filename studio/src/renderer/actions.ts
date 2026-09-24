@@ -1,7 +1,7 @@
 // Commands of the Studio (menus, toolbar, shortcuts, tree context menus).
 import {
-  blockLabel, DEVICE_TYPES, emptyInterface, importExternalSource, importTagTableXlsx, ladId, loadProject, newDevice, newId, newProject, saveProject,
-  type Block, type Device,
+  blockLabel, DEVICE_TYPES, emptyInterface, fixIecInstances, importExternalSource, importSimaticMl, importTagTableXlsx, isSimaticMl, ladId, loadProject, newDevice, newId, newProject, saveProject,
+  type Block, type DataTypeDef, type Device, type TagTable,
 } from '../../../sdk/src/browser.ts';
 import type { CompileSummary, MonitorValue } from '../backend/backend.ts';
 import { call, host } from './host.ts';
@@ -209,53 +209,84 @@ export async function importSourceCmd(device = currentDevice()): Promise<void> {
 
 export async function importFiles(device: Device, files: Array<{ name: string; bytes: Uint8Array }>): Promise<void> {
   // data types first (used by DBs and blocks), then tag tables, DBs and code blocks
-  const rank = (n: string) => (/\.udt$/i.test(n) ? 0 : /\.xlsx$/i.test(n) ? 1 : /\.db$/i.test(n) ? 2 : 3);
+  const xmlRank = (f: { bytes: Uint8Array }) => {
+    const head = decodeText(f.bytes.subarray(0, 4096));
+    return /<SW\.Types\./.test(head) ? 0 : /<SW\.Tags\./.test(head) ? 1 : /<SW\.Blocks\.(Global|Instance)DB/.test(head) ? 2 : 3;
+  };
+  const rank = (f: { name: string; bytes: Uint8Array }) => (/\.udt$/i.test(f.name) ? 0 : /\.xlsx$/i.test(f.name) ? 1 : /\.db$/i.test(f.name) ? 2 : /\.xml$/i.test(f.name) ? xmlRank(f) : 3);
   let errors = 0;
-  for (const f of [...files].sort((a, b) => rank(a.name) - rank(b.name))) {
+  const mergeTables = (tables: Array<Omit<TagTable, 'id'>>) => {
+    let tags = 0;
+    let constants = 0;
+    for (const it of tables) {
+      // a tag name is unique in the device: update it where it already is
+      const fresh = it.tags.filter((tag) => {
+        const owner = device.tagTables.find((tt) => tt.name.toLowerCase() !== it.name.toLowerCase() && tt.tags.some((x) => x.name.toLowerCase() === tag.name.toLowerCase()));
+        if (owner) mergeByName(owner.tags, [tag]);
+        return !owner;
+      });
+      let table = device.tagTables.find((x) => x.name.toLowerCase() === it.name.toLowerCase());
+      if (!table) {
+        table = { id: newId('tt'), name: it.name, tags: [], constants: [] };
+        device.tagTables.push(table);
+      }
+      mergeByName(table.tags, fresh);
+      mergeByName(table.constants, it.constants);
+      tags += it.tags.length;
+      constants += it.constants.length;
+    }
+    return { tags, constants };
+  };
+  const mergeBlocks = (blocks: Block[]) => {
+    let replaced = 0;
+    for (const b of blocks) {
+      const existing = device.blocks.findIndex((x) => x.name.toLowerCase() === b.name.toLowerCase());
+      if (existing >= 0) {
+        b.id = device.blocks[existing].id;
+        b.number = device.blocks[existing].number;
+        device.blocks[existing] = b;
+        replaced++;
+      } else {
+        device.blocks.push(b);
+      }
+    }
+    return replaced;
+  };
+  const mergeTypes = (types: DataTypeDef[]) => {
+    for (const ut of types) {
+      const existing = device.types.find((x) => x.name.toLowerCase() === ut.name.toLowerCase());
+      if (existing) ut.id = existing.id;
+    }
+    return mergeByName(device.types, types);
+  };
+  for (const f of [...files].sort((a, b) => rank(a) - rank(b))) {
     const path = `${device.name} > ${t.externalSources} > ${f.name}`;
     try {
+      const text = /\.xml$/i.test(f.name) ? decodeText(f.bytes) : '';
+      if (text && isSimaticMl(text)) {
+        const r = importSimaticMl(device, text);
+        const typeResult = mergeTypes(r.types);
+        const replaced = mergeBlocks(r.blocks);
+        const counts = mergeTables(r.tagTables);
+        const parts = [
+          r.types.length ? `${r.types.length} type(s) de données${typeResult.replaced ? ` (${typeResult.replaced} remplacé(s))` : ''}` : '',
+          r.blocks.length ? `${r.blocks.map((b) => `${b.name} [${b.type}${b.number}${b.language === 'LAD' ? ', CONT' : ''}]`).join(', ')}${replaced ? ` (${replaced} remplacé(s))` : ''}` : '',
+          r.tagTables.length ? `${counts.tags} variable(s), ${counts.constants} constante(s) dans ${r.tagTables.map((x) => x.name).join(', ')}` : '',
+        ].filter(Boolean);
+        store.addMessage({ severity: 'ok', path, text: `Export XML « ${f.name} » : ${parts.join(' ; ')}.` });
+        for (const w of r.warnings) store.addMessage({ severity: 'warning', path, text: w });
+        continue;
+      }
+      if (/\.xml$/i.test(f.name)) throw new Error('fichier XML non reconnu (export XML de blocs, types de données ou tables de variables attendu)');
       if (/\.xlsx$/i.test(f.name)) {
         const tables = await importTagTableXlsx(f.bytes, f.name.replace(/\.xlsx$/i, ''));
-        let tags = 0;
-        let constants = 0;
-        for (const it of tables) {
-          // a tag name is unique in the device: update it where it already is
-          const fresh = it.tags.filter((tag) => {
-            const owner = device.tagTables.find((tt) => tt.name.toLowerCase() !== it.name.toLowerCase() && tt.tags.some((x) => x.name.toLowerCase() === tag.name.toLowerCase()));
-            if (owner) mergeByName(owner.tags, [tag]);
-            return !owner;
-          });
-          let table = device.tagTables.find((x) => x.name.toLowerCase() === it.name.toLowerCase());
-          if (!table) {
-            table = { id: newId('tt'), name: it.name, tags: [], constants: [] };
-            device.tagTables.push(table);
-          }
-          mergeByName(table.tags, fresh);
-          mergeByName(table.constants, it.constants);
-          tags += it.tags.length;
-          constants += it.constants.length;
-        }
+        const { tags, constants } = mergeTables(tables);
         store.addMessage({ severity: 'ok', path, text: `Table de variables « ${f.name} » : ${tags} variable(s), ${constants} constante(s) dans ${tables.map((x) => x.name).join(', ')}.` });
         continue;
       }
       const { blocks, tags, types } = importExternalSource(device, decodeText(f.bytes), f.name);
-      for (const ut of types) {
-        const existing = device.types.find((x) => x.name.toLowerCase() === ut.name.toLowerCase());
-        if (existing) ut.id = existing.id;
-      }
-      const typeResult = mergeByName(device.types, types);
-      let replaced = 0;
-      for (const b of blocks) {
-        const existing = device.blocks.findIndex((x) => x.name.toLowerCase() === b.name.toLowerCase());
-        if (existing >= 0) {
-          b.id = device.blocks[existing].id;
-          b.number = device.blocks[existing].number;
-          device.blocks[existing] = b;
-          replaced++;
-        } else {
-          device.blocks.push(b);
-        }
-      }
+      const typeResult = mergeTypes(types);
+      const replaced = mergeBlocks(blocks);
       const table = device.tagTables[0];
       for (const tag of tags) {
         if (!device.tagTables.some((tt) => tt.tags.some((x) => x.name.toLowerCase() === tag.name.toLowerCase()))) table.tags.push(tag);
@@ -271,6 +302,7 @@ export async function importFiles(device: Device, files: Array<{ name: string; b
       store.addMessage({ severity: 'error', text: `« ${f.name} » : ${(e as Error).message}`, path });
     }
   }
+  fixIecInstances(device);
   store.touch();
   pruneEditors();
   store.emit('editors');

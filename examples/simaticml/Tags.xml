@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Document>
+  <Engineering version="V17" />
+  <SW.Tags.PlcTagTable ID="0">
+    <AttributeList><Name>Convoyeur</Name></AttributeList>
+    <ObjectList>
+      <SW.Tags.PlcTag ID="1" CompositionName="Tags">
+        <AttributeList><DataTypeName>Bool</DataTypeName><ExternalAccessible>true</ExternalAccessible><ExternalVisible>true</ExternalVisible><ExternalWritable>true</ExternalWritable><LogicalAddress>%I0.0</LogicalAddress><Name>Start_Button</Name></AttributeList>
+        <ObjectList>
+          <MultilingualText ID="2" CompositionName="Comment"><ObjectList><MultilingualTextItem ID="3" CompositionName="Items"><AttributeList><Culture>fr-FR</Culture><Text>Bouton marche</Text></AttributeList></MultilingualTextItem></ObjectList></MultilingualText>
+        </ObjectList>
+      </SW.Tags.PlcTag>
+      <SW.Tags.PlcTag ID="4" CompositionName="Tags">
+        <AttributeList><DataTypeName>Bool</DataTypeName><LogicalAddress>%I0.1</LogicalAddress><Name>Stop_Button</Name></AttributeList>
+      </SW.Tags.PlcTag>
+      <SW.Tags.PlcTag ID="5" CompositionName="Tags">
+        <AttributeList><DataTypeName>Bool</DataTypeName><LogicalAddress>%Q0.0</LogicalAddress><Name>Lamp</Name></AttributeList>
+      </SW.Tags.PlcTag>
+      <SW.Tags.PlcTag ID="6" CompositionName="Tags">
+        <AttributeList><DataTypeName>Real</DataTypeName><ExternalWritable>false</ExternalWritable><LogicalAddress>%MD20</LogicalAddress><Name>Speed_Display</Name></AttributeList>
+      </SW.Tags.PlcTag>
+      <SW.Tags.PlcUserConstant ID="7" CompositionName="UserConstants">
+        <AttributeList><DataTypeName>Int</DataTypeName><Name>MaxStarts</Name><Value>1000</Value></AttributeList>
+      </SW.Tags.PlcUserConstant>
+    </ObjectList>
+  </SW.Tags.PlcTagTable>
+</Document>

@@ -464,16 +464,18 @@ export class LadderEditor {
   private renderSeries(items: LadElement[], flow: Flow, top: boolean): { el: HTMLElement; flow: Flow } {
     const row = h('div', { className: `lad-series${top ? ' top' : ''}` });
     let f = flow;
-    // top level: the coils ending the network are drawn at the right rail
+    // the coils ending a path (and parallel coils) are drawn at the right rail
+    const isOutput = (el: LadElement): boolean => el.kind === 'coil' || (el.kind === 'branch' && el.branches.every((b) => b.length > 0 && isOutput(b[b.length - 1])));
     let lastLogic = items.length;
-    if (top) while (lastLogic > 0 && items[lastLogic - 1].kind === 'coil') lastLogic--;
+    while (lastLogic > 0 && isOutput(items[lastLogic - 1])) lastLogic--;
     items.forEach((el, i) => {
-      if (top && i === lastLogic) row.append(this.wire(f, true));
+      if (i === lastLogic) row.append(this.wire(f, true));
       const r = this.renderElement(el, f);
+      if (i >= lastLogic && el.kind === 'branch') r.el.classList.add('stretch');
       row.append(r.el);
       f = r.flow;
     });
-    if (!top || lastLogic === items.length) row.append(this.wire(f, true));
+    if (lastLogic === items.length) row.append(this.wire(f, true));
     if (!items.length && top) row.prepend(h('span', { className: 'lad-empty' }, 'Réseau vide : sélectionnez-le puis insérez des contacts et des bobines'));
     return { el: row, flow: f };
   }
