@@ -5,7 +5,7 @@ import * as git from './git.ts';
 import { folderForNewProject, openProjectPath, saveProjectPath, type ProjectLayout } from './projectStore.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MANIFEST_EXT, safeFileName, setSimulatorWasm } from '../../../sdk/src/index.ts';
+import { MANIFEST_EXT, safeFileName, setSimulatorWasm, type Role } from '../../../sdk/src/index.ts';
 
 // dist/vplc-sim.wasm, next to the bundled backend (main.cjs in Electron, backend.mjs in web mode)
 declare const __dirname: string | undefined;
@@ -14,7 +14,7 @@ setSimulatorWasm(join(typeof __dirname === 'string' ? __dirname : dirname(fileUR
 export function createApi(backend = new Backend()) {
   return {
     compile: (projectJson: string, deviceId: string) => backend.compile(projectJson, deviceId),
-    connect: (deviceId: string, host: string, port: number, password?: string) => backend.connect(deviceId, host, port, password),
+    connect: (deviceId: string, host: string, port: number, password?: string, user?: string) => backend.connect(deviceId, host, port, password, user),
     disconnect: (deviceId: string) => backend.disconnect(deviceId),
     state: (deviceId: string) => backend.state(deviceId),
     download: (deviceId: string, startAfter: boolean) => backend.download(deviceId, startAfter),
@@ -29,6 +29,14 @@ export function createApi(backend = new Backend()) {
     dataLogTest: (deviceId: string, log: number) => backend.dataLogTest(deviceId, log),
     setSecret: (deviceId: string, key: string, value: string) => backend.setSecret(deviceId, key, value),
     traceCertificate: (deviceId: string, log: number, max: number) => backend.traceCertificate(deviceId, log, max),
+    // Users and audit trail of the CPU
+    users: (deviceId: string) => backend.client(deviceId).users(),
+    setUser: (deviceId: string, name: string, password: string, role: Role) => backend.client(deviceId).setUser(name, password, role),
+    deleteUser: (deviceId: string, name: string) => backend.client(deviceId).deleteUser(name),
+    resetPassword: (deviceId: string, name: string, password: string) => backend.client(deviceId).resetPassword(name, password),
+    changePassword: (deviceId: string, oldPassword: string, newPassword: string) => backend.client(deviceId).changePassword(oldPassword, newPassword),
+    auditRead: (deviceId: string, count: number, from = 0) => backend.client(deviceId).auditRead(count, from),
+    auditReadAll: (deviceId: string) => backend.client(deviceId).auditReadAll(),
     /** Serial ports of this computer (USB CPUs: ESP32, Arduino…) */
     serialPorts: async (): Promise<Array<{ path: string; label: string }>> => {
       try {

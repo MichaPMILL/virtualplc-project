@@ -36,7 +36,7 @@ public:
     // USERS request: u8 op + fields separated by \0
     //   0 list | 1 add or replace: name, password, role digit (admin) | 2 delete: name (admin)
     //   3 set password: name, password (admin) | 4 change own password: old, new
-    const char* users(const uint8_t* request, uint32_t length, const std::string& user, uint8_t role, std::string& out);
+    const char* users(const uint8_t* request, uint32_t length, const std::string& user, const std::string& peer, uint8_t role, std::string& out);
 
     void audit(const std::string& user, const std::string& peer, const std::string& action, const std::string& detail);
     size_t auditRead(uint32_t from, uint16_t count, char* out, size_t cap);

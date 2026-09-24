@@ -39,8 +39,8 @@ public:
     // Role of the user (0 = refused). Must be fast (called by the CPU thread).
     virtual uint8_t authenticate(const char* user, const char* password) { (void)user; (void)password; return 0; }
     // USERS command: request in, JSON out; session user and role for the permissions. nullptr on success, else an error
-    virtual const char* users(const uint8_t* request, uint32_t length, const char* user, uint8_t role, char* out, size_t cap, size_t& written) {
-        (void)request; (void)length; (void)user; (void)role; (void)out; (void)cap;
+    virtual const char* users(const uint8_t* request, uint32_t length, const char* user, const char* peer, uint8_t role, char* out, size_t cap, size_t& written) {
+        (void)request; (void)length; (void)user; (void)peer; (void)role; (void)out; (void)cap;
         written = 0;
         return "user management is not supported by this CPU";
     }

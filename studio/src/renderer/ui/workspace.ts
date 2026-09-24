@@ -15,6 +15,7 @@ import { interfaceEditor, methodEditor } from '../editors/method.ts';
 import { simulationEditor } from '../editors/simulation.ts';
 import { networkEditor } from '../editors/network.ts';
 import { dataLogsEditor } from '../editors/datalogs.ts';
+import { securityEditor } from '../editors/security.ts';
 import * as V from '../versioning.ts';
 import { historyEditor } from '../versioning.ts';
 import { branchesEditor } from '../branches.ts';
@@ -94,6 +95,7 @@ function createView(ref: EditorRef): EditorView | null {
     }
     case 'simulation': return simulationEditor(device);
     case 'datalogs': return dataLogsEditor(device);
+    case 'security': return securityEditor(device);
   }
 }
 
@@ -252,6 +254,7 @@ function labelOf(ref: EditorRef): string {
     case 'interface': return d?.interfaces?.find((x) => x.id === ref.interfaceId)?.name ?? '?';
     case 'simulation': return `Simulation — ${d?.name ?? '?'}`;
     case 'datalogs': return `Traçabilité — ${d?.name ?? '?'}`;
+    case 'security': return `Sécurité — ${d?.name ?? '?'}`;
     case 'device': return d?.name ?? '?';
     case 'online': return t.onlineDiag;
     case 'allTags': return t.showAllTags;

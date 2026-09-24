@@ -217,6 +217,8 @@ export interface ConnectionSpec {
   host: string;
   port: number;
   password: string;
+  /** CPU with user accounts (empty: the CPU password alone) */
+  user: string;
 }
 
 export function connectionDialog(device: Device, title: string, action: string): Promise<ConnectionSpec | null> {
@@ -226,7 +228,8 @@ export function connectionDialog(device: Device, title: string, action: string):
       const ports = h('datalist', { id: 'conn-serial-ports' });
       const host = h('input', { value: device.connection.host, list: 'conn-serial-ports' });
       const port = h('input', { type: 'number', value: String(device.connection.port), style: 'width:100px' });
-      const password = h('input', { type: 'password', placeholder: '(aucun)' });
+      const user = h('input', { value: device.connection.user ?? '', placeholder: '(mot de passe CPU seul)', autocomplete: 'username' });
+      const password = h('input', { type: 'password', placeholder: '(aucun)', autocomplete: 'current-password' });
       const kind = h('select', null, h('option', { value: 'tcp' }, t.interfaceTcp), h('option', { value: 'serial' }, 'USB / liaison série'));
       const hostLabel = h('label', null, t.ipAddress);
       const portLabel = h('label', null, t.port);
@@ -262,12 +265,13 @@ export function connectionDialog(device: Device, title: string, action: string):
         h('div', { className: 'field' }, h('label', null, t.interfaceType), kind),
         h('div', { className: 'field' }, hostLabel, host, hostHint),
         h('div', { className: 'field' }, portLabel, port, portHint),
+        h('div', { className: 'field' }, h('label', null, 'Utilisateur'), user, h('span', { className: 'hint' }, 'compte de la CPU (rôle : lecture, opérateur, ingénieur, administrateur)')),
         h('div', { className: 'field' }, h('label', null, t.password), password, h('span', { className: 'hint' }, 'si la CPU est protégée')),
         ports,
       ));
       const ok = () => {
         const serial = isSerialPort(host.value);
-        result = { host: host.value.trim(), port: Number(port.value) || (serial ? DEFAULT_BAUD : PROTOCOL_PORT), password: password.value };
+        result = { host: host.value.trim(), port: Number(port.value) || (serial ? DEFAULT_BAUD : PROTOCOL_PORT), password: password.value, user: user.value.trim() };
         d.close();
       };
       password.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });

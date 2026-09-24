@@ -25,4 +25,6 @@ export { BAUD_RATES, DEFAULT_BAUD, isSerialPort, isSimulatorHost } from './seria
 export { PROTOCOL_PORT } from './isa.ts';
 export { DEFAULT_DB_PORT, MAX_DATALOGS, resolveDataLogs, secretKey, tagSymbol, keyFingerprint, traceCanonical, traceGenesis, verifyTrace, verifyTraceCertificate } from './datalog.ts';
 export type { DataLog, DataLogColumn, DataLogDestination, DataLogImage, DataLogTrigger, TlsMode, TraceCertificate, TraceKind, TraceRecord, TraceVerification, CertificateVerification } from './datalog.ts';
-export type { DataLogStatus } from './device.ts';
+export type { DataLogStatus, DeviceInfo } from './device.ts';
+export { auditCanonical, auditGenesis, ROLES, verifyAudit } from './security.ts';
+export type { AuditLog, AuditRecord, AuditVerification, Role, UserAccount } from './security.ts';

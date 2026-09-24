@@ -475,7 +475,7 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
         }
         case Command::CMD_USERS: {
             size_t written = 0;
-            const char* err = platform_.users(p, len, session.user, session.role, reinterpret_cast<char*>(payload), cap, written);
+            const char* err = platform_.users(p, len, session.user, session.peer[0] ? session.peer : "-", session.role, reinterpret_cast<char*>(payload), cap, written);
             if (err) fail(Status::ST_ERROR, err);
             else n = uint32_t(written);
             break;

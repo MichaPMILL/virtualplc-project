@@ -59,11 +59,11 @@ export class Backend {
     };
   }
 
-  async connect(deviceId: string, host: string, port: number, password?: string): Promise<DeviceInfo> {
+  async connect(deviceId: string, host: string, port: number, password?: string, user?: string): Promise<DeviceInfo> {
     await this.disconnect(deviceId);
     const client = new DeviceClient(host, port);
     client.timeoutMs = 4000;
-    const info = await client.connect(password || undefined);
+    const info = await client.connect(password || undefined, user || undefined);
     this.sessions.set(deviceId, { client, info });
     return info;
   }
@@ -143,6 +143,11 @@ export class Backend {
 
   async dataLogTest(deviceId: string, log: number): Promise<DataLogStatus> {
     return this.session(deviceId).client.dataLogTest(log);
+  }
+
+  /** Client of an online device (users, audit trail) */
+  client(deviceId: string): DeviceClient {
+    return this.session(deviceId).client;
   }
 
   async setSecret(deviceId: string, key: string, value: string): Promise<void> {

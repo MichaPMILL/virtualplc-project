@@ -1,9 +1,10 @@
 // Commands of the Studio (menus, toolbar, shortcuts, tree context menus).
 import {
-  blockLabel, DEVICE_TYPES, emptyInterface, newMethod, fixIecInstances, importExternalSource, importSimaticMl, importTagTableXlsx, isSimaticMl, ladId, loadProject, newDevice, newId, newProject, saveProject,
+  blockLabel, DEVICE_TYPES, isSimulatorHost, emptyInterface, newMethod, fixIecInstances, importExternalSource, importSimaticMl, importTagTableXlsx, isSimaticMl, ladId, loadProject, newDevice, newId, newProject, saveProject,
   type Block, type DataTypeDef, type Device, type InterfaceDef, type TagTable,
 } from '../../../sdk/src/browser.ts';
 import type { CompileSummary, MonitorValue } from '../backend/backend.ts';
+import { ROLE_LABELS } from './editors/security.ts';
 import { call, host } from './host.ts';
 import { refreshGit } from './versioning.ts';
 import { t } from './i18n.ts';
@@ -582,7 +583,7 @@ export async function compileCmd(device = currentDevice(), quiet = false): Promi
 // Online
 // ---------------------------------------------------------------------------
 
-const passwords = new Map<string, string>();
+const passwords = new Map<string, { user: string; password: string }>();
 let pollTimer: number | undefined;
 let monitorTimer: number | undefined;
 
@@ -599,20 +600,26 @@ async function ensureConnected(device: Device, title: string, action: string, fo
     }
   }
   const known = !forceDialog && device.connection.host && passwords.has(device.id);
-  let spec = known ? { host: device.connection.host, port: device.connection.port, password: passwords.get(device.id) ?? '' } : null;
+  let spec = known ? { host: device.connection.host, port: device.connection.port, ...passwords.get(device.id)! } : null;
   for (;;) {
     if (!spec) spec = await connectionDialog(device, title, action);
     if (!spec) return false;
     try {
-      const info = await call('connect', device.id, spec.host, spec.port, spec.password || undefined);
-      if (device.connection.host !== spec.host || device.connection.port !== spec.port) {
-        device.connection = { host: spec.host, port: spec.port };
+      const info = await call('connect', device.id, spec.host, spec.port, spec.password || undefined, spec.user || undefined);
+      if (device.connection.host !== spec.host || device.connection.port !== spec.port || (device.connection.user ?? '') !== spec.user) {
+        device.connection = { host: spec.host, port: spec.port, ...(spec.user ? { user: spec.user } : {}) };
         store.touch();
       }
-      passwords.set(device.id, spec.password);
+      passwords.set(device.id, { user: spec.user, password: spec.password });
       const s = store.onlineOf(device.id);
       s.host = `${spec.host}:${spec.port}`;
-      store.addMessage({ severity: 'info', text: `Connecté à ${info.name} (${info.device}, firmware ${info.firmware}) via ${spec.host}.`, path: device.name });
+      s.user = info.user;
+      s.role = info.role;
+      const who = info.user ? ` en tant que ${info.user} (${ROLE_LABELS[info.role ?? 'viewer']})` : '';
+      store.addMessage({ severity: 'info', text: `Connecté à ${info.name} (${info.device}, firmware ${info.firmware}) via ${spec.host}${who}.`, path: device.name });
+      if (!info.auth && !isSimulatorHost(spec.host)) {
+        store.addMessage({ severity: 'warning', text: `${info.name} n'est pas protégée : tout poste du réseau peut la programmer. Créez des comptes (vplc-cpu --add-user) — voir docs/security.md.`, path: device.name });
+      }
       return true;
     } catch (e) {
       const retry = await confirmDialog(title, `La liaison avec ${spec.host}:${spec.port} n'a pas pu être établie.\n\n${(e as Error).message}\n\nRéessayer avec d'autres paramètres ?`, 'Réessayer', t.cancel);

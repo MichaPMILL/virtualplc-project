@@ -69,6 +69,7 @@ export const icons = {
   sim: s('<rect x="1.5" y="2.5" width="13" height="9" rx="1" fill="#e8f1f8" stroke="#3d78a8"/><path d="M6.5 5v4.5l3.8-2.25z" fill="#1a9e5e"/><path d="M5 14h6" stroke="#3d78a8" stroke-width="1.4"/>'),
   method: s('<rect x="2.5" y="3.5" width="11" height="9" rx="1" fill="#e6f4ea" stroke="#2e7d4f"/><path d="M5 10V6l1.5 2L8 6v4M10 6.2v3.8" fill="none" stroke="#2e7d4f" stroke-width="1.1"/>'),
   iface: s('<circle cx="5" cy="8" r="3" fill="#fff" stroke="#6a4fa3" stroke-width="1.4"/><path d="M8 8h6.5" stroke="#6a4fa3" stroke-width="1.4"/>'),
+  security: s('<path d="M8 1.5l5.5 2v4c0 3.5-2.4 6-5.5 7-3.1-1-5.5-3.5-5.5-7v-4z" fill="#e8f1f8" stroke="#3d78a8"/><rect x="5.5" y="7.5" width="5" height="4" fill="#3d78a8"/><path d="M6.5 7.5V6a1.5 1.5 0 013 0v1.5" fill="none" stroke="#3d78a8"/>'),
   menuArrow: s('<path d="M6 4l4 4-4 4" fill="none" stroke="#4a5563"/>'),
 };
 

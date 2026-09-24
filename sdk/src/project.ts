@@ -148,7 +148,7 @@ export interface Device {
   type: DeviceType;
   comment?: string;
   cpu: { cycleMs: number };
-  connection: { host: string; port: number };
+  connection: { host: string; port: number; /** last user name used to go online (never the password) */ user?: string };
   io: IoModuleConfig[];
   tagTables: TagTable[];
   blocks: Block[];

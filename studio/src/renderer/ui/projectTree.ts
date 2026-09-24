@@ -139,6 +139,10 @@ function deviceNodes(d: Device): NodeSpec[] {
       className: store.compile.get(d.id)?.diagnostics.some((x) => x.location === 'datalog' && x.severity === 'error') ? 'error' : undefined,
     },
     {
+      key: `security:${d.id}`, label: 'Sécurité (utilisateurs, journal d\'audit)', icon: 'security', depth: 2,
+      open: { kind: 'security', deviceId: d.id },
+    },
+    {
       key: `ifcs:${d.id}`, label: 'Interfaces', icon: 'folder', depth: 2,
       menu: [{ label: 'Ajouter nouvelle interface', icon: 'iface', run: () => void A.addInterfaceCmd(d) }],
       children: () => [

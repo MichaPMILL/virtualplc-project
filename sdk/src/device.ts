@@ -6,6 +6,8 @@ import { crc32 } from './crc32.ts';
 import { BAUD_RATES, DEFAULT_BAUD, isSerialPort, isSimulatorHost } from './serial.ts';
 import { simulator } from './simulator.ts';
 import type { TraceCertificate, TraceRecord } from './datalog.ts';
+import type { AuditLog, Role, UserAccount } from './security.ts';
+import { ROLES } from './security.ts';
 
 export { isSerialPort, isSimulatorHost };
 import { Area, Command, PROTOCOL_PORT, Status } from './isa.ts';
@@ -28,39 +30,6 @@ export interface DeviceInfo {
   role?: Role;
 }
 
-/** Roles of the CPU users (least privilege, IEC 62443 SR 2.1) */
-export type Role = 'viewer' | 'operator' | 'engineer' | 'admin';
-export const ROLES: Role[] = ['viewer', 'operator', 'engineer', 'admin'];
-
-export interface UserAccount {
-  name: string;
-  role: Role;
-  /** Last password change (unix time, seconds) */
-  changed: number;
-}
-
-/** One record of the audit trail of the CPU (hash-chained, Ed25519-signed) */
-export interface AuditRecord {
-  seq: number;
-  /** Unix time in ms */
-  ts: number;
-  time: string;
-  user: string;
-  peer: string;
-  action: string;
-  detail: string;
-  chain: string;
-  sig: string;
-}
-
-export interface AuditLog {
-  plc?: string;
-  /** Ed25519 public key of the CPU (hex) */
-  key?: string;
-  first?: number;
-  last?: number;
-  records: AuditRecord[];
-}
 
 export interface DeviceState {
   state: 'NO_PROGRAM' | 'STOP' | 'RUN' | 'FAULT';

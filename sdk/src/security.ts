@@ -1,6 +1,39 @@
 // Audit trail of the CPU: every record is hash-chained and signed by the CPU (Ed25519), so that
 // a missing, inserted or altered record is detected (IEC 62443-3-3 SR 2.8 / SR 3.9).
-import type { AuditRecord } from './device.ts';
+/** Roles of the CPU users (least privilege, IEC 62443 SR 2.1) */
+export type Role = 'viewer' | 'operator' | 'engineer' | 'admin';
+export const ROLES: Role[] = ['viewer', 'operator', 'engineer', 'admin'];
+
+export interface UserAccount {
+  name: string;
+  role: Role;
+  /** Last password change (unix time, seconds) */
+  changed: number;
+}
+
+/** One record of the audit trail of the CPU (hash-chained, Ed25519-signed) */
+export interface AuditRecord {
+  seq: number;
+  /** Unix time in ms */
+  ts: number;
+  time: string;
+  user: string;
+  peer: string;
+  action: string;
+  detail: string;
+  chain: string;
+  sig: string;
+}
+
+export interface AuditLog {
+  plc?: string;
+  /** Ed25519 public key of the CPU (hex) */
+  key?: string;
+  first?: number;
+  last?: number;
+  records: AuditRecord[];
+}
+
 
 async function sha256Hex(text: string): Promise<string> {
   const d = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));

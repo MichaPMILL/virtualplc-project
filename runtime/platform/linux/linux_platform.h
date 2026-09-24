@@ -44,7 +44,7 @@ public:
     const char* setSecret(const char* key, const char* value) override;
     bool hasUsers() override;
     uint8_t authenticate(const char* user, const char* password) override;
-    const char* users(const uint8_t* request, uint32_t length, const char* user, uint8_t role, char* out, size_t cap, size_t& written) override;
+    const char* users(const uint8_t* request, uint32_t length, const char* user, const char* peer, uint8_t role, char* out, size_t cap, size_t& written) override;
     void audit(const char* user, const char* peer, const char* action, const char* detail) override;
     size_t auditRead(uint32_t from, uint16_t count, char* out, size_t cap) override;
     sec::Security& security() { return security_; }

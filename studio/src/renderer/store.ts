@@ -17,6 +17,7 @@ export type EditorRef =
   | { kind: 'simulation'; deviceId: string }
   | { kind: 'network' }
   | { kind: 'datalogs'; deviceId: string }
+  | { kind: 'security'; deviceId: string }
   | { kind: 'history' }
   | { kind: 'branches' };
 
@@ -41,6 +42,9 @@ export interface OnlineState {
   io?: Array<{ module: number; ok: boolean; diag?: string }>;
   logs: Array<{ seq: number; t: number; msg: string }>;
   host?: string;
+  /** Logged-in user of a CPU with accounts, and its role */
+  user?: string;
+  role?: 'viewer' | 'operator' | 'engineer' | 'admin';
 }
 
 type Listener = (topic: Topic) => void;

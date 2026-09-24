@@ -104,6 +104,9 @@ test('security: roles, lockout, user management and signed audit trail', { skip 
       assert.ok(actions.includes(a), `${a} missing in ${actions.join(', ')}`);
     }
     assert.match(audit.records.find((a) => a.action === 'login')!.peer, /^127\.0\.0\.1:\d+$/);
+    const set = audit.records.find((a) => a.user === 'admin' && a.action === 'user set')!;
+    assert.equal(set.detail, 'viewer1 (viewer)');
+    assert.match(set.peer, /^127\.0\.0\.1:\d+$/);
     assert.equal(audit.records[0].seq, 1);
     const ok = await verifyAudit({ plc: 'Cell4', records: audit.records, publicKey: audit.key });
     assert.deepEqual(ok, { ok: true, verified: audit.records.length });

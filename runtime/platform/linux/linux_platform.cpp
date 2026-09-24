@@ -73,9 +73,9 @@ bool LinuxPlatform::hasUsers() { return security_.hasUsers(); }
 
 uint8_t LinuxPlatform::authenticate(const char* user, const char* password) { return security_.authenticate(user, password); }
 
-const char* LinuxPlatform::users(const uint8_t* request, uint32_t length, const char* user, uint8_t role, char* out, size_t cap, size_t& written) {
+const char* LinuxPlatform::users(const uint8_t* request, uint32_t length, const char* user, const char* peer, uint8_t role, char* out, size_t cap, size_t& written) {
     std::string json;
-    const char* err = security_.users(request, length, user, role, json);
+    const char* err = security_.users(request, length, user, peer, role, json);
     written = 0;
     if (err) return err;
     if (json.size() >= cap) return "response too large";

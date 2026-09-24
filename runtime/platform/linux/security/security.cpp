@@ -196,7 +196,7 @@ const char* Security::setUser(const std::string& name, const std::string& passwo
     return nullptr;
 }
 
-const char* Security::users(const uint8_t* request, uint32_t length, const std::string& user, uint8_t role, std::string& out) {
+const char* Security::users(const uint8_t* request, uint32_t length, const std::string& user, const std::string& peer, uint8_t role, std::string& out) {
     loadUsers();
     uint8_t op = length ? request[0] : 0;
     std::vector<std::string> f;
@@ -208,7 +208,8 @@ const char* Security::users(const uint8_t* request, uint32_t length, const std::
         }
         if (length > 1) f.push_back(cur);
     }
-    auto wipe = [&]() { for (auto& s : f) OPENSSL_cleanse(&s[0], s.size()); };
+    // passwords are wiped from memory once used (the user name, field 0 of ops 1 to 3, is kept)
+    auto wipe = [&]() { for (size_t k = op == 4 ? 0 : 1; k < f.size(); k++) OPENSSL_cleanse(&f[k][0], f[k].size()); };
     auto countAdmins = [&]() { int n = 0; for (auto& [k, u] : users_) n += u.role == 4; return n; };
     const bool admin = role >= 4;
     error_.clear();
@@ -235,7 +236,7 @@ const char* Security::users(const uint8_t* request, uint32_t length, const std::
             const char* e = setUser(f[0], f[1], r);
             wipe();
             if (e) return e;
-            audit(user, "-", "user set", f[0] + " (" + roleText(r) + ")");
+            audit(user, peer, "user set", f[0] + " (" + roleText(r) + ")");
             out = "{}";
             return nullptr;
         }
@@ -247,7 +248,7 @@ const char* Security::users(const uint8_t* request, uint32_t length, const std::
             if (it->second.role == 4 && countAdmins() == 1) return "the last administrator cannot be deleted";
             users_.erase(it);
             if (!saveUsers()) return "cannot write the users file";
-            audit(user, "-", "user deleted", f[0]);
+            audit(user, peer, "user deleted", f[0]);
             out = "{}";
             return nullptr;
         }
@@ -259,7 +260,7 @@ const char* Security::users(const uint8_t* request, uint32_t length, const std::
             const char* e = setUser(f[0], f[1], it->second.role);
             wipe();
             if (e) return e;
-            audit(user, "-", "password reset", f[0]);
+            audit(user, peer, "password reset", f[0]);
             out = "{}";
             return nullptr;
         }
@@ -267,11 +268,11 @@ const char* Security::users(const uint8_t* request, uint32_t length, const std::
             if (f.size() < 2) { wipe(); return "old and new passwords expected"; }
             auto it = users_.find(user);
             if (it == users_.end()) { wipe(); return "no user account (CPU password only)"; }
-            if (!authenticate(user, f[0])) { wipe(); audit(user, "-", "password change failed", ""); return "wrong current password"; }
+            if (!authenticate(user, f[0])) { wipe(); audit(user, peer, "password change failed", ""); return "wrong current password"; }
             const char* e = setUser(user, f[1], it->second.role);
             wipe();
             if (e) return e;
-            audit(user, "-", "password changed", "");
+            audit(user, peer, "password changed", "");
             out = "{}";
             return nullptr;
         }
