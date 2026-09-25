@@ -1,4 +1,5 @@
 // Inspector window (bottom) and task cards (right).
+import { librariesCard } from './libraries.ts';
 import { blockLabel, DEVICE_TYPES } from '../../../../sdk/src/browser.ts';
 import * as A from '../actions.ts';
 import { clear, h, svg } from '../dom.ts';
@@ -236,7 +237,7 @@ const INSTRUCTIONS: Array<[string, IconName, Instruction[]]> = [
 ];
 
 export function taskCards(): HTMLElement {
-  let card: 'instructions' | 'online' | 'versions' = 'instructions';
+  let card: 'instructions' | 'libraries' | 'online' | 'versions' = 'instructions';
   const open = new Set<string>(['Temporisations', 'Compteurs', 'Contrôle du programme']);
   const body = h('div', { className: 'panel-body' });
   const header = h('div', { className: 'panel-header onlineable' });
@@ -245,11 +246,11 @@ export function taskCards(): HTMLElement {
 
   const render = () => {
     clear(vtabs);
-    for (const [k, label] of [['instructions', t.instructions], ['online', t.onlineTools], ['versions', t.versions]] as const) {
+    for (const [k, label] of [['instructions', t.instructions], ['libraries', 'Bibliothèques'], ['online', t.onlineTools], ['versions', t.versions]] as const) {
       vtabs.append(h('div', { className: `vtab${card === k ? ' active' : ''}`, onclick: () => { card = k; render(); } }, label));
     }
     clear(header);
-    header.append({ instructions: t.instructions, online: t.onlineTools, versions: t.versions }[card], h('span', { className: 'spacer' }),
+    header.append({ instructions: t.instructions, libraries: 'Bibliothèques', online: t.onlineTools, versions: t.versions }[card], h('span', { className: 'spacer' }),
       h('button', { className: 'tbtn', title: 'Réduire', onclick: () => { store.layout.tasks = false; store.emit('layout'); } }, '▸'));
     clear(body);
     if (card === 'instructions') {
@@ -268,6 +269,8 @@ export function taskCards(): HTMLElement {
       }
     } else if (card === 'versions') {
       versionsCard(body);
+    } else if (card === 'libraries') {
+      librariesCard(body, render);
     } else {
       const d = A.currentDevice();
       if (!d) return;
@@ -302,6 +305,7 @@ export function taskCards(): HTMLElement {
   store.on((topic) => {
     if (card === 'online' && ['online', 'compile', 'editors'].includes(topic)) render();
     if (card === 'versions' && ['git', 'project'].includes(topic) && !body.contains(document.activeElement)) render();
+    if (card === 'libraries' && ['selection', 'project', 'editors'].includes(topic) && !body.contains(document.activeElement)) render();
   });
   window.addEventListener('studio:show-card', (e) => {
     card = (e as CustomEvent).detail;

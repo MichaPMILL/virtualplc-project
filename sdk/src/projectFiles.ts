@@ -11,6 +11,7 @@
 //   devices/<Device>/types/<Type>.json    PLC data type (UDT)
 //   devices/<Device>/interfaces/<Name>.json  interface (method prototypes)
 //   devices/<Device>/datalogs/<Name>.json    traceability data log
+//   library/<Element>.json                project library (blocks, types, interfaces and their versions)
 //   .gitattributes, .gitignore
 //
 // The manifest carries no modification date: Git keeps the history, and a date that
@@ -20,6 +21,7 @@ import {
   type Block, type DataTypeDef, type Device, type InterfaceDef, type Project, type TagTable, type WatchTable,
 } from './project.ts';
 import type { DataLog } from './datalog.ts';
+import type { LibraryElement } from './library.ts';
 
 export const MANIFEST_EXT = '.vplcproj';
 
@@ -105,7 +107,7 @@ export function projectToFiles(project: Project): ProjectFiles {
       const methods = b.methods?.length ? b.methods : undefined;
       const methodNames = uniqueNames(methods ?? [], (m) => m.name);
       files[`${base}.json`] = json({
-        ...pick(b, ['id', 'name', 'type', 'number', 'comment', 'event', 'returnType', 'instanceOf', 'extends', 'implements', 'abstract', 'final', 'interface', 'members', 'language', 'networks']),
+        ...pick(b, ['id', 'name', 'type', 'number', 'comment', 'event', 'returnType', 'instanceOf', 'extends', 'implements', 'abstract', 'final', 'interface', 'members', 'language', 'networks', 'library']),
         ...(methods ? { methods: methods.map((m) => ({ ...pick(m, ['id', 'name', 'returnType', 'access', 'abstract', 'final', 'override', 'comment', 'interface']), file: methodNames.get(m) })) } : {}),
       });
       if (b.type !== 'DB' && b.language !== 'LAD') files[`${base}.scl`] = b.code.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n');
@@ -118,23 +120,26 @@ export function projectToFiles(project: Project): ProjectFiles {
     const watchNames = uniqueNames(d.watchTables, (t) => t.name);
     for (const t of d.watchTables) files[`${dir}/watch/${watchNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'rows']));
     const typeNames = uniqueNames(d.types ?? [], (t) => t.name);
-    for (const t of d.types ?? []) files[`${dir}/types/${typeNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'comment', 'members']));
+    for (const t of d.types ?? []) files[`${dir}/types/${typeNames.get(t)}.json`] = json(pick(t, ['id', 'name', 'comment', 'members', 'library']));
     const logNames = uniqueNames(d.dataLogs ?? [], (t) => t.name);
     for (const l of d.dataLogs ?? []) files[`${dir}/datalogs/${logNames.get(l)}.json`] = json(pick(l, ['id', 'name', 'comment', 'trigger', 'columns', 'retentionDays', 'destination']));
     const ifcNames = uniqueNames(d.interfaces ?? [], (t) => t.name);
     for (const t of d.interfaces ?? []) {
       files[`${dir}/interfaces/${ifcNames.get(t)}.json`] = json({
-        ...pick(t, ['id', 'name', 'comment', 'extends']),
+        ...pick(t, ['id', 'name', 'comment', 'extends', 'library']),
         methods: t.methods.map((m) => pick(m, ['id', 'name', 'returnType', 'comment', 'interface'])),
       });
     }
   }
+  const libNames = uniqueNames(project.library ?? [], (e) => e.name);
+  for (const e of project.library ?? []) files[`library/${libNames.get(e)}.json`] = json(e);
   return files;
 }
 
 /** Folders written by projectToFiles (files below them that are not in the project any more are stale). */
 export function isManagedPath(path: string): boolean {
   return /^devices\/[^/]+\/(device\.json|(blocks|tags|watch|types|interfaces|datalogs)\/[^/]+\.(json|scl)|blocks\/[^/]+\.methods\/[^/]+\.scl)$/.test(path)
+    || /^library\/[^/]+\.json$/.test(path)
     || /^[^/]+\.vplcproj$/.test(path);
 }
 
@@ -224,10 +229,13 @@ export function projectFromFiles(files: ProjectFiles): Project {
     devices.push(d);
   }
   if (!devices.length) throw new Error('Invalid project: no devices');
+  const library = Object.keys(files).filter((p) => /^library\/[^/]+\.json$/.test(p)).sort()
+    .map((p) => parseJson<LibraryElement>(files, p));
   return {
     format: PROJECT_FORMAT, version: PROJECT_VERSION, name: m.name ?? manifests[0].replace(/\.vplcproj$/, ''),
     ...(m.author ? { author: m.author } : {}), ...(m.comment ? { comment: m.comment } : {}),
     created: m.created ?? new Date().toISOString(), modified: new Date().toISOString(), devices,
+    ...(library.length ? { library } : {}),
   };
 }
 

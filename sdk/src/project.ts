@@ -1,4 +1,5 @@
 // VirtualPLC Studio project model (.vplcproj) and its compilation.
+import type { LibraryElement, LibraryOrigin } from './library.ts';
 import type { Diagnostic } from './diagnostics.ts';
 import { compile, type CompileResult } from './compiler.ts';
 import type { IoModuleConfig, ServicesConfig } from './image.ts';
@@ -34,6 +35,8 @@ export interface DataTypeDef {
   name: string;
   comment?: string;
   members: Member[];
+  /** Copy of a library element */
+  library?: LibraryOrigin;
 }
 
 export interface BlockInterface {
@@ -72,6 +75,8 @@ export interface Block {
   abstract?: boolean;
   final?: boolean;
   methods?: BlockMethod[];
+  /** Copy of a library element (library, element, version) */
+  library?: LibraryOrigin;
 }
 
 export type MethodAccess = 'PUBLIC' | 'PRIVATE' | 'PROTECTED' | 'INTERNAL';
@@ -100,6 +105,7 @@ export interface InterfaceDef {
   comment?: string;
   extends?: string[];
   methods: BlockMethod[];
+  library?: LibraryOrigin;
 }
 
 export interface Tag {
@@ -179,6 +185,8 @@ export interface Project {
   created: string;
   modified: string;
   devices: Device[];
+  /** Project library: elements (blocks, types, interfaces) kept for reuse in the project */
+  library?: LibraryElement[];
 }
 
 export const DEVICE_TYPES: Record<DeviceType, { label: string; description: string; maxProgram: number; gpio: boolean }> = {

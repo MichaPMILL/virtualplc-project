@@ -15,6 +15,7 @@ const FILTERS = {
   iodd: [{ name: 'Description IO-Link (IODD)', extensions: ['xml'] }],
   gsdml: [{ name: 'Description PROFINET (GSDML)', extensions: ['xml'] }],
   eds: [{ name: 'Description EtherNet/IP (EDS)', extensions: ['eds', 'EDS'] }],
+  library: [{ name: 'Bibliothèque globale VirtualPLC', extensions: ['vplclib'] }],
 };
 
 function createWindow(): void {
@@ -86,8 +87,12 @@ ipcMain.handle('files.openMany', async (_e, kind?: 'iodd' | 'gsdml' | 'eds') => 
   return Promise.all(r.filePaths.map(async (path) => ({ path, name: basename(path), bytes: new Uint8Array(await readFile(path)) })));
 });
 
-ipcMain.handle('files.pick', async (_e, kind: 'openProject' | 'saveProject' | 'folder' | 'zip', suggested?: string) => {
+ipcMain.handle('files.pick', async (_e, kind: 'openProject' | 'saveProject' | 'folder' | 'zip' | 'openLibrary' | 'saveLibrary', suggested?: string) => {
   if (!win) return null;
+  if (kind === 'openLibrary') {
+    const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: FILTERS.library });
+    return r.canceled ? null : r.filePaths[0] ?? null;
+  }
   if (kind === 'openProject') {
     const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: FILTERS.project });
     return r.canceled ? null : r.filePaths[0] ?? null;
@@ -96,9 +101,9 @@ ipcMain.handle('files.pick', async (_e, kind: 'openProject' | 'saveProject' | 'f
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], defaultPath: suggested });
     return r.canceled ? null : r.filePaths[0] ?? null;
   }
-  const r = await dialog.showSaveDialog(win, { defaultPath: suggested, filters: kind === 'zip' ? FILTERS.zip : FILTERS.project });
+  const r = await dialog.showSaveDialog(win, { defaultPath: suggested, filters: kind === 'zip' ? FILTERS.zip : kind === 'saveLibrary' ? FILTERS.library : FILTERS.project });
   if (r.canceled || !r.filePath) return null;
-  const ext = kind === 'zip' ? '.zip' : '.vplcproj';
+  const ext = kind === 'zip' ? '.zip' : kind === 'saveLibrary' ? '.vplclib' : '.vplcproj';
   return r.filePath.endsWith(ext) ? r.filePath : `${r.filePath}${ext}`;
 });
 

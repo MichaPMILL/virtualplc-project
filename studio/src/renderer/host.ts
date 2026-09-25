@@ -22,7 +22,7 @@ interface HostBridge {
   onMenu(cb: (action: string) => void): void;
 }
 
-export type PathKind = 'openProject' | 'saveProject' | 'folder' | 'zip';
+export type PathKind = 'openProject' | 'saveProject' | 'folder' | 'zip' | 'openLibrary' | 'saveLibrary';
 
 declare global {
   interface Window {
@@ -57,6 +57,7 @@ function webHost(): HostBridge {
       const label = {
         openProject: 'Chemin du projet (.vplcproj ou dossier)', saveProject: 'Chemin du projet (.vplcproj)',
         folder: 'Dossier', zip: "Chemin de l'archive (.zip)",
+        openLibrary: 'Chemin de la bibliothèque globale (.vplclib)', saveLibrary: 'Chemin de la nouvelle bibliothèque globale (.vplclib)',
       }[kind];
       return promptDialog('Chemin sur ce poste', label, suggested ?? '');
     },

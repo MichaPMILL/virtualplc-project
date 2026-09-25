@@ -419,4 +419,188 @@ BEGIN
 END_FUNCTION_BLOCK
 `,
   },
+  {
+    name: 'VPLC_Cylinder', category: 'Actionneurs',
+    description: 'Vérin pneumatique simple ou double effet : fins de course, surveillance du temps de manœuvre, modes automatique et manuel, défaut et acquittement',
+    source: `FUNCTION_BLOCK "VPLC_Cylinder"
+   VAR_INPUT
+      Auto : Bool := TRUE;            // TRUE : commandé par la séquence (CmdWork / CmdHome)
+      CmdWork : Bool;                 // automatique : aller en position travail
+      CmdHome : Bool;                 // automatique : aller en position repos
+      ManWork : Bool;                 // manuel : bouton « sortir » (front montant)
+      ManHome : Bool;                 // manuel : bouton « rentrer » (front montant)
+      Enable : Bool := TRUE;          // verrouillage : FALSE = aucun mouvement (sécurité, pression)
+      WorkSensor : Bool;              // fin de course travail (sorti)
+      HomeSensor : Bool;              // fin de course repos (rentré)
+      UseWorkSensor : Bool := TRUE;   // FALSE : position travail estimée après NoSensorTime
+      UseHomeSensor : Bool := TRUE;
+      DoubleActing : Bool := TRUE;    // TRUE : deux bobines (distributeur bistable) ; FALSE : une bobine, retour ressort
+      TravelTime : Time := T#3S;      // temps de manœuvre maximal
+      NoSensorTime : Time := T#1S;    // temps de manœuvre supposé sans capteur
+      Reset : Bool;                   // acquittement du défaut
+   END_VAR
+   VAR_OUTPUT
+      CoilWork : Bool;                // bobine « sortir »
+      CoilHome : Bool;                // bobine « rentrer » (double effet)
+      AtWork : Bool;
+      AtHome : Bool;
+      Moving : Bool;
+      Fault : Bool;
+      FaultCode : Int;                // 1 : pas en travail à temps, 2 : pas au repos à temps, 3 : deux capteurs actifs
+   END_VAR
+   VAR
+      TargetWork : Bool;
+      EdgeWork : R_TRIG;
+      EdgeHome : R_TRIG;
+      Travel : TON;
+      GuessWork : TON;
+      GuessHome : TON;
+   END_VAR
+BEGIN
+    EdgeWork(CLK := ManWork);
+    EdgeHome(CLK := ManHome);
+    IF Auto THEN
+        IF CmdWork AND NOT CmdHome THEN
+            TargetWork := TRUE;
+        ELSIF CmdHome AND NOT CmdWork THEN
+            TargetWork := FALSE;
+        END_IF;
+    ELSE
+        IF EdgeWork.Q THEN
+            TargetWork := TRUE;
+        ELSIF EdgeHome.Q THEN
+            TargetWork := FALSE;
+        END_IF;
+    END_IF;
+    IF Reset THEN
+        Fault := FALSE;
+        FaultCode := 0;
+    END_IF;
+    // positions (estimated after NoSensorTime when a sensor is missing)
+    GuessWork(IN := TargetWork AND Enable AND NOT Fault, PT := NoSensorTime);
+    GuessHome(IN := NOT TargetWork AND Enable AND NOT Fault, PT := NoSensorTime);
+    IF UseWorkSensor THEN
+        AtWork := WorkSensor AND NOT (UseHomeSensor AND HomeSensor);
+    ELSE
+        AtWork := GuessWork.Q;
+    END_IF;
+    IF UseHomeSensor THEN
+        AtHome := HomeSensor AND NOT (UseWorkSensor AND WorkSensor);
+    ELSE
+        AtHome := GuessHome.Q OR (NOT TargetWork AND NOT Enable AND NOT DoubleActing);
+    END_IF;
+    IF UseWorkSensor AND UseHomeSensor AND WorkSensor AND HomeSensor THEN
+        Fault := TRUE;
+        FaultCode := 3;
+    END_IF;
+    // coils
+    CoilWork := TargetWork AND Enable AND NOT Fault;
+    CoilHome := DoubleActing AND NOT TargetWork AND Enable AND NOT Fault;
+    Moving := Enable AND NOT Fault AND ((TargetWork AND NOT AtWork) OR (NOT TargetWork AND NOT AtHome));
+    // travel time monitoring
+    Travel(IN := Moving, PT := TravelTime);
+    IF Travel.Q THEN
+        Fault := TRUE;
+        IF TargetWork THEN
+            FaultCode := 1;
+        ELSE
+            FaultCode := 2;
+        END_IF;
+        CoilWork := FALSE;
+        CoilHome := FALSE;
+    END_IF;
+END_FUNCTION_BLOCK
+`,
+  },
+  {
+    name: 'VPLC_Sequencer', category: 'Séquences',
+    description: 'Séquenceur d’étapes : modes manuel, automatique, cycle par cycle et pas à pas (validation de chaque étape), arrêt en fin de cycle, surveillance du temps d’étape',
+    source: `FUNCTION_BLOCK "VPLC_Sequencer"
+   // Usage : le programme calcule la transition de l'étape en cours (Step), puis appelle le bloc :
+   //   CASE Seq.Step OF 1 : T := Cyl1.AtWork; 2 : T := Cyl2.AtHome; ... END_CASE;
+   //   Seq(Mode := ..., Start := ..., Transition := T, LastStep := 5);
+   VAR_INPUT
+      Mode : Int := 1;                // 0 : manuel (séquence suspendue), 1 : automatique, 2 : cycle par cycle, 3 : pas à pas
+      Start : Bool;                   // départ cycle (front montant)
+      Stop : Bool;                    // arrêt en fin de cycle (front montant)
+      StepPulse : Bool;               // pas à pas : validation de l'étape suivante (front montant)
+      Transition : Bool;              // condition de fin de l'étape en cours
+      LastStep : Int := 1;            // dernière étape du cycle
+      Hold : Bool;                    // défaut / arrêt d'urgence : la séquence est figée
+      Reset : Bool;                   // retour à l'étape initiale (0)
+      StepTimeout : Time := T#0MS;    // 0 : pas de surveillance
+   END_VAR
+   VAR_OUTPUT
+      Step : Int;                     // étape en cours (0 = initiale)
+      Running : Bool;                 // cycle en cours
+      NewStep : Bool;                 // TRUE pendant le premier cycle automate d'une étape
+      CycleEnd : Bool;                // impulsion en fin de cycle
+      WaitingValidation : Bool;       // pas à pas : transition vraie, en attente de StepPulse
+      StopRequested : Bool;
+      Timeout : Bool;                 // étape trop longue
+      StepTime : Time;                // temps passé dans l'étape
+   END_VAR
+   VAR
+      EdgeStart : R_TRIG;
+      EdgeStop : R_TRIG;
+      EdgePulse : R_TRIG;
+      StepTimer : TON;
+      Watchdog : TON;
+      LastSeen : Int := -1;
+   END_VAR
+BEGIN
+    EdgeStart(CLK := Start);
+    EdgeStop(CLK := Stop);
+    EdgePulse(CLK := StepPulse);
+    CycleEnd := FALSE;
+    IF Reset THEN
+        Step := 0;
+        Running := FALSE;
+        StopRequested := FALSE;
+        Timeout := FALSE;
+    END_IF;
+    IF EdgeStop.Q AND Running THEN
+        StopRequested := TRUE;
+    END_IF;
+    WaitingValidation := FALSE;
+    IF Mode = 0 THEN
+        Running := FALSE;             // manuel : on commande les actionneurs à la main
+    ELSIF NOT Hold AND NOT Reset THEN
+        IF Step = 0 THEN
+            IF EdgeStart.Q THEN
+                Running := TRUE;
+                StopRequested := FALSE;
+                Step := 1;
+            END_IF;
+        ELSIF Transition AND (Running OR Mode = 3) THEN
+            IF Mode = 3 AND NOT EdgePulse.Q THEN
+                WaitingValidation := TRUE;
+            ELSIF Step >= LastStep THEN
+                CycleEnd := TRUE;
+                IF Mode = 1 AND NOT StopRequested THEN
+                    Step := 1;        // automatique : cycle suivant
+                ELSE
+                    Step := 0;        // cycle par cycle, pas à pas ou arrêt demandé
+                    Running := FALSE;
+                    StopRequested := FALSE;
+                END_IF;
+            ELSE
+                Step := Step + 1;
+            END_IF;
+        ELSIF Step > 0 AND EdgeStart.Q THEN
+            Running := TRUE;          // reprise après un arrêt (manuel, maintien)
+        END_IF;
+    END_IF;
+    NewStep := Step <> LastSeen;
+    LastSeen := Step;
+    // time in the step (the timers restart at each new step)
+    StepTimer(IN := NOT NewStep AND Step > 0, PT := T#24D);
+    StepTime := StepTimer.ET;
+    Watchdog(IN := NOT NewStep AND Step > 0 AND StepTimeout > T#0MS AND NOT Transition, PT := StepTimeout);
+    IF Watchdog.Q THEN
+        Timeout := TRUE;
+    END_IF;
+END_FUNCTION_BLOCK
+`,
+  },
 ];

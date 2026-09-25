@@ -1,4 +1,5 @@
 // "Arborescence du projet" (project tree) and its details view.
+import { addElementToLibrary } from './libraries.ts';
 import { blockLabel, DEVICE_TYPES, type Block, type Device } from '../../../../sdk/src/browser.ts';
 import * as A from '../actions.ts';
 import { clear, h, svg } from '../dom.ts';
@@ -80,6 +81,7 @@ function deviceNodes(d: Device): NodeSpec[] {
             { label: 'Ouvrir', run: () => A.openEditor({ kind: 'block', deviceId: d.id, blockId: b.id }) },
             'sep',
             { label: 'Renommer', run: () => void A.renameCmd('block', d.id, b.id), shortcut: 'F2' },
+            ...(b.type !== 'OB' ? [{ label: 'Ajouter à la bibliothèque du projet', icon: 'folder' as const, run: () => void addElementToLibrary('project', d, 'block', b.name) }] : []),
             { label: t.delete, icon: 'del', run: () => void A.deleteCmd('block', d.id, b.id), shortcut: 'Suppr' },
             'sep',
             { label: t.compile, icon: 'compile', run: () => void A.compileCmd(d) },
@@ -128,6 +130,7 @@ function deviceNodes(d: Device): NodeSpec[] {
           menu: [
             { label: 'Ouvrir', run: () => A.openEditor({ kind: 'dataType', deviceId: d.id, typeId: ut.id }) },
             { label: 'Renommer', run: () => void A.renameCmd('dataType', d.id, ut.id) },
+            { label: 'Ajouter à la bibliothèque du projet', icon: 'folder' as const, run: () => void addElementToLibrary('project', d, 'type', ut.name) },
             { label: t.delete, icon: 'del', run: () => void A.deleteCmd('dataType', d.id, ut.id) },
           ],
         })),
@@ -154,6 +157,7 @@ function deviceNodes(d: Device): NodeSpec[] {
           menu: [
             { label: 'Ouvrir', run: () => A.openEditor({ kind: 'interface', deviceId: d.id, interfaceId: i.id }) },
             { label: 'Renommer', run: () => void A.renameCmd('interface', d.id, i.id) },
+            { label: 'Ajouter à la bibliothèque du projet', icon: 'folder' as const, run: () => void addElementToLibrary('project', d, 'interface', i.name) },
             { label: t.delete, icon: 'del', run: () => void A.deleteCmd('interface', d.id, i.id) },
           ],
         })),
@@ -250,6 +254,7 @@ export function projectTree(): HTMLElement {
               store.selection = n.select;
               render();
               renderDetails();
+              store.emit('selection');
             }
             if (n.onActivate && !n.open) n.onActivate();
           },

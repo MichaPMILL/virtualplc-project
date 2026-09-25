@@ -53,6 +53,14 @@ export function createApi(backend = new Backend()) {
       }
     },
 
+    // Global libraries (.vplclib files, shared between projects)
+    libraryRead: async (path: string) => (await import('node:fs/promises')).readFile(path, 'utf8'),
+    libraryWrite: async (path: string, text: string) => {
+      const fs = await import('node:fs/promises');
+      await fs.writeFile(`${path}.tmp`, text);
+      await fs.rename(`${path}.tmp`, path);
+    },
+
     // Project files
     projectOpen: (path: string) => openProjectPath(path),
     projectSave: (path: string, projectJson: string, layout: ProjectLayout) => saveProjectPath(path, projectJson, layout),

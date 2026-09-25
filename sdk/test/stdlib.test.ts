@@ -162,3 +162,114 @@ test('stdlib: motor and valve', { skip }, async () => {
     assert.equal(await sim.get('valveAlarm'), true);
   });
 });
+
+test('stdlib: pneumatic cylinder (double acting, auto / manual, faults)', { skip }, async () => {
+  await withSim(program(`
+      auto : Bool := TRUE; work : Bool; home : Bool; mw : Bool; mh : Bool; en : Bool := TRUE; sw : Bool; sh : Bool := TRUE; rst : Bool;
+      cyl : "VPLC_Cylinder"; yWork : Bool; yHome : Bool; atW : Bool; atH : Bool; flt : Bool; code : Int;
+      one : "VPLC_Cylinder"; y1 : Bool; at1 : Bool;`, `
+    cyl(Auto := auto, CmdWork := work, CmdHome := home, ManWork := mw, ManHome := mh, Enable := en, WorkSensor := sw, HomeSensor := sh,
+        TravelTime := T#500MS, Reset := rst, CoilWork => yWork, CoilHome => yHome, AtWork => atW, AtHome => atH, Fault => flt, FaultCode => code);
+    one(CmdWork := work, UseWorkSensor := FALSE, UseHomeSensor := FALSE, DoubleActing := FALSE, NoSensorTime := T#200MS, CoilWork => y1, AtWork => at1);`), async (sim) => {
+    await sim.scan(2, 10);
+    assert.equal(await sim.get('atH'), true);
+    assert.equal(await sim.get('yHome'), true);
+    // automatic: go to work, sensors follow
+    await sim.set('work', true);
+    await sim.scan(1, 10);
+    assert.equal(await sim.get('yWork'), true);
+    assert.equal(await sim.get('yHome'), false);
+    await sim.set('sh', false);
+    await sim.set('sw', true);
+    await sim.scan(1, 10);
+    assert.equal(await sim.get('atW'), true);
+    // single acting without sensors: position after NoSensorTime
+    await sim.scan(25, 10);
+    assert.equal(await sim.get('y1'), true);
+    assert.equal(await sim.get('at1'), true);
+    // manual: « rentrer » button, but the cylinder is stuck: fault 2 after TravelTime
+    await sim.set('auto', false);
+    await sim.set('mh', true);
+    await sim.scan(1, 10);
+    await sim.set('mh', false);
+    assert.equal(await sim.get('yHome'), true);
+    await sim.scan(60, 10);
+    assert.equal(await sim.get('flt'), true);
+    assert.equal(await sim.get('code'), 2);
+    assert.equal(await sim.get('yHome'), false);
+    // the cylinder comes back, reset
+    await sim.set('sw', false);
+    await sim.set('sh', true);
+    await sim.set('rst', true);
+    await sim.scan(1, 10);
+    await sim.set('rst', false);
+    await sim.scan(1, 10);
+    assert.equal(await sim.get('flt'), false);
+    assert.equal(await sim.get('atH'), true);
+    // interlock: no movement
+    await sim.set('en', false);
+    await sim.set('mw', true);
+    await sim.scan(1, 10);
+    assert.equal(await sim.get('yWork'), false);
+  });
+});
+
+test('stdlib: sequencer (automatic, cycle by cycle, step by step, stop at end of cycle)', { skip }, async () => {
+  await withSim(program(`
+      mode : Int := 1; start : Bool; stop : Bool; pulse : Bool; t : Bool; hold : Bool; rst : Bool;
+      seq : "VPLC_Sequencer"; step : Int; waiting : Bool; ends : Int;`, `
+    seq(Mode := mode, Start := start, Stop := stop, StepPulse := pulse, Transition := t, LastStep := 3, Hold := hold, Reset := rst,
+        Step => step, WaitingValidation => waiting);
+    IF seq.CycleEnd THEN ends := ends + 1; END_IF;`), async (sim) => {
+    const pulseOn = async (name: string) => { await sim.set(name, true); await sim.scan(1, 10); await sim.set(name, false); await sim.scan(1, 10); };
+    await sim.scan(1, 10);
+    assert.equal(await sim.get('step'), 0);
+    await pulseOn('start');
+    assert.equal(await sim.get('step'), 1);
+    // automatic: each true transition goes to the next step, the cycle restarts
+    await sim.set('t', true);
+    await sim.scan(3, 10);
+    assert.equal(await sim.get('step'), 1, 'cycle 2 started');
+    assert.equal(await sim.get('ends'), 1);
+    // stop at the end of the cycle
+    await sim.set('t', false);
+    await pulseOn('stop');
+    await sim.set('t', true);
+    await sim.scan(3, 10);
+    assert.equal(await sim.get('step'), 0);
+    assert.equal(await sim.get('ends'), 2);
+    await sim.scan(3, 10);
+    assert.equal(await sim.get('step'), 0, 'stays in the initial step');
+    // step by step: the transition waits for the validation
+    await sim.set('mode', 3);
+    await sim.set('t', false);
+    await pulseOn('start');
+    assert.equal(await sim.get('step'), 1);
+    await sim.set('t', true);
+    await sim.scan(5, 10);
+    assert.equal(await sim.get('step'), 1);
+    assert.equal(await sim.get('waiting'), true);
+    await pulseOn('pulse');
+    assert.equal(await sim.get('step'), 2);
+    // hold (fault): frozen, even with a validation
+    await sim.set('hold', true);
+    await pulseOn('pulse');
+    assert.equal(await sim.get('step'), 2);
+    await sim.set('hold', false);
+    await pulseOn('pulse');
+    assert.equal(await sim.get('step'), 3);
+    await pulseOn('pulse');
+    assert.equal(await sim.get('step'), 0, 'end of cycle in step mode');
+    // cycle by cycle
+    await sim.set('mode', 2);
+    await pulseOn('start');
+    await sim.scan(5, 10);
+    assert.equal(await sim.get('step'), 0);
+    assert.equal(await sim.get('ends'), 4);
+    // reset
+    await pulseOn('start');
+    await sim.set('t', false);
+    await pulseOn('rst');
+    assert.equal(await sim.get('step'), 0);
+  });
+});

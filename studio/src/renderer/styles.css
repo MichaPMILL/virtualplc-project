@@ -464,3 +464,8 @@ body.simulation .toolbar .brand::after { content: 'SIMULATION'; margin-left: 10p
 .dl-badge { margin-left: 6px; padding: 0 4px; border-radius: 3px; background: #e6f4ea; color: #2e7d4f; font-size: 10px; }
 .dl-program { margin: 6px 10px; padding: 6px 10px; background: var(--panel-alt); border: 1px solid var(--border-light); }
 .watch-hint { padding: 5px 10px; background: #fff4d6; border-bottom: 1px solid #f0d68a; color: #6b4e00; font-size: 12px; }
+.lib-toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.lib-head { font-weight: 600; }
+.lib-cat { padding: 3px 12px 1px; font-size: 11px; color: var(--muted, #6b7280); text-transform: uppercase; letter-spacing: .03em; }
+.lib-ver { margin-left: 6px; font-size: 11px; color: #1a73c9; font-family: monospace; }
+.lib-update { margin: 2px 8px; padding: 3px 6px; background: #fff4d6; border: 1px solid #f0d68a; font-size: 12px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
