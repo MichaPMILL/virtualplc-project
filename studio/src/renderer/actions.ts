@@ -697,6 +697,8 @@ export async function startSimulationCmd(device = currentDevice()): Promise<void
   await downloadCmd(device);
   await goOnlineCmd(device);
   openEditor({ kind: 'simulation', deviceId: device.id });
+  // in simulation, the values are shown right away (tables, blocks) without « Visualiser tout »
+  if (store.onlineOf(device.id).connected && !store.monitoring) await toggleMonitorCmd();
 }
 
 export async function stopSimulationCmd(device = currentDevice()): Promise<void> {

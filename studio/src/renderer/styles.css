@@ -463,3 +463,4 @@ body.simulation .toolbar .brand::after { content: 'SIMULATION'; margin-left: 10p
 .ifc-method.error { color: #c42b1c; }
 .dl-badge { margin-left: 6px; padding: 0 4px; border-radius: 3px; background: #e6f4ea; color: #2e7d4f; font-size: 10px; }
 .dl-program { margin: 6px 10px; padding: 6px 10px; background: var(--panel-alt); border: 1px solid var(--border-light); }
+.watch-hint { padding: 5px 10px; background: #fff4d6; border-bottom: 1px solid #f0d68a; color: #6b4e00; font-size: 12px; }

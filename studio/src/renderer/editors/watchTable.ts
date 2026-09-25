@@ -77,13 +77,31 @@ export function watchTableEditor(device: Device, table: WatchTable): EditorView 
     await A.forceValue(device.id, pathOf(row), on ? v === 'TRUE' || v === '1' : null);
   };
 
+  // why no value is shown: offline, or monitoring off
+  const hint = h('div', { className: 'watch-hint' });
+  const glasses = h('button', { className: 'tbtn', title: `${t.monitorAll} (Ctrl+T)`, onclick: () => void A.toggleMonitorCmd() }, svg(icons.glasses), h('span', { className: 'label' }, 'Visualiser'));
+  const syncHint = () => {
+    const online = store.onlineOf(device.id).connected;
+    glasses.classList.toggle('pressed', store.monitoring);
+    hint.textContent = !online
+      ? 'Hors ligne : passez en ligne (ou démarrez la simulation) pour voir les valeurs.'
+      : !store.monitoring ? 'Visualisation arrêtée : cliquez sur « Visualiser » (lunettes, Ctrl+T) pour afficher les valeurs en cours.' : '';
+    hint.style.display = hint.textContent ? '' : 'none';
+  };
+  const unsubscribe = store.on((topic) => {
+    if (topic === 'online' || topic === 'monitor') syncHint();
+    if (topic === 'compile') grid.render();  // addresses of the symbols
+  });
+  syncHint();
+
   const element = h('div', { className: 'editor-host' },
     h('div', { className: 'panel-toolbar' },
-      h('button', { className: 'tbtn', title: t.monitorAll, onclick: () => void A.toggleMonitorCmd() }, svg(icons.glasses)),
+      glasses,
       h('button', { className: 'tbtn', title: 'Forcer immédiatement toutes les valeurs sélectionnées', onclick: () => void modifyRows(table.rows) }, svg(icons.modify), h('span', { className: 'label' }, 'Forcer immédiatement')),
       h('span', { className: 'sep' }),
       h('button', { className: 'tbtn', title: 'Arrêter tous les forçages permanents', onclick: async () => { if (await needOnline()) await A.call_unforce(device.id); } }, svg(icons.force), h('span', { className: 'label' }, 'Arrêter le forçage')),
     ),
+    hint,
     grid.element);
 
   const format = (row: WatchRow, value: unknown, text?: string): string => {
@@ -120,5 +138,7 @@ export function watchTableEditor(device: Device, table: WatchTable): EditorView 
       },
     },
     monitorStopped: () => grid.clearMonitor(),
+    shown: () => { syncHint(); grid.render(); },
+    destroy: unsubscribe,
   };
 }
