@@ -93,7 +93,14 @@ export class Backend {
     const { client } = this.session(deviceId);
     // every program is signed with the engineering key of this workstation (CPUs started with
     // --signed-programs load only programs signed by a key they trust)
-    await client.download(c.image, undefined, signProgram(c.image, this.engineeringKeyPem()));
+    let signature: Uint8Array | undefined;
+    try {
+      signature = signProgram(c.image, this.engineeringKeyPem());
+    } catch (e) {
+      // no signature: accepted by CPUs that do not require signed programs (and by the simulation)
+      console.error(`Program not signed: ${(e as Error).message}`);
+    }
+    await client.download(c.image, undefined, signature);
     if (startAfter) await client.start();
   }
 

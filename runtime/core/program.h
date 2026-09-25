@@ -77,6 +77,13 @@ struct IoModuleInfo {
     } subs[VPLC_PN_MAX_SUBMODULES > 0 ? VPLC_PN_MAX_SUBMODULES : 1];
     uint8_t recordPool[VPLC_PN_RECORD_POOL > 0 ? VPLC_PN_RECORD_POOL : 1] = {0};
     uint16_t recordUsed = 0;
+    // EtherNet/IP adapter: host/port, vendorId, in/out bytes above; configuration data in recordPool
+    uint32_t rpiUs = 10000;
+    uint16_t configInstance = 0, outInstance = 0, inInstance = 0;
+    uint8_t enipFlags = 0;  // bit 0 O->T run/idle header, 1 T->O header, 2 T->O multicast, 3 electronic key
+    uint8_t timeoutMultiplier = 1;
+    uint16_t deviceType = 0, productCode = 0;
+    uint8_t revMajor = 0, revMinor = 0;
 };
 
 class IoModuleReader {

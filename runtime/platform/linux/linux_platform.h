@@ -14,6 +14,7 @@
 #include "profinet/pn_lldp.h"
 #include "profinet/pn_stack.h"
 #include "security/security.h"
+#include "enip/enip.h"
 
 namespace vplc {
 
@@ -92,6 +93,11 @@ private:
     // PROFINET: this CPU as IO-Device, and / or IO-Controller of remote devices
     std::unique_ptr<pn::Device> pnDevice_;
     std::unique_ptr<pn::Controller> pnController_;
+    // EtherNet/IP scanner: adapters of the I/O configuration
+    void configureEnip();
+    std::unique_ptr<enip::Scanner> enip_;
+    std::string enipKey_, enipError_;
+    std::vector<uint16_t> enipIndex_;  // module index -> adapter index
     std::string pnDeviceKey_, pnControllerKey_;
     std::vector<std::unique_ptr<pn::Lldp>> pnLldp_;
     std::string pnError_;  // why PROFINET could not start (shown in the Studio)

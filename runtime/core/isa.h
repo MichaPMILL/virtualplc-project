@@ -147,6 +147,7 @@ enum class StdFn : uint8_t {
     S_LDT2DT = 21,
     S_DTL2LDT = 22,
     S_LDT2DTL = 23,
+    S_SWAP = 24,
 };
 
 enum class SysFn : uint8_t {
@@ -199,6 +200,7 @@ enum class IoModule : uint8_t {
     IO_IOLINK_MASTER = 6,
     IO_PROFINET_DEVICE = 7,
     IO_PROFINET_REMOTE = 8,
+    IO_ENIP_ADAPTER = 9,
 };
 
 enum class Command : uint8_t {

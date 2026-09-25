@@ -14,6 +14,7 @@ const FILTERS = {
   zip: [{ name: 'Archive ZIP', extensions: ['zip'] }],
   iodd: [{ name: 'Description IO-Link (IODD)', extensions: ['xml'] }],
   gsdml: [{ name: 'Description PROFINET (GSDML)', extensions: ['xml'] }],
+  eds: [{ name: 'Description EtherNet/IP (EDS)', extensions: ['eds', 'EDS'] }],
 };
 
 function createWindow(): void {
@@ -78,7 +79,7 @@ ipcMain.handle('api', async (_e, method: ApiMethod, args: unknown[]) => {
   return fn(...args);
 });
 
-ipcMain.handle('files.openMany', async (_e, kind?: 'iodd' | 'gsdml') => {
+ipcMain.handle('files.openMany', async (_e, kind?: 'iodd' | 'gsdml' | 'eds') => {
   if (!win) return [];
   const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: kind ? FILTERS[kind] : FILTERS.scl });
   if (r.canceled) return [];

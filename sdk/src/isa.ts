@@ -300,6 +300,7 @@ export const StdFn = {
   LDT2DT: 21,
   DTL2LDT: 22,
   LDT2DTL: 23,
+  SWAP: 24,
 } as const;
 
 export const SysFn = {
@@ -352,6 +353,7 @@ export const IoModule = {
   IOLINK_MASTER: 6,
   PROFINET_DEVICE: 7,
   PROFINET_REMOTE: 8,
+  ENIP_ADAPTER: 9,
 } as const;
 
 export const Command = {

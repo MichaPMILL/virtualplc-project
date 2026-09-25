@@ -18,6 +18,8 @@ export type { PlcValue } from './values.ts';
 export { DeviceClient, DeviceError, isSerialPort, isSimulatorHost } from './device.ts';
 export { setSimulatorWasm, SimulatedCpu, simulator } from './simulator.ts';
 export type { DataLogStatus, DeviceInfo, DeviceState, LogEntry } from './device.ts';
+export { parseEds } from './eds.ts';
+export type { Eds, EdsConnection } from './eds.ts';
 export { auditCanonical, auditGenesis, ROLES, verifyAudit } from './security.ts';
 export { createEngineeringKey, engineeringPublicKey, programSigningMessage, signProgram } from './signing.ts';
 export type { AuditLog, AuditRecord, AuditVerification, Role, UserAccount } from './security.ts';

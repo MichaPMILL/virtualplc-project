@@ -346,6 +346,10 @@ export function ioChannels(device: Device): IoChannel[] {
           bytes(m, 'Q', x.outByte, x.outLength, `emplacement ${x.slot}.${x.subslot}, sortie`, `S${x.slot}_OUT`);
         }
         break;
+      case 'enip-adapter':
+        bytes(m, 'I', m.inByte, m.inLength, `entrée (assemblage ${m.inInstance})`, 'IN');
+        bytes(m, 'Q', m.outByte, m.outLength, `sortie (assemblage ${m.outInstance})`, 'OUT');
+        break;
     }
   }
   return out;

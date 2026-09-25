@@ -262,7 +262,7 @@ export class Grid<T> {
   }
 
   /** Updates the monitor columns of a row: values in column order. */
-  setMonitor(row: T, values: Array<{ text: string; cls?: string } | null>): void {
+  setMonitor(row: T, values: Array<{ text: string; cls?: string; title?: string } | null>): void {
     const cells = this.monitorCells.get(row);
     if (!cells) return;
     values.forEach((v, i) => {
@@ -270,6 +270,7 @@ export class Grid<T> {
       if (!td) return;
       td.textContent = v?.text ?? '';
       td.className = `monitor value ${v?.cls ?? ''}`;
+      td.title = v?.title ?? '';
     });
   }
 

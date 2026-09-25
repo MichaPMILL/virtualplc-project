@@ -507,7 +507,8 @@
     "DT2LDT": 20,
     "LDT2DT": 21,
     "DTL2LDT": 22,
-    "LDT2DTL": 23
+    "LDT2DTL": 23,
+    "SWAP": 24
   },
   "sysFunctions": {
     "LOG": 0,
@@ -808,7 +809,8 @@
     "GPIO_AO": 5,
     "IOLINK_MASTER": 6,
     "PROFINET_DEVICE": 7,
-    "PROFINET_REMOTE": 8
+    "PROFINET_REMOTE": 8,
+    "ENIP_ADAPTER": 9
   },
   "protocol": {
     "port": 20105,

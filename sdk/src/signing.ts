@@ -17,8 +17,9 @@ export function createEngineeringKey(): { privateKeyPem: string; publicKey: stri
 
 /** Public key (hex) of an engineering private key (PEM) */
 export function engineeringPublicKey(privateKeyPem: string): string {
-  const jwk = createPublicKey(createPrivateKey(privateKeyPem)).export({ format: 'jwk' }) as { x?: string };
-  return Buffer.from(jwk.x ?? '', 'base64url').toString('hex');
+  // SPKI of an Ed25519 key: 12-byte header + 32-byte key (portable: OpenSSL and BoringSSL)
+  const der = createPublicKey(createPrivateKey(privateKeyPem)).export({ type: 'spki', format: 'der' });
+  return Buffer.from(der.subarray(der.length - 32)).toString('hex');
 }
 
 /** Signature block of DOWNLOAD_END (96 bytes) */

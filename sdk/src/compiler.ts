@@ -185,7 +185,7 @@ const STD_PARAMS: Record<string, string[] | null> = {
   ABS: ['IN'], SQR: ['IN'], SQRT: ['IN'], EXP: ['IN'], LN: ['IN'], SIN: ['IN'], COS: ['IN'], TAN: ['IN'],
   ASIN: ['IN'], ACOS: ['IN'], ATAN: ['IN'], TRUNC: ['IN'], ROUND: ['IN'], CEIL: ['IN'], FLOOR: ['IN'], FRAC: ['IN'],
   EXPT: ['IN1', 'IN2'], MIN: null, MAX: null, LIMIT: ['MN', 'IN', 'MX'], SEL: ['G', 'IN0', 'IN1'], MUX: null,
-  NORM_X: ['MIN', 'VALUE', 'MAX'], SCALE_X: ['MIN', 'VALUE', 'MAX'], SHL: ['IN', 'N'], SHR: ['IN', 'N'],
+  NORM_X: ['MIN', 'VALUE', 'MAX'], SCALE_X: ['MIN', 'VALUE', 'MAX'], SHL: ['IN', 'N'], SHR: ['IN', 'N'], SWAP: ['IN'],
   CONCAT: null, LEN: ['IN'], LOG: null, DATALOG_WRITE: ['NAME'], WAIT: ['MS'], MILLIS: [], DEVICE_OK: ['MODULE'], DEVICE_DIAG: ['MODULE'], PN_ALARM: ['MODULE', 'SLOT', 'KIND', 'CODE'],
   RD_SYS_T: null, RD_LOC_T: null,
 };
@@ -2269,6 +2269,12 @@ class Compiler {
       case 'NORM_X': case 'SCALE_X':
         [0, 1, 2].forEach(numeric);
         return T.REAL;
+      case 'SWAP': {
+        const t = argType(0);
+        const ok = t.k === 'anyint' || (t.k === 'elem' && ['int', 'bits'].includes(ELEMENTARY[t.name].cls) && [2, 4, 8].includes(ELEMENTARY[t.name].size));
+        if (args.length !== 1 || !ok) throw this.err('SWAP needs one value of 2, 4 or 8 bytes (Word, Int, DWord, DInt, LWord…)', e.line);
+        return t.k === 'anyint' ? T.DINT : t;
+      }
       case 'SHL': case 'SHR': {
         const t = argType(0);
         if (!isInt(t) || !isInt(argType(1))) throw this.err(`${key} needs integer arguments`, e.line);
@@ -2532,6 +2538,14 @@ class Compiler {
         this.emit(Op.CALL_STD, key === 'NORM_X' ? StdFn.NORM_X : StdFn.SCALE_X, 3);
         this.emit(Op.F32);
         return;
+      case 'SWAP': {
+        this.expr(args[0], result);
+        const size = result.k === 'elem' ? ELEMENTARY[result.name].size : 2;
+        this.emit(Op.PUSH_I32, size);
+        this.emit(Op.CALL_STD, StdFn.SWAP, 2);
+        if (result.k === 'elem') this.emit(Op.WRAP, ELEMENTARY[result.name].vm);
+        return;
+      }
       case 'SHL': case 'SHR':
         this.expr(args[0], result);
         this.expr(args[1], T.LINT);
@@ -3357,5 +3371,7 @@ function ioUsage(m: IoModuleConfig): Array<['I' | 'Q', number, number, 'bits' | 
       return [['I', m.inByte, m.inLength, 'bytes'], ['Q', m.outByte, m.outLength, 'bytes']];
     case 'profinet-remote':
       return m.submodules.flatMap((x): Array<['I' | 'Q', number, number, 'bytes']> => [['I', x.inByte, x.inLength, 'bytes'], ['Q', x.outByte, x.outLength, 'bytes']]);
+    case 'enip-adapter':
+      return [['I', m.inByte, m.inLength, 'bytes'], ['Q', m.outByte, m.outLength, 'bytes']];
   }
 }

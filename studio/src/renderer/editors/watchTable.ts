@@ -110,8 +110,12 @@ export function watchTableEditor(device: Device, table: WatchTable): EditorView 
         values.forEach((v, i) => {
           const row = rows[i];
           if (!row) return;
-          const text = v.error ? (v.error === 'unknown' ? 'Opérande inconnu' : '#') : format(row, v.value, v.text);
-          grid.setMonitor(row, [{ text, cls: v.error ? 'bad' : valueClass(v.text) }]);
+          // errors in clear: unknown operand, program not compiled or not loaded in the CPU…
+          const text = !v.error ? format(row, v.value, v.text)
+            : v.error === 'unknown' ? 'Opérande inconnu'
+              : v.error === 'not compiled' ? 'Non compilé'
+                : /no program loaded/.test(v.error) ? 'Pas de programme dans la CPU' : '#';
+          grid.setMonitor(row, [{ text, cls: v.error ? 'bad' : valueClass(v.text), title: v.error && text === '#' ? A.cpuMessage(v.error) : undefined }]);
         });
       },
     },

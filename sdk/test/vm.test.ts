@@ -510,3 +510,23 @@ vmTest('date, time and character types (Date, TOD, LTime, LTOD, DT, LDT, DTL, Ch
     delete process.env.VPLC_SIM_CLOCK_NS;
   }
 });
+
+vmTest('SWAP: byte order of 2, 4 and 8-byte values', async () => {
+  await withSim(`
+VAR_GLOBAL w : Word := 16#1234; i : Int := 16#0180; d : DInt := 16#11223344; l : LWord := 16#0102030405; ok8 : Bool; lo : DWord; END_VAR
+ORGANIZATION_BLOCK "Main"
+BEGIN
+  w := SWAP(w);
+  i := SWAP(i);
+  d := SWAP(d);
+  ok8 := SWAP(SWAP(l)) = l AND SWAP(l) <> l;
+  lo := LWORD_TO_DWORD(SHR(IN := SWAP(l), N := 32));
+END_ORGANIZATION_BLOCK`, async (sim) => {
+    await sim.scan();
+    assert.equal(await sim.get('w'), 0x3412);
+    assert.equal(await sim.get('i'), -32767);
+    assert.equal(await sim.get('d'), 0x44332211);
+    assert.equal(await sim.get('ok8'), true);
+    assert.equal(await sim.get('lo'), 0x05040302);
+  });
+});

@@ -238,6 +238,29 @@ bool IoModuleReader::next(IoModuleInfo& m) {
             }
             break;
         }
+        case IoModule::IO_ENIP_ADAPTER: {
+            if (!need(1)) return false;
+            uint8_t n = *p_++;
+            if (!need(n + 2 + 4 + 14 + 2 + 8 + 2)) return false;
+            uint8_t copy = n < sizeof(m.host) - 1 ? n : uint8_t(sizeof(m.host) - 1);
+            memcpy(m.host, p_, copy);
+            p_ += n;
+            m.port = rd16le(p_);
+            m.rpiUs = rd32le(p_ + 2);
+            m.configInstance = rd16le(p_ + 6); m.outInstance = rd16le(p_ + 8); m.inInstance = rd16le(p_ + 10);
+            m.outLength = rd16le(p_ + 12); m.outByte = rd16le(p_ + 14);
+            m.inLength = rd16le(p_ + 16); m.inByte = rd16le(p_ + 18);
+            m.enipFlags = p_[20]; m.timeoutMultiplier = p_[21];
+            m.vendorId = rd16le(p_ + 22); m.deviceType = rd16le(p_ + 24); m.productCode = rd16le(p_ + 26);
+            m.revMajor = p_[28]; m.revMinor = p_[29];
+            uint16_t cfg = rd16le(p_ + 30);
+            p_ += 32;
+            if (!need(cfg)) return false;
+            m.recordUsed = cfg <= size_t(VPLC_PN_RECORD_POOL) ? cfg : 0;
+            if (m.recordUsed) memcpy(m.recordPool, p_, cfg);
+            p_ += cfg;
+            break;
+        }
         default:
             return false;
     }

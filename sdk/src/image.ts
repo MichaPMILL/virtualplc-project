@@ -60,7 +60,42 @@ export type IoModuleConfig =
     submodules: PnSubmodule[];
     /** Studio only: catalogue of the device (from its GSDML) and plugged modules */
     catalog?: PnCatalog;
+  }
+  | {
+    /** An EtherNet/IP adapter (I/O block, drive, camera…) driven by this CPU as scanner (implicit class 1 I/O) */
+    kind: 'enip-adapter'; name: string;
+    host: string;
+    /** Encapsulation TCP port (default 44818) */
+    port?: number;
+    /** Requested packet interval in ms (default 10) */
+    rpiMs?: number;
+    /** Assembly instances: configuration, output (O→T), input (T→O) */
+    configInstance: number; outInstance: number; inInstance: number;
+    /** Data sizes in bytes (without sequence count and run/idle header) and their %Q / %I addresses */
+    outLength: number; outByte: number;
+    inLength: number; inByte: number;
+    /** 32-bit run/idle header in the O→T data (default true) and in the T→O data (default false) */
+    outHeader?: boolean; inHeader?: boolean;
+    /** T→O multicast instead of point-to-point */
+    multicast?: boolean;
+    /** Connection timeout multiplier code 0..7 (×4 … ×512, default 1: ×8) */
+    timeoutMultiplier?: number;
+    /** Electronic key (checked by the adapter when vendorId is set; compatible revisions accepted) */
+    vendorId?: number; deviceType?: number; productCode?: number; revision?: { major: number; minor: number };
+    /** Configuration data sent with the Forward_Open (data segment) */
+    configData?: number[];
+    /** Studio only: what was read from the EDS file */
+    catalog?: EdsCatalog;
   };
+
+/** What the Studio keeps of an EDS file */
+export interface EdsCatalog {
+  file: string;
+  vendor: string;
+  product: string;
+  /** Connection chosen in the EDS ([Connection Manager] ConnectionN name) */
+  connection?: string;
+}
 
 /** What the Studio keeps of a GSDML file to configure the device again. */
 export interface PnCatalog {
@@ -292,6 +327,18 @@ function writeModule(w: ByteWriter, m: IoModuleConfig): void {
         }
       }
       break;
+    case 'enip-adapter': {
+      const flags = (m.outHeader ?? true ? 1 : 0) | (m.inHeader ? 2 : 0) | (m.multicast ? 4 : 0) | (m.vendorId ? 8 : 0);
+      const cfg = m.configData ?? [];
+      w.u8(IoModule.ENIP_ADAPTER).str8(m.host).u16(m.port ?? 44818).u32(Math.round((m.rpiMs ?? 10) * 1000))
+        .u16(m.configInstance).u16(m.outInstance).u16(m.inInstance)
+        .u16(m.outLength).u16(m.outByte).u16(m.inLength).u16(m.inByte)
+        .u8(flags).u8(m.timeoutMultiplier ?? 1)
+        .u16(m.vendorId ?? 0).u16(m.deviceType ?? 0).u16(m.productCode ?? 0).u8(m.revision?.major ?? 0).u8(m.revision?.minor ?? 0)
+        .u16(cfg.length);
+      for (const b of cfg) w.u8(b);
+      break;
+    }
   }
 }
 

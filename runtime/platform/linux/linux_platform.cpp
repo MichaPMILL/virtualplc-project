@@ -34,6 +34,7 @@ LinuxPlatform::LinuxPlatform(std::string dataDir, std::string gpioChip)
 
 LinuxPlatform::~LinuxPlatform() {
     dataLogger_.reset();
+    enip_.reset();
     closeModules();
 }
 
@@ -152,6 +153,8 @@ bool LinuxPlatform::moduleOk(uint16_t index) {
             return pnDevice_ && pnDevice_->running();
         case IoModule::IO_PROFINET_REMOTE:
             return pnController_ && index < pnRemoteIndex_.size() && pnController_->deviceOk(pnRemoteIndex_[index]);
+        case IoModule::IO_ENIP_ADAPTER:
+            return enip_ && index < enipIndex_.size() && enip_->ok(enipIndex_[index]);
         default:
             return modules_[index].ok;
     }
@@ -281,6 +284,10 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
                 snprintf(msg, sizeof msg, "I/O module %u: PROFINET IO-Device \"%s\" (%s) driven by this controller", unsigned(modules_.size()),
                          info.station, info.host);
                 break;
+            case IoModule::IO_ENIP_ADAPTER:
+                snprintf(msg, sizeof msg, "I/O module %u: EtherNet/IP adapter %s (assemblies %u / %u / %u, RPI %.1f ms)", unsigned(modules_.size()),
+                         info.host, unsigned(info.configInstance), unsigned(info.outInstance), unsigned(info.inInstance), info.rpiUs / 1000.0);
+                break;
             default:
                 m.supported = false;
                 snprintf(msg, sizeof msg, "I/O module %u: analog GPIO is not supported on Linux", unsigned(modules_.size()));
@@ -290,6 +297,7 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
     }
     if (reader.count() != modules_.size()) note("Warning: malformed I/O configuration");
     configureProfinet();
+    configureEnip();
     return uint16_t(modules_.size());
 }
 
@@ -411,6 +419,64 @@ void LinuxPlatform::configureProfinet() {
     for (auto& s : pnStacks_) s->start();
 }
 
+void LinuxPlatform::configureEnip() {
+    std::vector<enip::AdapterConfig> list;
+    std::string key;
+    enipIndex_.assign(modules_.size(), 0);
+    for (size_t k = 0; k < modules_.size(); k++) {
+        const IoModuleInfo& i = modules_[k].info;
+        if (IoModule(i.kind) != IoModule::IO_ENIP_ADAPTER) continue;
+        enip::AdapterConfig c;
+        c.name = "module " + std::to_string(k);
+        c.host = i.host;
+        c.port = i.port ? i.port : 44818;
+        c.rpiUs = i.rpiUs ? i.rpiUs : 10000;
+        c.configInstance = i.configInstance;
+        c.outInstance = i.outInstance;
+        c.inInstance = i.inInstance;
+        c.outLength = i.outLength;
+        c.outByte = i.outByte;
+        c.inLength = i.inLength;
+        c.inByte = i.inByte;
+        c.outHeader = i.enipFlags & 1;
+        c.inHeader = i.enipFlags & 2;
+        c.multicast = i.enipFlags & 4;
+        c.electronicKey = i.enipFlags & 8;
+        c.timeoutMultiplier = i.timeoutMultiplier;
+        c.vendorId = i.vendorId;
+        c.deviceType = i.deviceType;
+        c.productCode = i.productCode;
+        c.revMajor = i.revMajor;
+        c.revMinor = i.revMinor;
+        c.configData.assign(i.recordPool, i.recordPool + i.recordUsed);
+        char buf[256];
+        snprintf(buf, sizeof buf, "%s:%u|%u|%u/%u/%u|%u@%u|%u@%u|%u|%u|%x/%x/%x/%u.%u|", i.host, c.port, c.rpiUs, i.configInstance, i.outInstance,
+                 i.inInstance, i.outLength, i.outByte, i.inLength, i.inByte, i.enipFlags, i.timeoutMultiplier, i.vendorId, i.deviceType,
+                 i.productCode, i.revMajor, i.revMinor);
+        key += buf;
+        for (uint8_t b : c.configData) {
+            snprintf(buf, sizeof buf, "%02x", b);
+            key += buf;
+        }
+        key += "#";
+        enipIndex_[k] = uint16_t(list.size());
+        list.push_back(std::move(c));
+    }
+    if (key == enipKey_ && (enip_ || list.empty())) return;  // unchanged: keep the connections
+    enip_.reset();
+    enipKey_ = key;
+    enipError_.clear();
+    if (list.empty()) return;
+    auto scanner = std::make_unique<enip::Scanner>(std::move(list), [this](const std::string& m) { note(m); });
+    std::string err;
+    if (!scanner->start(err)) {
+        enipError_ = err;
+        note(err);
+        return;
+    }
+    enip_ = std::move(scanner);
+}
+
 bool LinuxPlatform::moduleDiag(uint16_t index) {
     if (index >= modules_.size()) return false;
     switch (IoModule(modules_[index].info.kind)) {
@@ -432,6 +498,9 @@ size_t LinuxPlatform::moduleDiagnostics(uint16_t index, char* out, size_t cap) {
         const size_t k = pnRemoteIndex_[index];
         text = pnController_->diagnostics(k);
         if (!pnController_->deviceOk(k)) text = pnController_->status(k) + (text.empty() ? "" : "\n" + text);
+    } else if (IoModule(modules_[index].info.kind) == IoModule::IO_ENIP_ADAPTER) {
+        if (enip_ && index < enipIndex_.size()) text = enip_->status(enipIndex_[index]);
+        else text = enipError_.empty() ? "EtherNet/IP not started (see the diagnostic buffer)" : enipError_;
     } else if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFINET_DEVICE) {
         if (pnDevice_) text = pnDevice_->status();
         else text = pnError_.empty() ? "PROFINET not started (see the diagnostic buffer)" : pnError_;
@@ -457,6 +526,7 @@ bool LinuxPlatform::alarm(uint16_t module, uint16_t slot, uint16_t kind, uint32_
 void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
     if (pnDevice_) pnDevice_->readInputs(image, size);
     if (pnController_) pnController_->readInputs(image, size);
+    if (enip_) enip_->readInputs(image, size);
     uint32_t now = millis();
     for (Module& m : modules_) {
         const IoModuleInfo& i = m.info;
@@ -519,6 +589,7 @@ void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
 void LinuxPlatform::writeOutputs(const uint8_t* image, uint32_t size) {
     if (pnDevice_) pnDevice_->writeOutputs(image, size, true);
     if (pnController_) pnController_->writeOutputs(image, size, true);
+    if (enip_) enip_->writeOutputs(image, size, true);
     uint32_t now = millis();
     for (Module& m : modules_) {
         const IoModuleInfo& i = m.info;

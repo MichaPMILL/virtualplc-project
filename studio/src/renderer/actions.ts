@@ -723,13 +723,21 @@ export async function goOnlineCmd(device = currentDevice()): Promise<void> {
   await refreshOnline(device.id);
   startPolling();
   store.emit('online');
+  // monitoring was on before going offline (simulation restarted, reconnection): resume it
+  if (resumeMonitoring && !store.monitoring) {
+    resumeMonitoring = false;
+    await toggleMonitorCmd();
+  }
 }
+
+let resumeMonitoring = false;
 
 export async function goOfflineCmd(device = currentDevice()): Promise<void> {
   if (!device) return;
   await call('disconnect', device.id).catch(() => undefined);
   const s = store.onlineOf(device.id);
   s.connected = false;
+  resumeMonitoring = store.monitoring;
   store.monitoring = false;
   if (!store.anyOnline) document.body.classList.remove('online');
   store.addMessage({ severity: 'info', text: `Liaison en ligne avec ${device.name} coupée.`, path: device.name });

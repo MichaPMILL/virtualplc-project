@@ -242,8 +242,11 @@ export class DeviceClient {
         socket.removeAllListeners('close');
         let key = '';
         try {
-          const jwk = socket.getPeerX509Certificate()?.publicKey.export({ format: 'jwk' }) as { crv?: string; x?: string } | undefined;
-          if (jwk?.crv === 'Ed25519' && jwk.x) key = Buffer.from(jwk.x, 'base64url').toString('hex');
+          const pub = socket.getPeerX509Certificate()?.publicKey;
+          if (pub?.asymmetricKeyType === 'ed25519') {
+            const der = pub.export({ type: 'spki', format: 'der' });
+            key = Buffer.from(der.subarray(der.length - 32)).toString('hex');
+          }
         } catch {
           key = '';
         }

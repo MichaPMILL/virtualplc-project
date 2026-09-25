@@ -90,6 +90,7 @@ struct Options {
     bool tlsRequired = false;  // refuse the plain device protocol on the network
     bool signedPrograms = false;  // accept only programs signed with a trusted engineering key
     bool auditSyslog = false;     // copy the audit trail to syslog (SIEM)
+    bool enipList = false;        // list the EtherNet/IP devices of the network, then exit
     std::string trustKey;         // --trust-key NAME:HEX, then exit
     std::string addUser;  // --add-user NAME: create or replace a user (password on stdin), then exit
     int addRole = 4;
@@ -118,6 +119,7 @@ void usage() {
         "  --signed-programs     accept only programs signed with a trusted engineering key\n"
         "  --audit-syslog        copy the audit trail to syslog (authpriv) for a SIEM\n"
         "  --trust-key NAME:KEY  trust an engineering public key (hex) and exit\n"
+        "  --enip-list           list the EtherNet/IP devices of the network and exit\n"
         "  --add-user NAME       create or replace a user (password read on stdin) and exit\n"
         "  --role ROLE           role of --add-user: viewer, operator, engineer, admin (default)\n",
         VPLC_FIRMWARE_VERSION, unsigned(PROTOCOL_PORT));
@@ -132,6 +134,7 @@ bool parse(int argc, char** argv, Options& o) {
         if (a == "--tls-required") { o.tlsRequired = true; continue; }
         if (a == "--signed-programs") { o.signedPrograms = true; continue; }
         if (a == "--audit-syslog") { o.auditSyslog = true; continue; }
+        if (a == "--enip-list") { o.enipList = true; continue; }
         if (a == "--help" || a == "-h") { usage(); exit(0); }
         if (!(v = next())) { fprintf(stderr, "Missing value for %s\n", a.c_str()); return false; }
         if (a == "--data") o.dataDir = v;
@@ -308,6 +311,16 @@ void serveModbus(Client& c, Cpu& cpu, std::vector<int>& closed) {
 int main(int argc, char** argv) {
     Options opt;
     if (!parse(argc, argv, opt)) return 2;
+
+    if (opt.enipList) {
+        std::vector<enip::Identity> found = enip::listIdentity(1500);
+        for (const enip::Identity& d : found) {
+            printf("%-15s  vendor %5u  type %3u  product %5u  rev %u.%u  serial %08X  %s\n", d.address.c_str(), d.vendorId, d.deviceType, d.productCode,
+                   d.revMajor, d.revMinor, d.serial, d.productName.c_str());
+        }
+        fprintf(stderr, "%zu EtherNet/IP device(s)\n", found.size());
+        return 0;
+    }
 
     if (!opt.trustKey.empty()) {
         size_t colon = opt.trustKey.find(':');

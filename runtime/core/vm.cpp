@@ -690,6 +690,15 @@ bool Vm::std(uint8_t fn, uint8_t argc) {
             result = a[1 + k];
             break;
         }
+        case StdFn::S_SWAP: {
+            // byte order of a 2, 4 or 8-byte value (EtherNet/IP and Modbus data are little endian)
+            if (argc != 2) return false;
+            uint64_t v = uint64_t(a[0].i), r = 0;
+            int n = int(a[1].i);
+            for (int k = 0; k < n; k++) r |= ((v >> (8 * k)) & 0xFF) << (8 * (n - 1 - k));
+            result.i = int64_t(r);
+            break;
+        }
         case StdFn::S_NORM_X:
         case StdFn::S_SCALE_X: {
             if (argc != 3) return false;
