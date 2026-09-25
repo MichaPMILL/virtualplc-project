@@ -128,3 +128,18 @@ test('EtherNet/IP: wrong assembly instance reported as a CIP error', { skip, tim
     adapter.close();
   }
 });
+
+test('EtherNet/IP: ListIdentity discovery', async () => {
+  const { enipDiscover } = await import('../src/index.ts');
+  const { identityResponder } = await import('./enipAdapter.ts');
+  const r = await identityResponder('127.0.0.4', 'VS-100', 44820);
+  try {
+    const found = await enipDiscover(500, '127.0.0.4', 44820);
+    assert.equal(found.length, 1);
+    assert.deepEqual({ ...found[0] }, {
+      address: '127.0.0.4', vendorId: 0x1234, deviceType: 43, productCode: 17, revision: { major: 2, minor: 3 }, status: 0, serial: 0xa1b2c3d4, productName: 'VS-100',
+    });
+  } finally {
+    r.close();
+  }
+});

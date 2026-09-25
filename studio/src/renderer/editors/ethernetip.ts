@@ -2,7 +2,7 @@
 // the CPU as scanner, added from their EDS file or configured by hand (assembly instances).
 import { parseEds, type Device, type EdsConnection, type IoModuleConfig } from '../../../../sdk/src/browser.ts';
 import { h } from '../dom.ts';
-import { host } from '../host.ts';
+import { call, host } from '../host.ts';
 import { alertDialog, button, openDialog } from '../ui/dialogs.ts';
 import { store } from '../store.ts';
 
@@ -80,6 +80,45 @@ export async function addEdsDevice(device: Device, nextIn: number, nextOut: numb
     await alertDialog('EDS', (e as Error).message, 'error');
     return null;
   }
+}
+
+/** Searches the network (ListIdentity from this computer) and adds the chosen devices */
+export function discoverEnipDevices(device: Device, nextIn: () => number, nextOut: () => number): Promise<EnipModule[]> {
+  return new Promise((resolve) => {
+    const result: EnipModule[] = [];
+    openDialog('Appareils EtherNet/IP du réseau', (d) => {
+      const status = h('p', { className: 'muted' }, 'Recherche en cours (ListIdentity)…');
+      const table = h('table', { className: 'grid', style: 'width:100%' });
+      d.body.append(h('div', { style: 'width:720px' }, status, table,
+        h('p', { className: 'muted' }, 'Recherche depuis ce poste : l\'appareil doit être sur un réseau accessible. Les assemblages (instances, tailles) viennent ensuite de la documentation ou du fichier EDS.')));
+      const picks: Array<{ cb: HTMLInputElement; id: Awaited<ReturnType<typeof call<'enipDiscover'>>>[number] }> = [];
+      void call('enipDiscover', 1500).then((found) => {
+        status.textContent = found.length ? `${found.length} appareil(s) trouvé(s).` : 'Aucun appareil n\'a répondu.';
+        table.append(h('tr', null, h('th', null, ''), h('th', null, 'Adresse IP'), h('th', null, 'Produit'), h('th', null, 'Fabricant'), h('th', null, 'Code produit'), h('th', null, 'Révision'), h('th', null, 'N° de série')));
+        for (const id of found) {
+          const known = device.io.some((m) => m.kind === 'enip-adapter' && m.host === id.address);
+          const cb = h('input', { type: 'checkbox', checked: !known, disabled: known, style: 'width:auto' });
+          picks.push({ cb, id });
+          table.append(h('tr', null, h('td', null, cb), h('td', { className: 'mono' }, id.address), h('td', null, id.productName, known ? ' (déjà configuré)' : ''),
+            h('td', null, String(id.vendorId)), h('td', null, String(id.productCode)), h('td', null, `${id.revision.major}.${id.revision.minor}`),
+            h('td', { className: 'mono' }, id.serial.toString(16).toUpperCase().padStart(8, '0'))));
+        }
+      }).catch((e) => { status.textContent = `Recherche impossible : ${(e as Error).message}`; });
+      d.foot.append(button('Ajouter', () => {
+        for (const { cb, id } of picks) {
+          if (!cb.checked) continue;
+          const m = newEnipAdapter(device, nextIn(), nextOut());
+          Object.assign(m, {
+            host: id.address, vendorId: id.vendorId, deviceType: id.deviceType, productCode: id.productCode, revision: id.revision,
+            catalog: { file: 'ListIdentity', vendor: `fabricant ${id.vendorId}`, product: id.productName },
+          } satisfies Partial<EnipModule>);
+          device.io.push(m);
+          result.push(m);
+        }
+        d.close();
+      }, true), button('Annuler', () => d.close()));
+    }, { onClose: () => resolve(result) });
+  });
 }
 
 const hex = (bytes: number[] | undefined) => (bytes ?? []).map((b) => b.toString(16).padStart(2, '0')).join(' ');

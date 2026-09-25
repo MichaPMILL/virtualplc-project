@@ -273,3 +273,48 @@ test('stdlib: sequencer (automatic, cycle by cycle, step by step, stop at end of
     assert.equal(await sim.get('step'), 0);
   });
 });
+
+test('stdlib: vision sensor trigger (OK, NG, timeout, not ready)', { skip }, async () => {
+  await withSim(program(`
+      exe : Bool; ready : Bool := TRUE; busy : Bool; valid : Bool; okBit : Bool; err : Bool;
+      cam : "VPLC_VisionTrigger"; trig : Bool; running : Bool; ok : Bool; ng : Bool; fault : Bool; code : Int; done : Int;`, `
+    cam(Execute := exe, Ready := ready, Busy := busy, ResultValid := valid, ResultOk := okBit, DeviceError := err, Timeout := T#300MS,
+        TriggerOut => trig, Running => running, Ok => ok, Ng => ng, Error => fault, ErrorCode => code);
+    IF cam.Done THEN done := done + 1; END_IF;`), async (sim) => {
+    const inspect = async (result: boolean) => {
+      await sim.set('exe', true);
+      await sim.scan(1, 10);
+      assert.equal(await sim.get('trig'), true);
+      await sim.set('busy', true);
+      await sim.scan(8, 10);
+      await sim.set('busy', false);
+      await sim.set('okBit', result);
+      await sim.set('valid', true);
+      await sim.scan(1, 10);
+      await sim.set('exe', false);
+      await sim.scan(1, 10);
+      await sim.set('valid', false);
+      await sim.scan(1, 10);
+    };
+    await inspect(true);
+    assert.equal(await sim.get('ok'), true);
+    assert.equal(await sim.get('trig'), false);
+    await inspect(false);
+    assert.equal(await sim.get('ng'), true);
+    assert.equal(await sim.get('done'), 2);
+    assert.equal(await sim.get('cam.NgCount'), 1);
+    // no answer: timeout
+    await sim.set('exe', true);
+    await sim.scan(40, 10);
+    assert.equal(await sim.get('fault'), true);
+    assert.equal(await sim.get('code'), 2);
+    await sim.set('exe', false);
+    await sim.scan(1, 10);
+    // not ready
+    await sim.set('ready', false);
+    await sim.set('exe', true);
+    await sim.scan(1, 10);
+    assert.equal(await sim.get('code'), 1);
+    assert.equal(await sim.get('running'), false);
+  });
+});

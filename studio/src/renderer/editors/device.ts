@@ -10,7 +10,7 @@ import { store } from '../store.ts';
 import { contextMenu } from '../ui/chrome.ts';
 import type { EditorView } from './types.ts';
 import { addGsdmlDevice, newPnDevice, pnDeviceProps, pnRemoteProps } from './profinet.ts';
-import { addEdsDevice, enipProps, newEnipAdapter } from './ethernetip.ts';
+import { addEdsDevice, discoverEnipDevices, enipProps, newEnipAdapter } from './ethernetip.ts';
 
 /** One tag per channel of the module that no tag uses yet */
 function createTags(device: Device, m: IoModuleConfig): void {
@@ -220,6 +220,14 @@ export function deviceEditor(device: Device): EditorView {
           const m = await addGsdmlDevice(device, nextByte(device, 'I'), nextByte(device, 'Q'));
           if (!m) return;
           device.io.push(m);
+          selected = device.io.length - 1;
+          touch();
+          renderProps();
+        },
+      }, {
+        label: 'Rechercher des appareils EtherNet/IP...', icon: 'device' as const, run: async () => {
+          const added = await discoverEnipDevices(device, () => nextByte(device, 'I'), () => nextByte(device, 'Q'));
+          if (!added.length) return;
           selected = device.io.length - 1;
           touch();
           renderProps();

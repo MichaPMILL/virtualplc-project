@@ -19,6 +19,8 @@ export { DeviceClient, DeviceError, isSerialPort, isSimulatorHost } from './devi
 export { setSimulatorWasm, SimulatedCpu, simulator } from './simulator.ts';
 export type { DataLogStatus, DeviceInfo, DeviceState, LogEntry } from './device.ts';
 export { parseEds } from './eds.ts';
+export { enipDiscover, parseListIdentity } from './enip.ts';
+export type { EnipIdentity } from './enip.ts';
 export { addToLibrary, compareVersions, elementDependencies, insertFromLibrary, LIBRARY_EXT, LIBRARY_FORMAT, newLibrary, nextVersion, outdatedCopies, parseLibrary, serializeLibrary, standardLibrary } from './library.ts';
 export type { InsertResult, Library, LibraryElement, LibraryElementKind, LibraryOrigin } from './library.ts';
 export type { Eds, EdsConnection } from './eds.ts';

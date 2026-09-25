@@ -603,4 +603,89 @@ BEGIN
 END_FUNCTION_BLOCK
 `,
   },
+  {
+    name: 'VPLC_VisionTrigger', category: 'Vision / caméras',
+    description: 'Déclenchement d’une caméra ou d’un capteur de vision (Keyence, Cognex, SICK, Omron…) et lecture du résultat OK / NG avec surveillance du temps',
+    source: `FUNCTION_BLOCK "VPLC_VisionTrigger"
+   // Poignée de main commune aux capteurs de vision, quelle que soit la liaison (EtherNet/IP,
+   // PROFINET, IO-Link, E/S TOR) : relier les bits de l'appareil (voir son manuel / son EDS).
+   VAR_INPUT
+      Execute : Bool;                 // front montant : déclencher une inspection
+      Ready : Bool := TRUE;           // bit « prêt » de la caméra (TRUE si l'appareil n'en a pas)
+      Busy : Bool;                    // bit « occupé / acquisition en cours »
+      ResultValid : Bool;             // bit « résultat disponible » (ou « fin d'inspection »)
+      ResultOk : Bool;                // bit « OK » (total status)
+      DeviceError : Bool;             // bit « erreur » de la caméra
+      NeedsAck : Bool;                // TRUE : l'appareil attend un acquittement du résultat
+      Timeout : Time := T#2S;         // durée maximale d'une inspection
+      TriggerPulse : Time := T#50MS;  // durée minimale du bit de déclenchement
+   END_VAR
+   VAR_OUTPUT
+      TriggerOut : Bool;              // vers le bit « trigger » de la caméra
+      ResultAck : Bool;               // vers le bit « acquittement du résultat »
+      Running : Bool;
+      Done : Bool;                    // TRUE pendant un cycle : résultat lu
+      Ok : Bool;                      // dernier résultat : bon
+      Ng : Bool;                      // dernier résultat : mauvais
+      Error : Bool;
+      ErrorCode : Int;                // 1 : pas prête, 2 : temps dépassé, 3 : erreur de la caméra
+      Count : DInt;                   // nombre d'inspections
+      NgCount : DInt;
+   END_VAR
+   VAR
+      Edge : R_TRIG;
+      Pulse : TP;
+      Watch : TON;
+      Seen : Bool;                    // l'appareil a pris en compte le déclenchement
+   END_VAR
+BEGIN
+    Edge(CLK := Execute);
+    Done := FALSE;
+    IF Edge.Q THEN
+        IF NOT Ready THEN
+            Error := TRUE;
+            ErrorCode := 1;
+        ELSE
+            Running := TRUE;
+            Error := FALSE;
+            ErrorCode := 0;
+            Seen := FALSE;
+            Ok := FALSE;
+            Ng := FALSE;
+        END_IF;
+    END_IF;
+    Pulse(IN := Edge.Q AND Running, PT := TriggerPulse);
+    TriggerOut := Pulse.Q OR (Running AND NOT Seen AND NOT ResultValid);
+    IF Busy OR ResultValid THEN
+        Seen := TRUE;
+    END_IF;
+    Watch(IN := Running, PT := Timeout);
+    IF Running THEN
+        IF DeviceError THEN
+            Running := FALSE;
+            Error := TRUE;
+            ErrorCode := 3;
+        ELSIF ResultValid AND NOT Busy AND NOT Pulse.Q THEN
+            Running := FALSE;
+            Done := TRUE;
+            Ok := ResultOk;
+            Ng := NOT ResultOk;
+            Count := Count + 1;
+            IF NOT ResultOk THEN
+                NgCount := NgCount + 1;
+            END_IF;
+        ELSIF Watch.Q THEN
+            Running := FALSE;
+            Error := TRUE;
+            ErrorCode := 2;
+        END_IF;
+    END_IF;
+    IF NOT Running THEN
+        TriggerOut := FALSE;
+    END_IF;
+    // acknowledgement of the result, kept until the device clears ResultValid
+    ResultAck := NeedsAck AND ResultValid AND NOT Running;
+END_FUNCTION_BLOCK
+`,
+  },
 ];

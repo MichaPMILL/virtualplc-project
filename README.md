@@ -155,6 +155,17 @@ traçabilité…* gives a customer a file they verify offline (`tools/trace-veri
 or `vplc verify`), which detects any record altered, removed or forged. Details:
 [docs/traceability.md](docs/traceability.md).
 
+### EtherNet/IP, libraries
+
+- **EtherNet/IP scanner** (in-house): adapters from their EDS file or found on the network,
+  class 1 cyclic I/O, electronic key, diagnostics, reconnection; `SWAP()` for the little-endian
+  data. Vision sensors (Keyence, Cognex, SICK…) with `VPLC_VisionTrigger` — see
+  [docs/ethernetip.md](docs/ethernetip.md).
+- **Libraries** (task card *Bibliothèques*): project library, global libraries (`.vplclib` files
+  shared between projects), VirtualPLC standard library; versions, dependencies and updates of
+  the copies. Standard blocks include `VPLC_Cylinder` (pneumatic cylinders) and `VPLC_Sequencer`
+  (automatic, cycle by cycle and step-by-step modes).
+
 ### Security (IEC 62443)
 
 - **Accounts and roles** on the CPU: viewer, operator, engineer, administrator (least

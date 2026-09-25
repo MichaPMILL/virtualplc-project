@@ -193,3 +193,31 @@ export class EnipAdapter {
     m.subarray(24, 18 + len).copy(this.output);
   }
 }
+
+/** ListIdentity answer of a simulated device (UDP 44818 on its own address) */
+export async function identityResponder(address: string, name: string, port = 44818): Promise<{ close: () => void }> {
+  const udp = createSocket({ type: 'udp4', reuseAddr: true });
+  udp.on('message', (m, rinfo) => {
+    if (m.length < 24 || m.readUInt16LE(0) !== 0x63) return;
+    const id = Buffer.alloc(33 + name.length + 1);
+    id.writeUInt16LE(1, 0);
+    id.writeUInt16BE(2, 2);                 // sin_family
+    id.writeUInt16BE(44818, 4);
+    id.writeUInt16LE(0x1234, 18);           // vendor
+    id.writeUInt16LE(43, 20);               // device type
+    id.writeUInt16LE(17, 22);               // product
+    id[24] = 2; id[25] = 3;                 // revision
+    id.writeUInt32LE(0xa1b2c3d4, 28);       // serial
+    id[32] = name.length;
+    id.write(name, 33, 'latin1');
+    const r = Buffer.alloc(24 + 6);
+    r.writeUInt16LE(0x63, 0);
+    r.writeUInt16LE(6 + id.length, 2);
+    r.writeUInt16LE(1, 24);
+    r.writeUInt16LE(0x0c, 26);
+    r.writeUInt16LE(id.length, 28);
+    udp.send(Buffer.concat([r, id]), rinfo.port, rinfo.address);
+  });
+  await new Promise<void>((res) => udp.bind(port, address, () => res()));
+  return { close: () => udp.close() };
+}

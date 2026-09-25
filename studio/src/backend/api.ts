@@ -53,6 +53,9 @@ export function createApi(backend = new Backend()) {
       }
     },
 
+    /** EtherNet/IP devices of the network of this computer (ListIdentity) */
+    enipDiscover: async (timeoutMs?: number) => (await import('../../../sdk/src/enip.ts')).enipDiscover(timeoutMs ?? 1500),
+
     // Global libraries (.vplclib files, shared between projects)
     libraryRead: async (path: string) => (await import('node:fs/promises')).readFile(path, 'utf8'),
     libraryWrite: async (path: string, text: string) => {
