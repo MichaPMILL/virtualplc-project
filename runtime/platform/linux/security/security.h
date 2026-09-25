@@ -47,6 +47,8 @@ public:
 
     // Signed programs (IEC 62443-3-3 SR 3.4, software integrity)
     void setSignedRequired(bool on) { signedRequired_ = on; }
+    // Copy of every audit record to syslog (facility authpriv): central log server / SIEM
+    void setSyslog(bool on) { syslog_ = on; }
     bool signedRequired() const { return signedRequired_; }
     // signature = public key (32) + Ed25519 signature (64) of "VirtualPLC program|" + sha256hex(image)
     const char* verifyProgram(const uint8_t* image, size_t length, const std::string& signature, std::string& signer);
@@ -65,6 +67,7 @@ private:
     std::map<std::string, std::string> keys_;  // name -> public key (raw 32 bytes)
     bool keysLoaded_ = false;
     bool signedRequired_ = false;
+    bool syslog_ = false;
 
     std::string dataDir_, plcName_ = "PLC_1";
     std::map<std::string, User> users_;

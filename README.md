@@ -155,6 +155,19 @@ traçabilité…* gives a customer a file they verify offline (`tools/trace-veri
 or `vplc verify`), which detects any record altered, removed or forged. Details:
 [docs/traceability.md](docs/traceability.md).
 
+### Security (IEC 62443)
+
+- **Accounts and roles** on the CPU: viewer, operator, engineer, administrator (least
+  privilege checked for every command), PBKDF2 passwords, password policy, lockout.
+- **Encrypted link** Studio ↔ CPU (TLS) with the key of the CPU pinned in the project at the
+  first connection (fingerprint to compare with the one printed by the CPU).
+- **Signed programs**: the Studio signs every download with the key of the workstation; with
+  `--signed-programs` the CPU loads only programs signed by a trusted key, at every start too.
+- **Audit trail**: who did what, when and from where — hash-chained and signed by the CPU,
+  checked in the Studio (*PLC › Sécurité*), copied to syslog / SIEM with `--audit-syslog`.
+- SBOM (CycloneDX), dependency audit in the CI, hardened systemd unit.
+  Details and compliance mapping: [docs/security.md](docs/security.md).
+
 ### Examples
 
 - [`examples/carton-closer`](examples/carton-closer) — carton closing machine with pneumatic
@@ -497,6 +510,9 @@ composer lint
 
 ## Security checklist
 
+- CPU: create accounts (`vplc-cpu --add-user admin --role admin`), run with
+  `--tls-required --signed-programs --audit-syslog` (the provided systemd unit does) — see
+  [docs/security.md](docs/security.md) (IEC 62443 / ISO 27001 / NIS2 / PCI DSS mapping).
 - Set `VPLC_API_TOKEN` and serve the IDE over HTTPS (reverse proxy) if it leaves localhost.
 - Expose only `public/` through the web server.
 - Restrict the Modbus server with `VPLC_MODBUS_BIND` / a firewall.

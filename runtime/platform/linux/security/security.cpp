@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -415,6 +416,11 @@ void Security::audit(const std::string& user, const std::string& peer, const std
                        ",\"detail\":" + jsonText(detail) + ",\"chain\":\"" + auditChain_ + "\",\"sig\":\"" + sig + "\"}";
     recent_.push_back(line);
     if (recent_.size() > RECENT) recent_.pop_front();
+    if (syslog_) {
+        // one line per record (the chained JSON: the SIEM can verify it too)
+        syslog(LOG_AUTHPRIV | (action.find("fail") != std::string::npos || action == "denied" || action == "lockout" || action.find("rejected") != std::string::npos ? LOG_WARNING : LOG_NOTICE),
+               "audit %s", line.c_str());
+    }
 
     std::string path = dataDir_ + "/audit.log";
     struct stat st;
@@ -433,8 +439,15 @@ size_t Security::auditRead(uint32_t from, uint16_t count, char* out, size_t cap)
     if (count == 0) count = 50;
     // from = 0: the last `count` records; else the records from sequence number `from`
     size_t start = 0;
-    if (from == 0) start = recent_.size() > count ? recent_.size() - count : 0;
-    else {
+    if (from == 0) {
+        // the latest records that fit in the response
+        start = recent_.size();
+        size_t room = cap > 400 ? cap - 400 : 0;
+        while (start > 0 && recent_.size() - start < count && recent_[start - 1].size() + 1 <= room) {
+            room -= recent_[start - 1].size() + 1;
+            start--;
+        }
+    } else {
         while (start < recent_.size() && strtoull(jsonField(recent_[start], "seq").c_str(), nullptr, 10) < from) start++;
     }
     std::string key = identityOk_ ? db::toHex(identity_.publicKey()) : "";

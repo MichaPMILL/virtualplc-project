@@ -22,23 +22,41 @@ The maximum payload is 4096 bytes (1024 on small targets, see `INFO`).
 | Command          | Request payload                                    | Response payload                                  |
 |------------------|----------------------------------------------------|---------------------------------------------------|
 | `INFO`           | –                                                  | JSON: device, firmware, name, sizes, `maxPayload`, `maxProgram`, `auth` |
-| `AUTH`           | password (UTF-8)                                   | –                                                 |
+| `AUTH`           | `user \0 password` (UTF-8), or the password alone (CPU password) | JSON `{user, role}`                   |
 | `STATE`          | –                                                  | JSON: state, programId, scan statistics, fault    |
 | `STOP`           | –                                                  | –                                                 |
 | `START`          | u8 mode (0 = warm restart, 1 = cold: reset data)   | –                                                 |
 | `DOWNLOAD_BEGIN` | u32 size, u32 crc32 of the image                   | – (the CPU stops)                                 |
 | `DOWNLOAD_CHUNK` | u32 offset, bytes                                  | –                                                 |
-| `DOWNLOAD_END`   | –                                                  | – or error text (image checked, stored, loaded)   |
+| `DOWNLOAD_END`   | – or signature: 32-byte Ed25519 public key + 64-byte signature of `"VirtualPLC program|" + sha256 hex of the image` | – or error text (image checked, signature checked, stored, loaded) |
 | `READ`           | n × (u8 area, u32 offset, u16 length)              | the requested bytes, concatenated                 |
 | `WRITE`          | n × (u8 area, u32 offset, u8 bit, u16 length, bytes) — bit = 0xFF for a byte write | –         |
 | `FORCE`          | n × (u8 area I/Q, u32 byte, u8 bit, u8 value) — value 2 removes the force | –                          |
 | `UNFORCE_ALL`    | –                                                  | –                                                 |
 | `LOGS`           | u32 first sequence number wanted                   | JSON array of `{seq, t, msg}`                     |
 | `UPLOAD`         | u32 offset                                         | u32 total size, then image bytes from offset      |
+| `USERS`          | u8 operation, fields separated by `\0` (see below) | JSON                                              |
+| `AUDIT_READ`     | u32 first sequence number (0 = latest), u16 count  | JSON `{plc, key, first, last, records:[…]}`       |
 
-Areas are `D`, `I`, `Q`, `M` (see `areas`). When the device is protected by a
-password, every command except `INFO` and `AUTH` answers `UNAUTHORIZED` until a
-successful `AUTH` on the connection.
+Areas are `D`, `I`, `Q`, `M` (see `areas`). When the device is protected (user
+accounts or a password, `INFO.auth`), every command except `INFO` and `AUTH` answers
+`UNAUTHORIZED` until a successful `AUTH` on the connection, and then each command needs a
+role ([security.md](security.md)): `viewer` for `STATE`, `READ`, `LOGS`, `DATALOG_READ`,
+`AUDIT_READ`, `USERS`; `operator` for `WRITE`, `START`, `STOP`; `engineer` for the others.
+Five failed `AUTH` in a row block the logins for 30 s.
+
+`USERS` operations: 0 list; 1 add or replace (name, password, role 1–4); 2 delete (name);
+3 reset a password (name, password); 4 change the own password (old, new); 5 list the
+trusted engineering keys; 6 trust a key (name, public key hex); 7 remove a key (name).
+1–3, 6 and 7 need the `admin` role.
+
+## Encryption (TLS)
+
+The Linux CPU also accepts TLS on the same port: a connection whose first byte is a TLS
+handshake record (0x16) is served over TLS, the others with the plain protocol (refused
+with `--tls-required`). The CPU certificate is self-signed with its Ed25519 identity key;
+clients pin that key (its fingerprint is `sha256(hex of the public key)`, first 16 bytes,
+printed by the CPU at startup).
 
 ### `STATE` example
 

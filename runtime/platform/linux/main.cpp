@@ -23,6 +23,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <syslog.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -88,6 +89,7 @@ struct Options {
     int serialBaud = 115200;
     bool tlsRequired = false;  // refuse the plain device protocol on the network
     bool signedPrograms = false;  // accept only programs signed with a trusted engineering key
+    bool auditSyslog = false;     // copy the audit trail to syslog (SIEM)
     std::string trustKey;         // --trust-key NAME:HEX, then exit
     std::string addUser;  // --add-user NAME: create or replace a user (password on stdin), then exit
     int addRole = 4;
@@ -114,6 +116,7 @@ void usage() {
         "  --serial DEV[:BAUD]   also serve the Studio on a serial link (e.g. /dev/ttyGS0:115200)\n"
         "  --tls-required        refuse unencrypted Studio connections on the network\n"
         "  --signed-programs     accept only programs signed with a trusted engineering key\n"
+        "  --audit-syslog        copy the audit trail to syslog (authpriv) for a SIEM\n"
         "  --trust-key NAME:KEY  trust an engineering public key (hex) and exit\n"
         "  --add-user NAME       create or replace a user (password read on stdin) and exit\n"
         "  --role ROLE           role of --add-user: viewer, operator, engineer, admin (default)\n",
@@ -128,6 +131,7 @@ bool parse(int argc, char** argv, Options& o) {
         if (a == "--stopped") { o.stopped = true; continue; }
         if (a == "--tls-required") { o.tlsRequired = true; continue; }
         if (a == "--signed-programs") { o.signedPrograms = true; continue; }
+        if (a == "--audit-syslog") { o.auditSyslog = true; continue; }
         if (a == "--help" || a == "-h") { usage(); exit(0); }
         if (!(v = next())) { fprintf(stderr, "Missing value for %s\n", a.c_str()); return false; }
         if (a == "--data") o.dataDir = v;
@@ -359,6 +363,8 @@ int main(int argc, char** argv) {
     cpu.setName(opt.name.c_str());
     platform.setPlcName(opt.name);
     platform.security().setSignedRequired(opt.signedPrograms);
+    platform.security().setSyslog(opt.auditSyslog);
+    if (opt.auditSyslog) openlog("vplc-cpu", LOG_PID, LOG_AUTHPRIV);
     cpu.setPassword(opt.password.c_str());
     cpu.setWatchdog(opt.watchdogMs);
 
@@ -393,6 +399,11 @@ int main(int argc, char** argv) {
     if (platform.hasUsers()) platform.log("User accounts enabled (role-based access control, audit trail)");
     else if (opt.password.empty()) platform.log("Warning: no user and no password: anyone on the network can program this CPU (use --add-user)");
 
+    {
+        char detail[96];
+        snprintf(detail, sizeof detail, "firmware %s%s%s", VPLC_FIRMWARE_VERSION, opt.tlsRequired ? ", TLS required" : "", opt.signedPrograms ? ", signed programs" : "");
+        platform.audit("cpu", "-", "service started", detail);
+    }
     cpu.begin(!opt.stopped);
 
     std::vector<Client> clients;
@@ -611,6 +622,7 @@ int main(int argc, char** argv) {
     }
 
     platform.log("Shutting down: outputs off");
+    platform.audit("cpu", "-", "service stopped", "");
     cpu.stop();
     for (Client& c : clients) {
         if (c.ssl) SSL_free(c.ssl);

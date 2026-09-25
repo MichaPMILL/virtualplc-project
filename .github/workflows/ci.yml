@@ -77,3 +77,13 @@ jobs:
           npm run build
           git config --global user.name CI && git config --global user.email ci@example.invalid
           npm test
+      - name: Software bill of materials (CycloneDX)
+        run: node tools/sbom.mjs sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+      - name: Known vulnerabilities of the dependencies
+        run: |
+          (cd sdk && npm audit --omit=dev --audit-level=high)
+          (cd studio && npm audit --omit=dev --audit-level=high)

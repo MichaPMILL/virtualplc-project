@@ -1,0 +1,12 @@
+# Security updates of the dependencies (NIS2 art. 21 supply chain, PCI DSS 6.3.3)
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /sdk
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /studio
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

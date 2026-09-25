@@ -14,9 +14,14 @@ Type=simple
 User=virtualplc
 Group=virtualplc
 SupplementaryGroups=gpio
-ExecStart=/usr/local/bin/vplc-cpu --data /var/lib/virtualplc --name %H
-# Protect the device with a password (file readable by the service only):
-# ExecStart=/usr/local/bin/vplc-cpu --data /var/lib/virtualplc --password-file /etc/virtualplc/password
+# Hardened settings (docs/security.md): encrypted Studio link only, signed programs only,
+# audit trail copied to syslog. Before the first start, create an administrator and trust
+# the engineering key of the Studio (Sécurité > Programmes signés shows it):
+#   sudo -u virtualplc vplc-cpu --data /var/lib/virtualplc --add-user admin --role admin
+#   sudo -u virtualplc vplc-cpu --data /var/lib/virtualplc --trust-key alice:<public key hex>
+ExecStart=/usr/local/bin/vplc-cpu --data /var/lib/virtualplc --name %H --tls-required --signed-programs --audit-syslog
+# Commissioning on an isolated network only (no account, no signature):
+# ExecStart=/usr/local/bin/vplc-cpu --data /var/lib/virtualplc --name %H
 Restart=always
 RestartSec=1
 KillSignal=SIGTERM
@@ -36,6 +41,21 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/virtualplc
 DeviceAllow=/dev/gpiochip0 rw
+UMask=0077
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @network-io
+SystemCallFilter=~@mount @swap @reboot @module @debug @obsolete @cpu-emulation
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_PACKET AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
