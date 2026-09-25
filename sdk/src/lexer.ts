@@ -36,6 +36,13 @@ const isDigit = (c: string | undefined) => c !== undefined && c >= '0' && c <= '
 const isAlpha = (c: string | undefined) => c !== undefined && /[\p{L}_]/u.test(c);
 const isAlnum = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}_]/u.test(c);
 
+/** Integer value of a literal: a number when exact, a bigint beyond Number.MAX_SAFE_INTEGER (64-bit types). */
+export function intLiteral(digits: string, base: 2 | 8 | 10 | 16): number | bigint {
+  const prefix = { 2: '0b', 8: '0o', 10: '', 16: '0x' }[base];
+  const value = BigInt(prefix + (base === 10 ? digits.replace(/^0+(?=\d)/, '') : digits));
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value;
+}
+
 /**
  * SCL lexer (IEC 61131-3):
  * comments `//`, `(* *)`, `/* *\/`, pragmas `{ }`, "quoted" and #local identifiers,
@@ -72,14 +79,14 @@ export function tokenize(source: string): Token[] {
     advance(end + terminator.length - pos);
   };
 
-  const readBased = (base: number, l: number, c: number): number => {
+  const readBased = (base: number, l: number, c: number): number | bigint => {
     if (![2, 8, 16].includes(base)) throw new CompileError(`Unsupported numeric base ${base}`, l, c);
     advance(); // #
     const raw = consumeWhile((ch) => /[0-9A-Fa-f_]/.test(ch));
     const clean = raw.replaceAll('_', '');
     const valid = { 2: /^[01]+$/, 8: /^[0-7]+$/, 16: /^[0-9a-fA-F]+$/ }[base as 2 | 8 | 16];
     if (!valid.test(clean)) throw new CompileError(`Invalid base-${base} literal '${raw}'`, l, c);
-    return parseInt(clean, base);
+    return intLiteral(clean, base as 2 | 8 | 16);
   };
 
   const readNumber = (l: number, c: number): Token => {
@@ -101,7 +108,7 @@ export function tokenize(source: string): Token[] {
       text += consumeWhile(isDigit);
       real = true;
     }
-    const value = Number(text);
+    const value = real ? Number(text) : intLiteral(text, 10);
     return { type: real ? 'real' : 'int', text, value, line: l, column: c };
   };
 
@@ -230,7 +237,7 @@ export function tokenize(source: string): Token[] {
           const negative = peek() === '-';
           if (negative) advance();
           const tok = next();
-          if ((tok.type === 'int' || tok.type === 'real') && typeof tok.value === 'number') {
+          if ((tok.type === 'int' || tok.type === 'real') && (typeof tok.value === 'number' || typeof tok.value === 'bigint')) {
             const value = negative ? -tok.value : tok.value;
             return { ...tok, text: String(value), value, line: l, column: c };
           }

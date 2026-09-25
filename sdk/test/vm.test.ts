@@ -530,3 +530,73 @@ END_ORGANIZATION_BLOCK`, async (sim) => {
     assert.equal(await sim.get('lo'), 0x05040302);
   });
 });
+
+vmTest('64-bit integer literals stay exact (LWord, ULInt, LInt)', async () => {
+  await withSim(`
+    VAR_GLOBAL CONSTANT
+      K : LWord := 16#0102_0304_0506_0708;
+      KBig : ULInt := 9_007_199_254_740_993 * 2;
+    END_VAR
+    VAR_GLOBAL
+      L : LWord := 16#0102030405060708;
+      AllOnes : LWord := 16#FFFF_FFFF_FFFF_FFFF;
+      Oct : LWord := 8#1777777777777777777777;
+      Bin : LWord := 2#1000000000000000000000000000000000000000000000000000000000000001;
+      UMax : ULInt := 18446744073709551615;
+      UNear : ULInt := 18_446_744_073_709_551_614;
+      LMin : LInt := -9223372036854775808;
+      LMax : LInt := 9223372036854775807;
+      Folded : LInt := 9007199254740993 + 2;
+      FoldedMin : LInt := -9223372036854775807 - 1;
+      Inverted : LWord := NOT 16#0102030405060708;
+      Typed : LWord := LWORD#16#0102030405060708;
+      TypedNeg : LInt := LINT#-9223372036854775808;
+      Low : DWord;
+      High : DWord;
+      E1 : LWord;
+      E2 : ULInt;
+      E3 : LInt;
+      E4 : LWord;
+      E5 : LWord;
+      E6 : ULInt;
+      Same : Bool;
+      Differs : Bool;
+    END_VAR
+    ORGANIZATION_BLOCK "Main" BEGIN
+      Low := LWORD_TO_DWORD(L);
+      High := LWORD_TO_DWORD(SHR(IN := L, N := 32));
+      E1 := LWORD#16#0102030405060708;
+      E2 := ULINT#18446744073709551615;
+      E3 := LINT#-9223372036854775808;
+      E4 := L XOR 16#FFFF_FFFF_FFFF_FFFF;
+      E5 := K;
+      E6 := KBig;
+      Same := L = 16#0102030405060708;
+      Differs := L <> 16#0102030405060709;
+    END_ORGANIZATION_BLOCK`, async (sim) => {
+    await sim.scan();
+    assert.equal(await sim.get('L'), 0x0102030405060708n);
+    assert.equal(await sim.get('Low'), 0x05060708);
+    assert.equal(await sim.get('High'), 0x01020304);
+    assert.equal(await sim.get('AllOnes'), 0xffffffffffffffffn);
+    assert.equal(await sim.get('Oct'), 0xffffffffffffffffn);
+    assert.equal(await sim.get('Bin'), 0x8000000000000001n);
+    assert.equal(await sim.get('UMax'), 18446744073709551615n);
+    assert.equal(await sim.get('UNear'), 18446744073709551614n);
+    assert.equal(await sim.get('LMin'), -9223372036854775808n);
+    assert.equal(await sim.get('LMax'), 9223372036854775807n);
+    assert.equal(await sim.get('Folded'), 9007199254740995n);
+    assert.equal(await sim.get('FoldedMin'), -9223372036854775808n);
+    assert.equal(await sim.get('Inverted'), 0xfefdfcfbfaf9f8f7n);
+    assert.equal(await sim.get('Typed'), 0x0102030405060708n);
+    assert.equal(await sim.get('TypedNeg'), -9223372036854775808n);
+    assert.equal(await sim.get('E1'), 0x0102030405060708n);
+    assert.equal(await sim.get('E2'), 18446744073709551615n);
+    assert.equal(await sim.get('E3'), -9223372036854775808n);
+    assert.equal(await sim.get('E4'), 0xfefdfcfbfaf9f8f7n);
+    assert.equal(await sim.get('E5'), 0x0102030405060708n);
+    assert.equal(await sim.get('E6'), 18014398509481986n);
+    assert.equal(await sim.get('Same'), true);
+    assert.equal(await sim.get('Differs'), true);
+  });
+});

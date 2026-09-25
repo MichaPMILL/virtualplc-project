@@ -23,7 +23,8 @@ export interface Address {
 }
 
 export type Expr =
-  | { kind: 'int'; value: number; line: number; typed?: string }
+  /** value is a bigint only beyond Number.MAX_SAFE_INTEGER (64-bit literals) */
+  | { kind: 'int'; value: number | bigint; line: number; typed?: string }
   | { kind: 'real'; value: number; line: number }
   | { kind: 'bool'; value: boolean; line: number }
   | { kind: 'string'; value: string; line: number }

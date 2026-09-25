@@ -410,8 +410,9 @@ class Parser {
 
   private signedInt(): number {
     const neg = this.accept('-');
-    const v = Number(this.expect('int').value);
-    return neg ? -v : v;
+    const t = this.expect('int');
+    if (typeof t.value !== 'number') throw this.error(`Integer ${t.text} is out of range here`, t);
+    return neg ? -t.value : t.value;
   }
 
   // ------------------------------------------------------------ statements
@@ -634,7 +635,7 @@ class Parser {
     switch (t.type) {
       case 'int':
         this.next();
-        return { kind: 'int', value: t.value as number, line: t.line };
+        return { kind: 'int', value: t.value as number | bigint, line: t.line };
       case 'real':
         this.next();
         return { kind: 'real', value: t.value as number, line: t.line };
