@@ -190,6 +190,11 @@ const STD_PARAMS: Record<string, string[] | null> = {
   RD_SYS_T: null, RD_LOC_T: null,
 };
 const NS_PER_DAY = 86_400_000_000_000n;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const UINT64_MAX = 2n ** 64n - 1n;
+/** Integer constant as a number when exact, else as a bigint. */
+const intConst = (v: bigint): number | bigint => (v >= BigInt(Number.MIN_SAFE_INTEGER) && v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : v);
 /** Built-in DTL structure (date and time, 12 bytes) */
 const DTL_KEY = '#DTL';
 const DTL: DataType = { k: 'struct', name: 'DTL', key: DTL_KEY };
@@ -1258,6 +1263,13 @@ class Compiler {
     if (v === null) throw this.err('Start value must be a constant', e.line);
     if (isChar(t) && typeof v === 'string' && [...v].length === 1) v = v.codePointAt(0)!;
     if (e.kind === 'time' && t.k === 'elem' && t.name === 'LTIME') v = BigInt(e.value) * 1_000_000n;
+    if (typeof v === 'bigint' && this.plainInt(e)) {
+      // 64-bit integer constant (beyond the exact range of a number)
+      if (isFloat(t)) return Number(v);
+      if (!isInt(t) || (isSpecialInt(t) && e.kind !== 'int')) throw this.err(`Cannot use this value as ${typeName(t)}`, e.line);
+      this.check64(v, e.line);
+      return v;
+    }
     if (typeof v === 'bigint') {
       const nt = this.typeOf(e);
       if (!sameType(nt, t) && !(isChar(nt) && isInt(t))) throw this.err(`Cannot use a ${typeName(nt)} value as ${typeName(t)}`, e.line);
@@ -1299,12 +1311,29 @@ class Compiler {
       case 'unary': {
         const v = this.fold(e.operand);
         if (v === null) return null;
-        if (e.op === '-') return typeof v === 'number' ? -v : null;
-        return typeof v === 'boolean' ? !v : typeof v === 'number' ? ~v : null;
+        const big = typeof v === 'bigint' && this.plainInt(e.operand);
+        if (e.op === '-') return typeof v === 'number' ? -v : big ? intConst(-(v as bigint)) : null;
+        if (typeof v === 'boolean') return !v;
+        if (typeof v === 'number') return Number.isSafeInteger(v) ? intConst(~BigInt(v)) : ~v;
+        return big ? intConst(~(v as bigint)) : null;
       }
       case 'binary': {
         const a = this.fold(e.left);
         const b = this.fold(e.right);
+        const int = (x: unknown) => typeof x === 'bigint' || Number.isSafeInteger(x);
+        if (int(a) && int(b) && this.plainInt(e.left) && this.plainInt(e.right)) {
+          // exact integer arithmetic (64-bit constants)
+          const x = BigInt(a as number | bigint);
+          const y = BigInt(b as number | bigint);
+          switch (e.op) {
+            case '+': return intConst(x + y);
+            case '-': return intConst(x - y);
+            case '*': return intConst(x * y);
+            case '/': return y === 0n ? null : intConst(x / y);
+            case 'MOD': return y === 0n ? null : intConst(x % y);
+            default: return null;
+          }
+        }
         if (typeof a !== 'number' || typeof b !== 'number') return null;
         switch (e.op) {
           case '+': return a + b;
@@ -1318,6 +1347,20 @@ class Compiler {
       default:
         return null;
     }
+  }
+
+  /** Integer of an integer data type other than durations, dates and characters (or an integer literal). */
+  private plainInt(e: Expr): boolean {
+    try {
+      const t = this.typeOf(e);
+      return isInt(t) && !isSpecialInt(t);
+    } catch {
+      return false;
+    }
+  }
+
+  private check64(v: bigint, line: number): void {
+    if (v < INT64_MIN || v > UINT64_MAX) throw this.err(`Integer constant ${v} does not fit in 64 bits`, line);
   }
 
   private useImage(a: Address, size: number): void {
@@ -1977,7 +2020,9 @@ class Compiler {
     }
     const natural = this.typeOf(e);
     if (natural.k === 'null') throw this.err('NULL can only be used with interface references', e.line);
-    const target = want ?? (natural.k === 'anyint' ? T.DINT : natural.k === 'anyreal' ? T.LREAL : natural);
+    const bigLiteral = e.kind === 'int' && typeof e.value === 'bigint';
+    const anyint = bigLiteral ? ((e.value as bigint) > INT64_MAX ? T.elem('ULINT') : T.LINT) : T.DINT;
+    const target = want ?? (natural.k === 'anyint' ? anyint : natural.k === 'anyreal' ? T.LREAL : natural);
 
     // Literals are emitted directly in the target representation.
     if (e.kind === 'time' && target.k === 'elem' && target.name === 'LTIME') {
@@ -2002,12 +2047,17 @@ class Compiler {
     }
     if (e.kind === 'int' || e.kind === 'real' || e.kind === 'time') {
       if (isFloat(target)) {
-        this.emit(Op.PUSH_F64, e.value);
+        this.emit(Op.PUSH_F64, Number(e.value));
         return target;
       }
       if (e.kind === 'real') throw this.err(`Cannot use a REAL value as ${typeName(target)} (use REAL_TO_${target.k === 'elem' ? target.name : 'DINT'}())`, e.line);
       if (!isInt(target)) throw this.err(`Cannot use a number as ${typeName(target)}`, e.line);
-      this.pushInt(e.value);
+      if (typeof e.value === 'bigint') {
+        this.check64(e.value, e.line);
+        this.pushBig(e.value);
+      } else {
+        this.pushInt(e.value);
+      }
       return target;
     }
 

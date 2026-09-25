@@ -135,3 +135,9 @@ test('monitoring formats dates, times and characters like the PLC literals', asy
   assert.equal(f('char', 65, 1), "'A'");
   assert.equal(f('char', 10, 1), 'CHAR#10');
 });
+
+test('integer literals beyond 64 bits are rejected', () => {
+  expectError('VAR_GLOBAL u : ULInt := 18446744073709551616; END_VAR ORGANIZATION_BLOCK "Main" BEGIN END_ORGANIZATION_BLOCK', 'does not fit in 64 bits');
+  expectError('VAR_GLOBAL l : LInt; END_VAR ORGANIZATION_BLOCK "Main" BEGIN l := 16#1_0000_0000_0000_0000; END_ORGANIZATION_BLOCK', 'does not fit in 64 bits');
+  expectError('VAR_GLOBAL l : LInt := -9223372036854775809; END_VAR ORGANIZATION_BLOCK "Main" BEGIN END_ORGANIZATION_BLOCK', 'does not fit in 64 bits');
+});
