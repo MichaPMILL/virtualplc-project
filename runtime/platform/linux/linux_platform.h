@@ -15,6 +15,7 @@
 #include "profinet/pn_stack.h"
 #include "security/security.h"
 #include "enip/enip.h"
+#include "profibus/dp_master.h"
 
 namespace vplc {
 
@@ -98,6 +99,11 @@ private:
     std::unique_ptr<enip::Scanner> enip_;
     std::string enipKey_, enipError_;
     std::vector<uint16_t> enipIndex_;  // module index -> adapter index
+    // PROFIBUS DP masters (one per serial port) and module index -> (master, slave)
+    void configureProfibus();
+    std::vector<std::unique_ptr<dp::Master>> dpMasters_;
+    std::vector<std::pair<int, int>> dpIndex_;
+    std::string dpKey_, dpError_;
     std::string pnDeviceKey_, pnControllerKey_;
     std::vector<std::unique_ptr<pn::Lldp>> pnLldp_;
     std::string pnError_;  // why PROFINET could not start (shown in the Studio)

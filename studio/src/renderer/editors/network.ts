@@ -12,6 +12,7 @@ function peer(m: IoModuleConfig): { title: string; kind: string; address: string
     case 'modbus-tcp': return { title: m.name, kind: 'E/S Modbus TCP', address: `${m.host}:${m.port ?? 502}` };
     case 'iolink-master': return { title: m.name, kind: 'Maître IO-Link', address: `${m.host}:${m.port ?? 502}` };
     case 'profinet-remote': return { title: m.stationName, kind: 'IO-Device PROFINET', address: `${m.ip} (${m.interface})` };
+    case 'profibus-slave': return { title: m.catalog?.model ?? m.name, kind: `Esclave PROFIBUS DP (adresse ${m.station})`, address: `${m.port} — ${m.baud >= 1000000 ? `${m.baud / 1000000} Mbit/s` : `${m.baud / 1000} kbit/s`}` };
     case 'enip-adapter': return { title: m.catalog?.product ?? m.name, kind: 'Adaptateur EtherNet/IP', address: `${m.host}${m.port && m.port !== 44818 ? `:${m.port}` : ''}` };
     case 'profinet-device': return { title: 'Automate maître', kind: `IO-Controller PROFINET → ${m.stationName}`, address: m.interface };
     default: return null;

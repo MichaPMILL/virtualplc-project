@@ -20,6 +20,8 @@ export type { BoxSpec, CoilType, ContactType, LadElement, LadNetwork, LadderScl 
 export { fixIecInstances, flgNetToLadder, importSimaticMl, isSimaticMl, SimaticMlError } from './simaticml.ts';
 export type { SimaticMlImport } from './simaticml.ts';
 export { parseEds } from './eds.ts';
+export { cfgLengths, parseGsd } from './gsd.ts';
+export type { Gsd, GsdModule as GsdDpModule } from './gsd.ts';
 export { addToLibrary, compareVersions, elementDependencies, insertFromLibrary, LIBRARY_EXT, LIBRARY_FORMAT, newLibrary, nextVersion, outdatedCopies, parseLibrary, serializeLibrary, standardLibrary } from './library.ts';
 export type { InsertResult, Library, LibraryElement, LibraryElementKind, LibraryOrigin } from './library.ts';
 export type { Eds, EdsConnection } from './eds.ts';

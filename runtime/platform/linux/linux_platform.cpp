@@ -35,6 +35,7 @@ LinuxPlatform::LinuxPlatform(std::string dataDir, std::string gpioChip)
 LinuxPlatform::~LinuxPlatform() {
     dataLogger_.reset();
     enip_.reset();
+    dpMasters_.clear();
     closeModules();
 }
 
@@ -155,6 +156,9 @@ bool LinuxPlatform::moduleOk(uint16_t index) {
             return pnController_ && index < pnRemoteIndex_.size() && pnController_->deviceOk(pnRemoteIndex_[index]);
         case IoModule::IO_ENIP_ADAPTER:
             return enip_ && index < enipIndex_.size() && enip_->ok(enipIndex_[index]);
+        case IoModule::IO_PROFIBUS_SLAVE:
+            return index < dpIndex_.size() && dpIndex_[index].first >= 0 && dpIndex_[index].first < int(dpMasters_.size()) &&
+                   dpMasters_[size_t(dpIndex_[index].first)] && dpMasters_[size_t(dpIndex_[index].first)]->ok(size_t(dpIndex_[index].second));
         default:
             return modules_[index].ok;
     }
@@ -288,6 +292,10 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
                 snprintf(msg, sizeof msg, "I/O module %u: EtherNet/IP adapter %s (assemblies %u / %u / %u, RPI %.1f ms)", unsigned(modules_.size()),
                          info.host, unsigned(info.configInstance), unsigned(info.outInstance), unsigned(info.inInstance), info.rpiUs / 1000.0);
                 break;
+            case IoModule::IO_PROFIBUS_SLAVE:
+                snprintf(msg, sizeof msg, "I/O module %u: PROFIBUS DP slave %u on %s (%u bit/s)", unsigned(modules_.size()), unsigned(info.dpStation), info.host,
+                         unsigned(info.dpBaud));
+                break;
             default:
                 m.supported = false;
                 snprintf(msg, sizeof msg, "I/O module %u: analog GPIO is not supported on Linux", unsigned(modules_.size()));
@@ -298,6 +306,7 @@ uint16_t LinuxPlatform::configureIo(const Program& program) {
     if (reader.count() != modules_.size()) note("Warning: malformed I/O configuration");
     configureProfinet();
     configureEnip();
+    configureProfibus();
     return uint16_t(modules_.size());
 }
 
@@ -419,6 +428,62 @@ void LinuxPlatform::configureProfinet() {
     for (auto& s : pnStacks_) s->start();
 }
 
+void LinuxPlatform::configureProfibus() {
+    std::vector<dp::BusConfig> buses;
+    std::string key;
+    dpIndex_.assign(modules_.size(), {-1, -1});
+    for (size_t k = 0; k < modules_.size(); k++) {
+        const IoModuleInfo& i = modules_[k].info;
+        if (IoModule(i.kind) != IoModule::IO_PROFIBUS_SLAVE) continue;
+        size_t b = 0;
+        while (b < buses.size() && buses[b].port != i.host) b++;
+        if (b == buses.size()) {
+            dp::BusConfig bus;
+            bus.port = i.host;
+            bus.baud = i.dpBaud ? i.dpBaud : 500000;
+            bus.masterAddress = i.dpMaster ? i.dpMaster : 1;
+            bus.echo = i.dpFlags & 1;
+            buses.push_back(bus);
+        }
+        dp::SlaveConfig s;
+        s.name = "module " + std::to_string(k);
+        s.station = i.dpStation;
+        s.identNumber = i.vendorId;
+        s.watchdogMs = i.dpWatchdogMs;
+        s.userPrm.assign(i.recordPool, i.recordPool + i.dpPrmLen);
+        s.config.assign(i.recordPool + i.dpPrmLen, i.recordPool + i.dpPrmLen + i.dpCfgLen);
+        s.inByte = i.inByte;
+        s.inLength = i.inLength;
+        s.outByte = i.outByte;
+        s.outLength = i.outLength;
+        char buf[200];
+        snprintf(buf, sizeof buf, "%s|%u|%u|%u|%x|%u|%u@%u|%u@%u|", i.host, i.dpBaud, i.dpMaster, i.dpStation, i.vendorId, i.dpWatchdogMs, i.inLength, i.inByte,
+                 i.outLength, i.outByte);
+        key += buf;
+        for (size_t x = 0; x < size_t(i.dpPrmLen) + i.dpCfgLen; x++) {
+            snprintf(buf, sizeof buf, "%02x", i.recordPool[x]);
+            key += buf;
+        }
+        key += "#";
+        dpIndex_[k] = {int(b), int(buses[b].slaves.size())};
+        buses[b].slaves.push_back(s);
+    }
+    if (key == dpKey_ && dpMasters_.size() == buses.size()) return;  // unchanged: keep the bus running
+    dpMasters_.clear();
+    dpKey_ = key;
+    dpError_.clear();
+    for (dp::BusConfig& bus : buses) {
+        auto master = std::make_unique<dp::Master>(bus, [this](const std::string& m) { note(m); });
+        std::string err;
+        if (!master->start(err)) {
+            dpError_ = err;
+            note(err);
+            master.reset();
+        }
+        dpMasters_.push_back(std::move(master));
+    }
+}
+
 void LinuxPlatform::configureEnip() {
     std::vector<enip::AdapterConfig> list;
     std::string key;
@@ -484,6 +549,9 @@ bool LinuxPlatform::moduleDiag(uint16_t index) {
             return pnDevice_ && pnDevice_->diagnosisActive();
         case IoModule::IO_PROFINET_REMOTE:
             return pnController_ && index < pnRemoteIndex_.size() && pnController_->deviceDiag(pnRemoteIndex_[index]);
+        case IoModule::IO_PROFIBUS_SLAVE:
+            return index < dpIndex_.size() && dpIndex_[index].first >= 0 && dpIndex_[index].first < int(dpMasters_.size()) &&
+                   dpMasters_[size_t(dpIndex_[index].first)] && dpMasters_[size_t(dpIndex_[index].first)]->diag(size_t(dpIndex_[index].second));
         default:
             return false;
     }
@@ -498,6 +566,10 @@ size_t LinuxPlatform::moduleDiagnostics(uint16_t index, char* out, size_t cap) {
         const size_t k = pnRemoteIndex_[index];
         text = pnController_->diagnostics(k);
         if (!pnController_->deviceOk(k)) text = pnController_->status(k) + (text.empty() ? "" : "\n" + text);
+    } else if (IoModule(modules_[index].info.kind) == IoModule::IO_PROFIBUS_SLAVE) {
+        const auto [m, s] = index < dpIndex_.size() ? dpIndex_[index] : std::pair<int, int>{-1, -1};
+        if (m >= 0 && m < int(dpMasters_.size()) && dpMasters_[size_t(m)]) text = dpMasters_[size_t(m)]->status(size_t(s));
+        else text = dpError_.empty() ? "PROFIBUS not started (see the diagnostic buffer)" : dpError_;
     } else if (IoModule(modules_[index].info.kind) == IoModule::IO_ENIP_ADAPTER) {
         if (enip_ && index < enipIndex_.size()) text = enip_->status(enipIndex_[index]);
         else text = enipError_.empty() ? "EtherNet/IP not started (see the diagnostic buffer)" : enipError_;
@@ -527,6 +599,7 @@ void LinuxPlatform::readInputs(uint8_t* image, uint32_t size) {
     if (pnDevice_) pnDevice_->readInputs(image, size);
     if (pnController_) pnController_->readInputs(image, size);
     if (enip_) enip_->readInputs(image, size);
+    for (auto& m : dpMasters_) if (m) m->readInputs(image, size);
     uint32_t now = millis();
     for (Module& m : modules_) {
         const IoModuleInfo& i = m.info;
@@ -590,6 +663,7 @@ void LinuxPlatform::writeOutputs(const uint8_t* image, uint32_t size) {
     if (pnDevice_) pnDevice_->writeOutputs(image, size, true);
     if (pnController_) pnController_->writeOutputs(image, size, true);
     if (enip_) enip_->writeOutputs(image, size, true);
+    for (auto& m : dpMasters_) if (m) m->writeOutputs(image, size);
     uint32_t now = millis();
     for (Module& m : modules_) {
         const IoModuleInfo& i = m.info;

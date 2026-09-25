@@ -354,6 +354,7 @@ export const IoModule = {
   PROFINET_DEVICE: 7,
   PROFINET_REMOTE: 8,
   ENIP_ADAPTER: 9,
+  PROFIBUS_SLAVE: 10,
 } as const;
 
 export const Command = {

@@ -110,7 +110,8 @@ if(UNIX)
     platform/linux/datalog/datalog.cpp
     platform/linux/security/security.cpp
     platform/linux/security/tls.cpp
-    platform/linux/enip/enip.cpp)
+    platform/linux/enip/enip.cpp
+    platform/linux/profibus/dp_master.cpp)
   target_include_directories(vplc-cpu PRIVATE platform/linux)
   find_package(Threads REQUIRED)
   # Traceability: local SQLite database (public domain) and TLS / hashes with OpenSSL (Apache 2.0)

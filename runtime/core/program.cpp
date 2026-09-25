@@ -261,6 +261,35 @@ bool IoModuleReader::next(IoModuleInfo& m) {
             p_ += cfg;
             break;
         }
+        case IoModule::IO_PROFIBUS_SLAVE: {
+            if (!need(1)) return false;
+            uint8_t n = *p_++;
+            if (!need(n + 4 + 2 + 2 + 2 + 8 + 3)) return false;
+            uint8_t copy = n < sizeof(m.host) - 1 ? n : uint8_t(sizeof(m.host) - 1);
+            memcpy(m.host, p_, copy);
+            p_ += n;
+            m.dpBaud = rd32le(p_);
+            m.dpStation = p_[4];
+            m.dpMaster = p_[5];
+            m.vendorId = rd16le(p_ + 6);
+            m.dpWatchdogMs = rd16le(p_ + 8);
+            m.inByte = rd16le(p_ + 10); m.inLength = rd16le(p_ + 12);
+            m.outByte = rd16le(p_ + 14); m.outLength = rd16le(p_ + 16);
+            m.dpFlags = p_[18];
+            m.dpPrmLen = p_[19];
+            m.dpCfgLen = p_[20];
+            p_ += 21;
+            size_t total = size_t(m.dpPrmLen) + m.dpCfgLen;
+            if (!need(total)) return false;
+            if (total <= size_t(VPLC_PN_RECORD_POOL)) {
+                memcpy(m.recordPool, p_, total);
+                m.recordUsed = uint16_t(total);
+            } else {
+                m.dpPrmLen = m.dpCfgLen = 0;
+            }
+            p_ += total;
+            break;
+        }
         default:
             return false;
     }

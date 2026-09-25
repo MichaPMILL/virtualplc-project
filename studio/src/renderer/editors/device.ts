@@ -11,6 +11,7 @@ import { contextMenu } from '../ui/chrome.ts';
 import type { EditorView } from './types.ts';
 import { addGsdmlDevice, newPnDevice, pnDeviceProps, pnRemoteProps } from './profinet.ts';
 import { addEdsDevice, discoverEnipDevices, enipProps, newEnipAdapter } from './ethernetip.ts';
+import { addGsdSlave, dpProps, newDpSlave } from './profibus.ts';
 
 /** One tag per channel of the module that no tag uses yet */
 function createTags(device: Device, m: IoModuleConfig): void {
@@ -43,11 +44,12 @@ const MODULE_LABELS: Record<ModuleKind, string> = {
   'profinet-device': 'IO-Device PROFINET (vers un automate maître)',
   'profinet-remote': 'Appareil PROFINET (IO-Controller)',
   'enip-adapter': 'Appareil EtherNet/IP (scanner)',
+  'profibus-slave': 'Esclave PROFIBUS DP (maître DP)',
 };
 
 function supportedModules(device: Device): ModuleKind[] {
   switch (device.type) {
-    case 'linux': return ['modbus-tcp', 'iolink-master', 'profinet-device', 'enip-adapter', 'gpio-di', 'gpio-do'];
+    case 'linux': return ['modbus-tcp', 'iolink-master', 'profinet-device', 'enip-adapter', 'profibus-slave', 'gpio-di', 'gpio-do'];
     case 'esp32': return ['gpio-di', 'gpio-do', 'gpio-ai', 'gpio-ao'];
     default: return ['gpio-di', 'gpio-do', 'gpio-ai', 'gpio-ao'];
   }
@@ -63,7 +65,7 @@ function nextByte(device: Device, area: 'I' | 'Q'): number {
       : m.kind === 'iolink-master' ? m.ports.flatMap((p): Array<[string, number, number]> => [['I', p.inByte, p.inLength], ['Q', p.outByte, p.outLength]])
       : m.kind === 'profinet-device' ? [['I', m.inByte, m.inLength], ['Q', m.outByte, m.outLength]]
       : m.kind === 'profinet-remote' ? m.submodules.flatMap((x): Array<[string, number, number]> => [['I', x.inByte, x.inLength], ['Q', x.outByte, x.outLength]])
-      : m.kind === 'enip-adapter' ? [['I', m.inByte, m.inLength], ['Q', m.outByte, m.outLength]]
+      : m.kind === 'enip-adapter' || m.kind === 'profibus-slave' ? [['I', m.inByte, m.inLength], ['Q', m.outByte, m.outLength]]
         : m.kind === 'gpio-di' ? [['I', m.byte, 1]] : m.kind === 'gpio-do' ? [['Q', m.byte, 1]]
           : m.kind === 'gpio-ai' ? [['I', m.byte, 2]] : [['Q', m.byte, 2]];
     for (const [a, byte, len] of ranges) if (a === area && len > 0) next = Math.max(next, byte + len);
@@ -98,6 +100,8 @@ function newModule(device: Device, kind: ModuleKind): IoModuleConfig {
       return newPnDevice(device, n, nextByte(device, 'I'), nextByte(device, 'Q'));
     case 'enip-adapter':
       return newEnipAdapter(device, nextByte(device, 'I'), nextByte(device, 'Q'));
+    case 'profibus-slave':
+      return newDpSlave(device, nextByte(device, 'I'), nextByte(device, 'Q'));
     default:
       return { kind: 'gpio-ao', name: `AQ_${n}`, pin: 0, byte: 200 + 2 * device.io.filter((m) => m.kind === 'gpio-ao').length };
   }
@@ -114,6 +118,7 @@ function addresses(m: IoModuleConfig): string[] {
         .filter((x): x is string => !!x);
     case 'profinet-device':
     case 'enip-adapter':
+    case 'profibus-slave':
       return [range('I', m.inByte, m.inLength), range('Q', m.outByte, m.outLength)].filter((x): x is string => !!x);
     case 'profinet-remote': {
       const ins = m.submodules.filter((x) => x.inLength);
@@ -202,7 +207,8 @@ export function deviceEditor(device: Device): EditorView {
         m.kind === 'modbus-tcp' || m.kind === 'iolink-master' ? h('div', null, `${m.host}:${m.port ?? 502}`)
           : m.kind === 'profinet-device' ? h('div', null, m.stationName)
             : m.kind === 'profinet-remote' ? h('div', null, `${m.stationName} (${m.ip})`)
-              : m.kind === 'enip-adapter' ? h('div', null, m.catalog ? `${m.catalog.product} (${m.host})` : m.host) : h('div', null, `GPIO ${m.pin}`),
+              : m.kind === 'enip-adapter' ? h('div', null, m.catalog ? `${m.catalog.product} (${m.host})` : m.host)
+                : m.kind === 'profibus-slave' ? h('div', null, `${m.catalog ? `${m.catalog.model} — ` : ''}adresse ${m.station}`) : h('div', null, `GPIO ${m.pin}`),
         ...addresses(m).map((a) => h('div', { className: 'mono' }, a))),
       h('div', { className: 'm-foot' }, `Emplacement ${i + 2}`)));
     });
@@ -218,6 +224,15 @@ export function deviceEditor(device: Device): EditorView {
       })), ...(device.type === 'linux' ? [{
         label: 'Appareil PROFINET (fichier GSDML)...', icon: 'device' as const, run: async () => {
           const m = await addGsdmlDevice(device, nextByte(device, 'I'), nextByte(device, 'Q'));
+          if (!m) return;
+          device.io.push(m);
+          selected = device.io.length - 1;
+          touch();
+          renderProps();
+        },
+      }, {
+        label: 'Esclave PROFIBUS DP (fichier GSD)...', icon: 'device' as const, run: async () => {
+          const m = await addGsdSlave(device, nextByte(device, 'I'), nextByte(device, 'Q'));
           if (!m) return;
           device.io.push(m);
           selected = device.io.length - 1;
@@ -303,6 +318,8 @@ export function deviceEditor(device: Device): EditorView {
       props.append(...pnDeviceProps(device, m, touch));
     } else if (m.kind === 'profinet-remote') {
       props.append(...pnRemoteProps(device, m, touch, () => renderProps()));
+    } else if (m.kind === 'profibus-slave') {
+      props.append(...dpProps(device, m, touch, () => { renderRack(); renderProps(); }));
     } else if (m.kind === 'enip-adapter') {
       props.append(...enipProps(m, touch, () => { renderRack(); renderProps(); }));
     } else {

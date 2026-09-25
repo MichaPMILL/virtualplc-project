@@ -810,7 +810,8 @@
     "IOLINK_MASTER": 6,
     "PROFINET_DEVICE": 7,
     "PROFINET_REMOTE": 8,
-    "ENIP_ADAPTER": 9
+    "ENIP_ADAPTER": 9,
+    "PROFIBUS_SLAVE": 10
   },
   "protocol": {
     "port": 20105,

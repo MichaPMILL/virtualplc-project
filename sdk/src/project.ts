@@ -358,6 +358,10 @@ export function ioChannels(device: Device): IoChannel[] {
         bytes(m, 'I', m.inByte, m.inLength, `entrée (assemblage ${m.inInstance})`, 'IN');
         bytes(m, 'Q', m.outByte, m.outLength, `sortie (assemblage ${m.outInstance})`, 'OUT');
         break;
+      case 'profibus-slave':
+        bytes(m, 'I', m.inByte, m.inLength, `entrée DP (station ${m.station})`, 'IN');
+        bytes(m, 'Q', m.outByte, m.outLength, `sortie DP (station ${m.station})`, 'OUT');
+        break;
     }
   }
   return out;

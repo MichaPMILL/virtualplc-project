@@ -84,6 +84,11 @@ struct IoModuleInfo {
     uint8_t timeoutMultiplier = 1;
     uint16_t deviceType = 0, productCode = 0;
     uint8_t revMajor = 0, revMinor = 0;
+    // PROFIBUS DP slave: host = serial port, vendorId = ident number, in/out bytes above,
+    // recordPool = User_Prm_Data then the configuration identifiers
+    uint32_t dpBaud = 0;
+    uint8_t dpStation = 0, dpMaster = 1, dpFlags = 0, dpPrmLen = 0, dpCfgLen = 0;
+    uint16_t dpWatchdogMs = 0;
 };
 
 class IoModuleReader {

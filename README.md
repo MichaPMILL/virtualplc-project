@@ -161,6 +161,8 @@ or `vplc verify`), which detects any record altered, removed or forged. Details:
   class 1 cyclic I/O, electronic key, diagnostics, reconnection; `SWAP()` for the little-endian
   data. Vision sensors (Keyence, Cognex, SICK…) with `VPLC_VisionTrigger` — see
   [docs/ethernetip.md](docs/ethernetip.md).
+- **PROFIBUS DP master** (in-house) through a USB / RS-485 adapter: slaves from their GSD file,
+  9.6 kbit/s to 12 Mbit/s, diagnostics — see [docs/profibus.md](docs/profibus.md).
 - **Libraries** (task card *Bibliothèques*): project library, global libraries (`.vplclib` files
   shared between projects), VirtualPLC standard library; versions, dependencies and updates of
   the copies. Standard blocks include `VPLC_Cylinder` (pneumatic cylinders) and `VPLC_Sequencer`

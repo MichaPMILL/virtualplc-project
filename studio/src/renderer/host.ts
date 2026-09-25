@@ -13,7 +13,7 @@ interface HostBridge {
   platform: string;
   invoke(method: string, args: unknown[]): Promise<unknown>;
   /** Files exported by engineering tools (.scl, .db, .udt, .xlsx, SimaticML .xml) */
-  openFiles(kind?: 'iodd' | 'gsdml' | 'eds'): Promise<OpenedFile[]>;
+  openFiles(kind?: 'iodd' | 'gsdml' | 'eds' | 'gsd'): Promise<OpenedFile[]>;
   /** Native file/folder chooser; returns an absolute path on this computer */
   pickPath(kind: PathKind, suggested?: string): Promise<string | null>;
   setDirty(dirty: boolean): void;
@@ -45,7 +45,7 @@ function webHost(): HostBridge {
         const input = document.createElement('input');
         input.type = 'file';
         input.multiple = true;
-        input.accept = kind === 'eds' ? '.eds,.EDS' : kind ? '.xml' : '.scl,.db,.udt,.xlsx,.xml,.txt';
+        input.accept = kind === 'eds' ? '.eds,.EDS' : kind === 'gsd' ? '.gsd,.gse,.gsg,.gsf,.gsi,.gsp,.gss,.GSD' : kind ? '.xml' : '.scl,.db,.udt,.xlsx,.xml,.txt';
         input.onchange = async () => {
           resolve(await Promise.all([...(input.files ?? [])].map(async (f) => ({ path: f.name, name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))));
         };

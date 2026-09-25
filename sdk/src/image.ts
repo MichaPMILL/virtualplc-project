@@ -86,7 +86,43 @@ export type IoModuleConfig =
     configData?: number[];
     /** Studio only: what was read from the EDS file */
     catalog?: EdsCatalog;
+  }
+  | {
+    /** A PROFIBUS DP slave driven by this CPU as DP master (class 1), through an RS-485 adapter */
+    kind: 'profibus-slave'; name: string;
+    /** Serial port of the RS-485 adapter (all the slaves of a port share the master) */
+    port: string;
+    /** Bus speed in bit/s (9600 … 1500000; up to 12 Mbit/s with a fast adapter) */
+    baud: number;
+    /** Station address of the slave (1…125) and of the master (default 1) */
+    station: number;
+    masterAddress?: number;
+    /** Ident number of the slave (GSD Ident_Number), checked by the slave */
+    identNumber: number;
+    /** Watchdog of the slave in ms (outputs off when the master stops): 0 = none */
+    watchdogMs?: number;
+    /** Parameters (User_Prm_Data) and configuration identifiers (Chk_Cfg) */
+    userPrm?: number[];
+    config: number[];
+    inByte: number; inLength: number;
+    outByte: number; outLength: number;
+    /** The adapter receives what it sends (RS-485 without echo suppression) */
+    echo?: boolean;
+    /** Studio only: GSD catalogue */
+    catalog?: GsdCatalog;
   };
+
+/** What the Studio keeps of a PROFIBUS GSD file */
+export interface GsdCatalog {
+  file: string;
+  vendor: string;
+  model: string;
+  modular: boolean;
+  maxModules: number;
+  modules: Array<{ name: string; config: number[] }>;
+  /** Plugged modules, in order */
+  plugged: string[];
+}
 
 /** What the Studio keeps of an EDS file */
 export interface EdsCatalog {
@@ -337,6 +373,14 @@ function writeModule(w: ByteWriter, m: IoModuleConfig): void {
         .u16(m.vendorId ?? 0).u16(m.deviceType ?? 0).u16(m.productCode ?? 0).u8(m.revision?.major ?? 0).u8(m.revision?.minor ?? 0)
         .u16(cfg.length);
       for (const b of cfg) w.u8(b);
+      break;
+    }
+    case 'profibus-slave': {
+      const prm = m.userPrm ?? [];
+      w.u8(IoModule.PROFIBUS_SLAVE).str8(m.port).u32(m.baud).u8(m.station).u8(m.masterAddress ?? 1).u16(m.identNumber).u16(m.watchdogMs ?? 0)
+        .u16(m.inByte).u16(m.inLength).u16(m.outByte).u16(m.outLength).u8(m.echo ? 1 : 0).u8(prm.length).u8(m.config.length);
+      for (const b of prm) w.u8(b);
+      for (const b of m.config) w.u8(b);
       break;
     }
   }

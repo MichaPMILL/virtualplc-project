@@ -201,6 +201,7 @@ enum class IoModule : uint8_t {
     IO_PROFINET_DEVICE = 7,
     IO_PROFINET_REMOTE = 8,
     IO_ENIP_ADAPTER = 9,
+    IO_PROFIBUS_SLAVE = 10,
 };
 
 enum class Command : uint8_t {

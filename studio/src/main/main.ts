@@ -16,6 +16,7 @@ const FILTERS = {
   gsdml: [{ name: 'Description PROFINET (GSDML)', extensions: ['xml'] }],
   eds: [{ name: 'Description EtherNet/IP (EDS)', extensions: ['eds', 'EDS'] }],
   library: [{ name: 'Bibliothèque globale VirtualPLC', extensions: ['vplclib'] }],
+  gsd: [{ name: 'Description PROFIBUS (GSD)', extensions: ['gsd', 'gse', 'gsg', 'gsf', 'gsi', 'gsp', 'gss', 'GSD'] }],
 };
 
 function createWindow(): void {
@@ -80,7 +81,7 @@ ipcMain.handle('api', async (_e, method: ApiMethod, args: unknown[]) => {
   return fn(...args);
 });
 
-ipcMain.handle('files.openMany', async (_e, kind?: 'iodd' | 'gsdml' | 'eds') => {
+ipcMain.handle('files.openMany', async (_e, kind?: 'iodd' | 'gsdml' | 'eds' | 'gsd') => {
   if (!win) return [];
   const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: kind ? FILTERS[kind] : FILTERS.scl });
   if (r.canceled) return [];

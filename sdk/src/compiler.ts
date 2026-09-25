@@ -3422,6 +3422,7 @@ function ioUsage(m: IoModuleConfig): Array<['I' | 'Q', number, number, 'bits' | 
     case 'profinet-remote':
       return m.submodules.flatMap((x): Array<['I' | 'Q', number, number, 'bytes']> => [['I', x.inByte, x.inLength, 'bytes'], ['Q', x.outByte, x.outLength, 'bytes']]);
     case 'enip-adapter':
+    case 'profibus-slave':
       return [['I', m.inByte, m.inLength, 'bytes'], ['Q', m.outByte, m.outLength, 'bytes']];
   }
 }
