@@ -587,6 +587,25 @@ const passwords = new Map<string, { user: string; password: string }>();
 let pollTimer: number | undefined;
 let monitorTimer: number | undefined;
 
+/** Security messages of the CPU, in the language of the Studio (the others are shown as they are) */
+const CPU_MESSAGES: Array<[RegExp, string]> = [
+  [/only accepts signed programs/, 'La CPU n\'accepte que les programmes signés. Un administrateur doit faire confiance à la clé d\'ingénierie de ce poste (Sécurité > Programmes signés).'],
+  [/signed by a key this CPU does not trust/, 'Le programme est signé par une clé à laquelle la CPU ne fait pas confiance. Un administrateur doit approuver la clé de ce poste (Sécurité > Programmes signés).'],
+  [/invalid program signature/, 'Signature du programme invalide : le programme a été modifié après sa signature.'],
+  [/access denied: the role '(\w+)'/, 'Accès refusé : le rôle de votre compte ne permet pas cette opération.'],
+  [/authentication required/, 'Authentification requise : reconnectez-vous avec un compte de la CPU.'],
+  [/too many failed attempts: retry in (\d+) s/, 'Trop d\'échecs de connexion : réessayez dans $1 s.'],
+  [/wrong user name or password/, 'Utilisateur ou mot de passe incorrect.'],
+];
+
+export function cpuMessage(message: string): string {
+  for (const [re, fr] of CPU_MESSAGES) {
+    const m = re.exec(message);
+    if (m) return fr.replace('$1', m[1] ?? '');
+  }
+  return message;
+}
+
 async function ensureConnected(device: Device, title: string, action: string, forceDialog = false): Promise<boolean> {
   if (store.onlineOf(device.id).connected) return true;
   if (store.simulation.has(device.id)) {
@@ -656,7 +675,7 @@ async function ensureConnected(device: Device, title: string, action: string, fo
         store.addMessage({ severity: 'warning', text: `Clé de la CPU oubliée pour ${device.name} (${spec.host}).`, path: device.name });
         continue;
       }
-      const retry = await confirmDialog(title, `La liaison avec ${spec.host}:${spec.port} n'a pas pu être établie.\n\n${message}\n\nRéessayer avec d'autres paramètres ?`, 'Réessayer', t.cancel);
+      const retry = await confirmDialog(title, `La liaison avec ${spec.host}:${spec.port} n'a pas pu être établie.\n\n${cpuMessage(message)}\n\nRéessayer avec d'autres paramètres ?`, 'Réessayer', t.cancel);
       if (!retry) return false;
       spec = null;
     }
@@ -796,8 +815,8 @@ export async function downloadCmd(device = currentDevice()): Promise<void> {
       path: device.name,
     });
   } catch (e) {
-    store.addMessage({ severity: 'error', text: `Chargement : ${(e as Error).message}`, path: device.name });
-    await alertDialog(t.downloadToDevice, (e as Error).message, 'error');
+    store.addMessage({ severity: 'error', text: `Chargement : ${cpuMessage((e as Error).message)}`, path: device.name });
+    await alertDialog(t.downloadToDevice, cpuMessage((e as Error).message), 'error');
   } finally {
     if (!wasOnline) await call('disconnect', device.id).catch(() => undefined);
     else await refreshOnline(device.id);

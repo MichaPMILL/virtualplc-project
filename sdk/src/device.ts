@@ -415,6 +415,21 @@ export class DeviceClient {
     await this.usersRequest(4, oldPassword, newPassword);
   }
 
+  /** Engineering keys trusted by the CPU for signed programs */
+  async trustedKeys(): Promise<{ required: boolean; keys: Array<{ name: string; key: string }> }> {
+    const r = await this.usersRequest(5);
+    return { required: r.required === true, keys: (r.keys as Array<{ name: string; key: string }>) ?? [] };
+  }
+
+  /** Trusts an engineering public key (hex) for signed programs (administrator). */
+  async trustKey(name: string, publicKey: string): Promise<void> {
+    await this.usersRequest(6, name, publicKey);
+  }
+
+  async untrustKey(name: string): Promise<void> {
+    await this.usersRequest(7, name);
+  }
+
   /** Audit trail: the last `count` records, or the records from sequence number `from`. */
   async auditRead(count = 50, from = 0): Promise<AuditLog> {
     const p = Buffer.alloc(6);
@@ -451,8 +466,11 @@ export class DeviceClient {
     await this.request(Command.SET_SECRET, p);
   }
 
-  /** Downloads a program image (the CPU goes to STOP; call start() afterwards). */
-  async download(image: Uint8Array, onProgress?: (sent: number, total: number) => void): Promise<void> {
+  /**
+   * Downloads a program image (the CPU goes to STOP; call start() afterwards). `signature`:
+   * from signProgram() (CPUs started with --signed-programs refuse unsigned programs).
+   */
+  async download(image: Uint8Array, onProgress?: (sent: number, total: number) => void, signature?: Uint8Array): Promise<void> {
     const begin = Buffer.alloc(8);
     begin.writeUInt32LE(image.length, 0);
     begin.writeUInt32LE(crc32(image), 4);
@@ -466,7 +484,7 @@ export class DeviceClient {
       await this.request(Command.DOWNLOAD_CHUNK, p);
       onProgress?.(off + part.length, image.length);
     }
-    await this.request(Command.DOWNLOAD_END, Buffer.alloc(0), 30000);
+    await this.request(Command.DOWNLOAD_END, signature ? Buffer.from(signature) : Buffer.alloc(0), 30000);
   }
 
   /** Uploads the program image stored in the CPU. */

@@ -6,7 +6,7 @@ import { call, downloadFile } from '../host.ts';
 import { clear, h, svg } from '../dom.ts';
 import { icons } from '../icons.ts';
 import { store } from '../store.ts';
-import { alertDialog, button, confirmDialog, openDialog } from '../ui/dialogs.ts';
+import { alertDialog, button, confirmDialog, openDialog, promptDialog } from '../ui/dialogs.ts';
 import type { EditorView } from './types.ts';
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -29,7 +29,8 @@ const ACTION_LABELS: Record<string, string> = {
   start: 'Mise en RUN', 'start (cold)': 'Mise en RUN (démarrage à froid)', stop: 'Mise en STOP', write: 'Écriture de variable',
   force: 'Forçage', 'unforce all': 'Annulation des forçages', 'set secret': 'Identifiants modifiés', 'datalog test': 'Test de connexion SQL',
   'user set': 'Utilisateur créé / modifié', 'user deleted': 'Utilisateur supprimé', 'password reset': 'Mot de passe réinitialisé',
-  'password changed': 'Mot de passe changé', 'password change failed': 'Changement de mot de passe refusé', fault: 'Défaut CPU',
+  'password changed': 'Mot de passe changé', 'key trusted': 'Clé d\'ingénierie approuvée', 'key removed': 'Clé d\'ingénierie retirée',
+  'program rejected': 'Programme refusé (signature)', 'password change failed': 'Changement de mot de passe refusé', fault: 'Défaut CPU',
 };
 
 /** Password policy of the CPU (same rule, checked again by the CPU) */
@@ -76,6 +77,7 @@ function userDialog(title: string, opts: { name?: string; role?: Role; askName: 
 
 export function securityEditor(device: Device): EditorView {
   const usersBox = h('div');
+  const keysBox = h('div');
   const auditBox = h('div', { style: 'flex:1;overflow:auto' });
   const verdict = h('span', { className: 'muted' });
   let audit: AuditLog = { records: [] };
@@ -84,7 +86,7 @@ export function securityEditor(device: Device): EditorView {
 
   const online = () => store.onlineOf(device.id).connected;
   const role = () => store.onlineOf(device.id).role ?? (store.onlineOf(device.id).user ? 'viewer' : 'admin');
-  const fail = (e: unknown) => alertDialog('Sécurité', (e as Error).message, 'error');
+  const fail = (e: unknown) => alertDialog('Sécurité', A.cpuMessage((e as Error).message), 'error');
 
   const renderUsers = () => {
     clear(usersBox);
@@ -121,6 +123,49 @@ export function securityEditor(device: Device): EditorView {
           admin ? h('td', null,
             h('button', { className: 'tbtn', title: 'Rôle / mot de passe', onclick: () => void editUser(u) }, 'Modifier'),
             h('button', { className: 'tbtn', title: 'Supprimer', onclick: () => void removeUser(u) }, svg(icons.del))) : ''))));
+  };
+
+  /** Signed programs: key of this workstation, keys trusted by the CPU */
+  const renderKeys = async () => {
+    clear(keysBox);
+    let mine: { publicKey: string; fingerprint: string } | null = null;
+    try {
+      mine = await call('engineeringKey');
+    } catch {
+      mine = null;
+    }
+    const line = h('p', { style: 'margin:6px 10px' }, 'Clé d\'ingénierie de ce poste : ', h('code', null, mine?.fingerprint ?? '?'),
+      h('span', { className: 'muted' }, ' — chaque programme chargé est signé avec cette clé.'));
+    keysBox.append(line);
+    if (!online() || store.simulation.has(device.id)) return;
+    let trusted: { required: boolean; keys: Array<{ name: string; key: string }> };
+    try {
+      trusted = await call('trustedKeys', device.id);
+    } catch {
+      return;
+    }
+    const admin = role() === 'admin';
+    const trustedMine = mine && trusted.keys.some((k) => k.key === mine!.publicKey);
+    keysBox.append(
+      h('p', { style: 'margin:4px 10px' }, trusted.required
+        ? h('span', null, svg(icons.info), ' La CPU n\'accepte que les programmes signés par une clé de confiance (--signed-programs).')
+        : h('span', { className: 'muted' }, 'La CPU accepte aussi les programmes non signés (option --signed-programs pour l\'interdire).')),
+      h('table', { className: 'grid', style: 'margin:6px 10px;width:auto' },
+        h('tr', null, h('th', null, 'Clé de confiance'), h('th', null, 'Empreinte'), admin ? h('th', null, '') : ''),
+        ...trusted.keys.map((k) => {
+          const fp = h('code', null, '…');
+          void keyFingerprint(k.key).then((v) => { fp.textContent = v; });
+          return h('tr', null, h('td', null, k.name, mine && k.key === mine.publicKey ? ' (ce poste)' : ''), h('td', null, fp),
+            admin ? h('td', null, h('button', { className: 'tbtn', title: 'Retirer', onclick: async () => {
+              if (!(await confirmDialog('Clés de confiance', `Retirer la clé « ${k.name} » ? Les programmes signés avec elle seront refusés.`))) return;
+              await call('untrustKey', device.id, k.name).then(reload, fail);
+            } }, svg(icons.del))) : '');
+        })),
+      admin && mine && !trustedMine ? h('button', { className: 'button', style: 'margin:0 10px 6px', onclick: async () => {
+        const name = await promptDialog('Clés de confiance', 'Nom de la clé (ingénieur ou poste)', store.onlineOf(device.id).user ?? 'engineering');
+        if (!name) return;
+        await call('trustKey', device.id, name.trim(), mine!.publicKey).then(reload, fail);
+      } }, 'Faire confiance à la clé de ce poste') : '');
   };
 
   const auditActions = (a: string) => ACTION_LABELS[a] ?? a;
@@ -166,7 +211,7 @@ export function securityEditor(device: Device): EditorView {
 
   const reload = async () => {
     renderUsers();
-    await Promise.all([loadUsers(), loadAudit()]);
+    await Promise.all([loadUsers(), loadAudit(), renderKeys()]);
   };
 
   const addUser = async () => {
@@ -226,6 +271,8 @@ export function securityEditor(device: Device): EditorView {
       h('span', { className: 'muted' }, 'Accès par rôle (moindre privilège), verrouillage après 5 échecs, journal d\'audit chaîné et signé par la CPU.')),
     h('div', { className: 'panel-subheader' }, 'Utilisateurs de la CPU'),
     usersBox,
+    h('div', { className: 'panel-subheader' }, 'Programmes signés'),
+    keysBox,
     h('div', { className: 'panel-subheader', style: 'display:flex;gap:8px;align-items:center' }, 'Journal d\'audit',
       h('button', { className: 'tbtn', onclick: () => void verify() }, 'Vérifier l\'intégrité'),
       h('button', { className: 'tbtn', onclick: () => void exportAudit() }, 'Exporter (JSONL)'),

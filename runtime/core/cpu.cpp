@@ -314,6 +314,7 @@ size_t Cpu::info(char* out, size_t cap) {
     j.key("maxData").num(int64_t(arenaCapacity_));
     j.key("auth").raw(authRequired() ? "true" : "false");
     j.key("users").raw(platform_.hasUsers() ? "true" : "false");
+    j.key("signedPrograms").raw(platform_.signedProgramsRequired() ? "true" : "false");
     j.close('}');
     return j.length();
 }
@@ -524,9 +525,10 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
             if (!downloading_) { fail(Status::ST_BAD_STATE, "no download in progress"); break; }
             downloading_ = false;
             const char* err = nullptr;
+            char signer[40] = {0};
             if (received_ != downloadSize_) err = "incomplete download";
             else if (crc32(image_, downloadSize_) != downloadCrc_) err = "download checksum mismatch";
-            else err = loadImage(downloadSize_);
+            else if ((err = platform_.verifyProgram(image_, downloadSize_, p, len, signer, sizeof signer)) == nullptr) err = loadImage(downloadSize_);
             if (!err && !platform_.storeProgram(image_, downloadSize_)) err = "cannot store the program";
             if (err) {
                 fail(Status::ST_ERROR, err);
@@ -539,8 +541,9 @@ size_t Cpu::handle(Session& session, uint8_t command, uint8_t seq, const uint8_t
                 if (old) loadImage(old);
             } else {
                 log("Program downloaded");
-                char detail[80];
-                snprintf(detail, sizeof detail, "%s (%08lx)", program_.name, static_cast<unsigned long>(program_.id));
+                char detail[128];
+                snprintf(detail, sizeof detail, "%s (%08lx)%s%s", program_.name, static_cast<unsigned long>(program_.id),
+                         signer[0] ? ", signed by " : ", unsigned", signer);
                 auditEvent(session, "download", detail);
             }
             break;

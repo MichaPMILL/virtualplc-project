@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from '
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compile, DeviceClient, keyFingerprint, verifyAudit, type AuditRecord } from '../src/index.ts';
+import { compile, createEngineeringKey, DeviceClient, keyFingerprint, signProgram, verifyAudit, type AuditRecord } from '../src/index.ts';
 
 const CPU = new URL('../../runtime/build/vplc-cpu', import.meta.url).pathname;
 const skip = existsSync(CPU) ? false : 'build runtime/ first';
@@ -191,6 +191,70 @@ test('security: TLS with the CPU key pinned, plain link refused with --tls-requi
     wrong.pinnedKey = 'ab'.repeat(32);
     await assert.rejects(wrong.connect(), /not the expected one/);
     wrong.close();
+  } finally {
+    cpu.kill();
+  }
+});
+
+test('security: signed programs (--signed-programs, trusted engineering keys)', { skip }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vplc-sec-'));
+  const alice = createEngineeringKey();
+  const mallory = createEngineeringKey();
+  execFileSync(CPU, ['--data', dir, '--trust-key', `alice:${alice.publicKey}`]);
+  const port = await freePort();
+  const args = ['--data', dir, '--listen', '127.0.0.1', '--port', String(port), '--signed-programs'];
+  let cpu = spawn(CPU, args, { stdio: 'ignore' });
+  const connect = async () => {
+    for (let i = 0; ; i++) {
+      try {
+        return await login(port);
+      } catch (e) {
+        if (i > 50) throw e;
+        await sleep(100);
+      }
+    }
+  };
+  try {
+    const c = await connect();
+    assert.equal((await c.info() as { signedPrograms?: boolean }).signedPrograms, true);
+    const r = compile({ sources: [{ file: 'main.scl', text: 'VAR_GLOBAL n : DInt; END_VAR\nORGANIZATION_BLOCK "Main"\nBEGIN\n  n := n + 1;\nEND_ORGANIZATION_BLOCK' }] });
+    const image = r.image!;
+    await assert.rejects(c.download(image), /only accepts signed programs/);
+    await assert.rejects(c.download(image, undefined, signProgram(image, mallory.privateKeyPem)), /does not trust/);
+    const tampered = Uint8Array.from(image);
+    const sig = signProgram(image, alice.privateKeyPem);
+    await assert.rejects(c.download(image.subarray(0), undefined, Buffer.concat([sig.subarray(0, 32), signProgram(tampered.reverse(), alice.privateKeyPem).subarray(32)])), /invalid program signature/);
+    await c.download(image, undefined, sig);
+    await c.start();
+    assert.equal((await c.state()).state, 'RUN');
+    assert.deepEqual((await c.trustedKeys()).keys, [{ name: 'alice', key: alice.publicKey }]);
+    const audit = await c.auditReadAll();
+    assert.ok(audit.records.some((a) => a.action === 'download' && a.detail.endsWith('signed by alice')), JSON.stringify(audit.records.map((a) => a.detail)));
+    c.close();
+  } finally {
+    cpu.kill();
+  }
+  // Restart: the stored program is checked again; a changed program file is refused
+  await sleep(200);
+  cpu = spawn(CPU, args, { stdio: 'ignore' });
+  try {
+    const c = await connect();
+    assert.equal((await c.state()).state, 'RUN');
+    c.close();
+  } finally {
+    cpu.kill();
+  }
+  await sleep(200);
+  const file = join(dir, 'program.vplc');
+  const bytes = readFileSync(file);
+  bytes[bytes.length - 10] ^= 0xff;
+  writeFileSync(file, bytes);
+  cpu = spawn(CPU, args, { stdio: 'ignore' });
+  try {
+    const c = await connect();
+    assert.equal((await c.state()).state, 'NO_PROGRAM');
+    assert.ok((await c.auditRead()).records.some((a) => a.action === 'program rejected'));
+    c.close();
   } finally {
     cpu.kill();
   }

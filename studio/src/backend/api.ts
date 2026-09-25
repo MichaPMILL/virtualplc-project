@@ -37,6 +37,11 @@ export function createApi(backend = new Backend()) {
     changePassword: (deviceId: string, oldPassword: string, newPassword: string) => backend.client(deviceId).changePassword(oldPassword, newPassword),
     auditRead: (deviceId: string, count: number, from = 0) => backend.client(deviceId).auditRead(count, from),
     auditReadAll: (deviceId: string) => backend.client(deviceId).auditReadAll(),
+    // Signed programs
+    engineeringKey: () => backend.engineeringKey(),
+    trustedKeys: (deviceId: string) => backend.client(deviceId).trustedKeys(),
+    trustKey: (deviceId: string, name: string, publicKey: string) => backend.client(deviceId).trustKey(name, publicKey),
+    untrustKey: (deviceId: string, name: string) => backend.client(deviceId).untrustKey(name),
     /** Serial ports of this computer (USB CPUs: ESP32, Arduino…) */
     serialPorts: async (): Promise<Array<{ path: string; label: string }>> => {
       try {

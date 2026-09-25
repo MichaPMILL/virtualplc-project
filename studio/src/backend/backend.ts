@@ -1,6 +1,10 @@
 // Studio backend: compilation, device sessions. Runs in the Electron main process
 // (or in the development web server). The renderer talks to it through `StudioApi`.
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import {
+  createEngineeringKey, engineeringPublicKey, keyFingerprint, signProgram,
   compileDevice, DeviceClient, findSymbol, formatTemporal, formatValue, loadProject, parseAddress, parseTemporal, TEMPORAL_PREFIXES,
   type DeviceInfo, type DeviceState, type LogEntry, type Project, type ProjectDiagnostic, type SymbolNode, type PlcValue,
   type DataLogStatus, type TraceCertificate,
@@ -87,8 +91,26 @@ export class Backend {
     const c = this.compiled.get(deviceId);
     if (!c) throw new Error('Compile the program before downloading it');
     const { client } = this.session(deviceId);
-    await client.download(c.image);
+    // every program is signed with the engineering key of this workstation (CPUs started with
+    // --signed-programs load only programs signed by a key they trust)
+    await client.download(c.image, undefined, signProgram(c.image, this.engineeringKeyPem()));
     if (startAfter) await client.start();
+  }
+
+  /** Engineering key of this workstation: VPLC_ENGINEERING_KEY or ~/.virtualplc/engineering-key.pem (created on first use) */
+  private engineeringKeyPem(): string {
+    const path = process.env.VPLC_ENGINEERING_KEY || join(homedir(), '.virtualplc', 'engineering-key.pem');
+    if (!existsSync(path)) {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(path, createEngineeringKey().privateKeyPem, { mode: 0o600 });
+      chmodSync(path, 0o600);
+    }
+    return readFileSync(path, 'utf8');
+  }
+
+  async engineeringKey(): Promise<{ publicKey: string; fingerprint: string }> {
+    const publicKey = engineeringPublicKey(this.engineeringKeyPem());
+    return { publicKey, fingerprint: await keyFingerprint(publicKey) };
   }
 
   async start(deviceId: string, cold: boolean): Promise<void> {

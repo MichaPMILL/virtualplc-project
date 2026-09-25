@@ -36,6 +36,7 @@ public:
     // USERS request: u8 op + fields separated by \0
     //   0 list | 1 add or replace: name, password, role digit (admin) | 2 delete: name (admin)
     //   3 set password: name, password (admin) | 4 change own password: old, new
+    //   5 list trusted engineering keys | 6 trust a key: name, public key hex (admin) | 7 remove a key: name (admin)
     const char* users(const uint8_t* request, uint32_t length, const std::string& user, const std::string& peer, uint8_t role, std::string& out);
 
     void audit(const std::string& user, const std::string& peer, const std::string& action, const std::string& detail);
@@ -43,6 +44,13 @@ public:
 
     // Command line (vplc-cpu --add-user): creates or replaces a user
     const char* setUser(const std::string& name, const std::string& password, uint8_t role);
+
+    // Signed programs (IEC 62443-3-3 SR 3.4, software integrity)
+    void setSignedRequired(bool on) { signedRequired_ = on; }
+    bool signedRequired() const { return signedRequired_; }
+    // signature = public key (32) + Ed25519 signature (64) of "VirtualPLC program|" + sha256hex(image)
+    const char* verifyProgram(const uint8_t* image, size_t length, const std::string& signature, std::string& signer);
+    const char* trustKey(const std::string& name, const std::string& publicKeyHex);
 
     static const char* checkPassword(const std::string& password);
     static bool validName(const std::string& name);
@@ -52,6 +60,11 @@ private:
     bool saveUsers();
     User makeUser(const std::string& password, uint8_t role);
     void loadAudit();
+    bool loadKeys();
+    bool saveKeys();
+    std::map<std::string, std::string> keys_;  // name -> public key (raw 32 bytes)
+    bool keysLoaded_ = false;
+    bool signedRequired_ = false;
 
     std::string dataDir_, plcName_ = "PLC_1";
     std::map<std::string, User> users_;

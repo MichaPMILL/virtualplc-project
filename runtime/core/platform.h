@@ -44,6 +44,15 @@ public:
         written = 0;
         return "user management is not supported by this CPU";
     }
+    // Signed programs: `signature` = the optional payload of DOWNLOAD_END (Ed25519 public key
+    // 32 bytes + signature 64 bytes of "VirtualPLC program|" + sha256 hex of the image).
+    // nullptr = accepted (`signer` = name of the trusted key, empty if unsigned), else why not.
+    virtual const char* verifyProgram(const uint8_t* image, size_t length, const uint8_t* signature, size_t sigLength, char* signer, size_t cap) {
+        (void)image; (void)length; (void)signature; (void)sigLength;
+        if (cap) signer[0] = 0;
+        return nullptr;
+    }
+    virtual bool signedProgramsRequired() { return false; }
     // Audit trail: who did what (append only)
     virtual void audit(const char* user, const char* peer, const char* action, const char* detail) { (void)user; (void)peer; (void)action; (void)detail; }
     virtual size_t auditRead(uint32_t from, uint16_t count, char* out, size_t cap) {

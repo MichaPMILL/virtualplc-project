@@ -276,9 +276,101 @@ const char* Security::users(const uint8_t* request, uint32_t length, const std::
             out = "{}";
             return nullptr;
         }
+        case 5: {  // trusted engineering keys
+            loadKeys();
+            out = "{\"required\":" + std::string(signedRequired_ ? "true" : "false") + ",\"keys\":[";
+            bool first = true;
+            for (auto& [name, key] : keys_) {
+                out += (first ? "" : ",") + std::string("{\"name\":") + jsonText(name) + ",\"key\":\"" + db::toHex(key) + "\"}";
+                first = false;
+            }
+            out += "]}";
+            return nullptr;
+        }
+        case 6: {
+            if (!admin) return "only an administrator can manage the trusted keys";
+            if (f.size() < 2) return "name and key expected";
+            if (const char* e = trustKey(f[0], f[1])) return e;
+            audit(user, peer, "key trusted", f[0] + " " + f[1].substr(0, 16));
+            out = "{}";
+            return nullptr;
+        }
+        case 7: {
+            if (!admin) return "only an administrator can manage the trusted keys";
+            loadKeys();
+            if (f.empty() || !keys_.erase(f[0])) return "unknown key";
+            if (!saveKeys()) return "cannot write the trusted keys file";
+            audit(user, peer, "key removed", f[0]);
+            out = "{}";
+            return nullptr;
+        }
         default:
             return "unknown user operation";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Signed programs: <data dir>/trusted-keys, "name \t public key hex" per line
+// ---------------------------------------------------------------------------
+
+bool Security::loadKeys() {
+    if (keysLoaded_) return true;
+    keysLoaded_ = true;
+    std::ifstream in(dataDir_ + "/trusted-keys");
+    std::string line;
+    while (std::getline(in, line)) {
+        size_t tab = line.find('\t');
+        if (line.empty() || line[0] == '#' || tab == std::string::npos) continue;
+        std::string hex = line.substr(tab + 1);
+        std::string raw;
+        for (size_t k = 0; k + 1 < hex.size() && raw.size() < 32; k += 2) raw += char(strtoul(hex.substr(k, 2).c_str(), nullptr, 16));
+        if (raw.size() == 32) keys_[line.substr(0, tab)] = raw;
+    }
+    return true;
+}
+
+bool Security::saveKeys() {
+    std::string path = dataDir_ + "/trusted-keys", tmp = path + ".tmp";
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return false;
+    std::string text = "# VirtualPLC trusted engineering keys (Ed25519): name, public key\n";
+    for (auto& [name, key] : keys_) text += name + "\t" + db::toHex(key) + "\n";
+    bool ok = write(fd, text.data(), text.size()) == ssize_t(text.size()) && fsync(fd) == 0;
+    close(fd);
+    return ok && rename(tmp.c_str(), path.c_str()) == 0;
+}
+
+const char* Security::trustKey(const std::string& name, const std::string& publicKeyHex) {
+    loadKeys();
+    if (!validName(name)) return "invalid key name (1 to 32 letters, digits, '.', '_' or '-')";
+    if (publicKeyHex.size() != 64 || publicKeyHex.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return "the key must be 64 hexadecimal digits";
+    std::string raw;
+    for (size_t k = 0; k < 64; k += 2) raw += char(strtoul(publicKeyHex.substr(k, 2).c_str(), nullptr, 16));
+    keys_[name] = raw;
+    return saveKeys() ? nullptr : "cannot write the trusted keys file";
+}
+
+const char* Security::verifyProgram(const uint8_t* image, size_t length, const std::string& signature, std::string& signer) {
+    loadKeys();
+    signer.clear();
+    if (signature.size() != 96) return signedRequired_ ? "this CPU only accepts signed programs (sign it with a trusted engineering key)" : nullptr;
+    std::string pub = signature.substr(0, 32);
+    std::string name;
+    for (auto& [n, key] : keys_) {
+        if (key == pub) name = n;
+    }
+    if (name.empty()) return signedRequired_ ? "the program is signed by a key this CPU does not trust" : nullptr;
+    std::string message = "VirtualPLC program|" + db::toHex(db::sha256(std::string(reinterpret_cast<const char*>(image), length)));
+    EVP_PKEY* key = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, reinterpret_cast<const unsigned char*>(pub.data()), 32);
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    bool ok = key && ctx && EVP_DigestVerifyInit(ctx, nullptr, nullptr, nullptr, key) == 1 &&
+              EVP_DigestVerify(ctx, reinterpret_cast<const unsigned char*>(signature.data() + 32), 64,
+                               reinterpret_cast<const unsigned char*>(message.data()), message.size()) == 1;
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(key);
+    if (!ok) return "invalid program signature (the program was changed after it was signed)";
+    signer = name;
+    return nullptr;
 }
 
 // ---------------------------------------------------------------------------

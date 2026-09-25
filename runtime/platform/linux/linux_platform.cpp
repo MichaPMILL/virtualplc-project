@@ -88,6 +88,15 @@ void LinuxPlatform::audit(const char* user, const char* peer, const char* action
     security_.audit(user, peer, action, detail);
 }
 
+const char* LinuxPlatform::verifyProgram(const uint8_t* image, size_t length, const uint8_t* signature, size_t sigLength, char* signer, size_t cap) {
+    std::string name;
+    std::string sig(reinterpret_cast<const char*>(signature), sigLength);
+    const char* err = security_.verifyProgram(image, length, sig, name);
+    pendingSignature_ = err || name.empty() ? std::string() : sig;
+    snprintf(signer, cap, "%s", name.c_str());
+    return err;
+}
+
 size_t LinuxPlatform::auditRead(uint32_t from, uint16_t count, char* out, size_t cap) { return security_.auditRead(from, count, out, cap); }
 
 const char* LinuxPlatform::deviceType() {
@@ -154,6 +163,16 @@ bool LinuxPlatform::storeProgram(const uint8_t* image, size_t length) {
     if (!f) return false;
     bool ok = fwrite(image, 1, length, f) == length && fflush(f) == 0 && fsync(fileno(f)) == 0;
     fclose(f);
+    // the signature is kept with the program: checked again at every start
+    std::string sigPath = dataDir_ + "/program.sig";
+    if (ok && !pendingSignature_.empty()) {
+        FILE* s = fopen((sigPath + ".tmp").c_str(), "wb");
+        ok = s && fwrite(pendingSignature_.data(), 1, pendingSignature_.size(), s) == pendingSignature_.size() && fflush(s) == 0 && fsync(fileno(s)) == 0;
+        if (s) fclose(s);
+        ok = ok && rename((sigPath + ".tmp").c_str(), sigPath.c_str()) == 0;
+    } else if (ok) {
+        unlink(sigPath.c_str());
+    }
     return ok && rename(tmp.c_str(), path.c_str()) == 0;
 }
 
@@ -163,7 +182,21 @@ size_t LinuxPlatform::loadProgram(uint8_t* buf, size_t capacity) {
     size_t n = fread(buf, 1, capacity, f);
     bool tooLarge = fgetc(f) != EOF;
     fclose(f);
-    return tooLarge ? 0 : n;
+    if (tooLarge) return 0;
+    if (security_.signedRequired()) {
+        std::string sig, signer;
+        if (FILE* s = fopen((dataDir_ + "/program.sig").c_str(), "rb")) {
+            char b[96];
+            sig.assign(b, fread(b, 1, sizeof b, s));
+            fclose(s);
+        }
+        if (const char* err = security_.verifyProgram(buf, n, sig, signer)) {
+            note(std::string("Stored program not started: ") + err);
+            security_.audit("cpu", "-", "program rejected", err);
+            return 0;
+        }
+    }
+    return n;
 }
 
 void LinuxPlatform::closeModules() {

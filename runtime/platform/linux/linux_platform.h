@@ -47,6 +47,8 @@ public:
     const char* users(const uint8_t* request, uint32_t length, const char* user, const char* peer, uint8_t role, char* out, size_t cap, size_t& written) override;
     void audit(const char* user, const char* peer, const char* action, const char* detail) override;
     size_t auditRead(uint32_t from, uint16_t count, char* out, size_t cap) override;
+    const char* verifyProgram(const uint8_t* image, size_t length, const uint8_t* signature, size_t sigLength, char* signer, size_t cap) override;
+    bool signedProgramsRequired() override { return security_.signedRequired(); }
     sec::Security& security() { return security_; }
     /** Name of the CPU (recorded with the traceability records) */
     void setPlcName(const std::string& name) {
@@ -84,6 +86,7 @@ private:
     std::string plcName_ = "PLC_1";
     sec::Security security_{dataDir_};
     std::string usersError_;
+    std::string pendingSignature_;  // signature of the program being downloaded (stored with it)
     std::unique_ptr<DataLogger> dataLogger_;
     std::vector<Module> modules_;
     // PROFINET: this CPU as IO-Device, and / or IO-Controller of remote devices

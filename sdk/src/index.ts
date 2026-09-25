@@ -19,6 +19,7 @@ export { DeviceClient, DeviceError, isSerialPort, isSimulatorHost } from './devi
 export { setSimulatorWasm, SimulatedCpu, simulator } from './simulator.ts';
 export type { DataLogStatus, DeviceInfo, DeviceState, LogEntry } from './device.ts';
 export { auditCanonical, auditGenesis, ROLES, verifyAudit } from './security.ts';
+export { createEngineeringKey, engineeringPublicKey, programSigningMessage, signProgram } from './signing.ts';
 export type { AuditLog, AuditRecord, AuditVerification, Role, UserAccount } from './security.ts';
 export * from './project.ts';
 export * from './projectFiles.ts';

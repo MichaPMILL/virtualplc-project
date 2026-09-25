@@ -87,6 +87,8 @@ struct Options {
     std::string serial;  // serial device for the device protocol (e.g. /dev/ttyGS0), with speed
     int serialBaud = 115200;
     bool tlsRequired = false;  // refuse the plain device protocol on the network
+    bool signedPrograms = false;  // accept only programs signed with a trusted engineering key
+    std::string trustKey;         // --trust-key NAME:HEX, then exit
     std::string addUser;  // --add-user NAME: create or replace a user (password on stdin), then exit
     int addRole = 4;
 };
@@ -111,6 +113,8 @@ void usage() {
         "  --hmi-password-file F OPC UA password (first line of F)\n"
         "  --serial DEV[:BAUD]   also serve the Studio on a serial link (e.g. /dev/ttyGS0:115200)\n"
         "  --tls-required        refuse unencrypted Studio connections on the network\n"
+        "  --signed-programs     accept only programs signed with a trusted engineering key\n"
+        "  --trust-key NAME:KEY  trust an engineering public key (hex) and exit\n"
         "  --add-user NAME       create or replace a user (password read on stdin) and exit\n"
         "  --role ROLE           role of --add-user: viewer, operator, engineer, admin (default)\n",
         VPLC_FIRMWARE_VERSION, unsigned(PROTOCOL_PORT));
@@ -123,6 +127,7 @@ bool parse(int argc, char** argv, Options& o) {
         const char* v = nullptr;
         if (a == "--stopped") { o.stopped = true; continue; }
         if (a == "--tls-required") { o.tlsRequired = true; continue; }
+        if (a == "--signed-programs") { o.signedPrograms = true; continue; }
         if (a == "--help" || a == "-h") { usage(); exit(0); }
         if (!(v = next())) { fprintf(stderr, "Missing value for %s\n", a.c_str()); return false; }
         if (a == "--data") o.dataDir = v;
@@ -138,6 +143,7 @@ bool parse(int argc, char** argv, Options& o) {
         else if (a == "--opcua-port") o.opcuaPort = atoi(v);
         else if (a == "--hmi-user") o.hmiUser = v;
         else if (a == "--add-user") o.addUser = v;
+        else if (a == "--trust-key") o.trustKey = v;
         else if (a == "--role") {
             std::string r = v;
             o.addRole = r == "viewer" ? 1 : r == "operator" ? 2 : r == "engineer" ? 3 : r == "admin" ? 4 : 0;
@@ -299,6 +305,18 @@ int main(int argc, char** argv) {
     Options opt;
     if (!parse(argc, argv, opt)) return 2;
 
+    if (!opt.trustKey.empty()) {
+        size_t colon = opt.trustKey.find(':');
+        mkdir(opt.dataDir.c_str(), 0755);
+        sec::Security security(opt.dataDir);
+        security.setPlcName(opt.name);
+        const char* err = colon == std::string::npos ? "expected NAME:KEY" : security.trustKey(opt.trustKey.substr(0, colon), opt.trustKey.substr(colon + 1));
+        if (err) { fprintf(stderr, "%s\n", err); return 1; }
+        security.audit("root", "console", "key trusted", opt.trustKey.substr(0, colon));
+        fprintf(stderr, "Key %s trusted\n", opt.trustKey.substr(0, colon).c_str());
+        return 0;
+    }
+
     if (!opt.addUser.empty()) {
         // Password from stdin (no echo on a terminal): never on the command line
         bool tty = isatty(0);
@@ -340,6 +358,7 @@ int main(int argc, char** argv) {
     Cpu cpu(platform, programBuffer.data(), programBuffer.size(), arena.data(), arena.size());
     cpu.setName(opt.name.c_str());
     platform.setPlcName(opt.name);
+    platform.security().setSignedRequired(opt.signedPrograms);
     cpu.setPassword(opt.password.c_str());
     cpu.setWatchdog(opt.watchdogMs);
 
